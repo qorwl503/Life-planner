@@ -41,7 +41,7 @@
   const YOUTUBE_API_KEY = "AIzaSyA3FDgECTqtI7XDo1Isg02PmCgFv01Y3sI";
 
   // Gemini AI API 키
-  const GEMINI_API_KEY = "AIzaSyDQTQx66TDSN0bG523XXa5rC5a9UxoaG5w";
+  const GEMINI_API_KEY = "AIzaSyBaijEBYwGWmadRnetgmJKJkQerYWpO3AA";
 
   // 오프라인 지원
   enableIndexedDbPersistence(db).catch(() => {});
@@ -3366,12 +3366,15 @@ function renderAsset() {
     setTimeout(() => loadAINewsSummary(), 100);
   }
 
+  // 플랜 탭이면 AI 액션 호출
+  if (assetTab === 'plan') {
+    setTimeout(() => loadAIActionAdvice(), 100);
+  }
+
   // 브리핑 탭이면 AI 시장 브리핑 로드 (순차적으로 호출 - 429 방지)
   if (assetTab === 'briefing') {
     setTimeout(async () => {
       await loadAIBriefing(false);
-      // 시장 브리핑 완료 후 액션 호출 (2초 간격)
-      setTimeout(() => loadAIActionAdvice(), 2000);
     }, 100);
   }
 
@@ -3561,7 +3564,7 @@ async function askGemini(prompt, options = {}) {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 90000); // 90초 (Gemini는 때로 1분 이상 걸릴 수 있음)
+        const timeoutId = setTimeout(() => controller.abort(), 25000); // 25초
 
         aiCallsThisMinute++;
 
@@ -3625,7 +3628,7 @@ async function askGemini(prompt, options = {}) {
 
       } catch (e) {
         if (e.name === 'AbortError') {
-          lastError = '응답 시간 초과 (90초) - 네트워크 확인 후 다시 시도해주세요';
+          lastError = '응답 시간 초과 (25초)';
           break;
         }
         console.error(`${model} 호출 실패:`, e);
