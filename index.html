@@ -962,6 +962,58 @@ function loadLocal() {
   return null;
 }
 
+// localStorage 자동 정리 — 7일 이상 된 캐시 삭제
+function cleanupOldStorage() {
+  try {
+    const today = new Date();
+    const keysToCheck = [];
+
+    // 모든 localStorage 키 검사
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+
+      // ai_cache_today 만든 날짜 체크
+      if (key === 'ai_cache_today' || key === 'ai_prewarm_date') {
+        const stored = localStorage.getItem('ai_prewarm_date');
+        if (stored) {
+          const storedDate = new Date(stored);
+          const daysDiff = (today - storedDate) / (1000 * 60 * 60 * 24);
+          if (daysDiff > 7) {
+            keysToCheck.push('ai_cache_today');
+            keysToCheck.push('ai_prewarm_date');
+          }
+        }
+      }
+
+      // last_market_indices 도 7일 넘으면 삭제 (혹시 망한 데이터 있을 수도)
+      if (key === 'last_market_indices') {
+        try {
+          const parsed = JSON.parse(localStorage.getItem(key));
+          const oldestSavedAt = Math.min(...Object.values(parsed)
+            .map(v => v?.savedAt || 0)
+            .filter(t => t > 0));
+          if (oldestSavedAt > 0) {
+            const daysDiff = (Date.now() - oldestSavedAt) / (1000 * 60 * 60 * 24);
+            if (daysDiff > 7) keysToCheck.push(key);
+          }
+        } catch (e) {}
+      }
+    }
+
+    // 삭제 실행
+    keysToCheck.forEach(k => localStorage.removeItem(k));
+    if (keysToCheck.length > 0) {
+      console.log(`🧹 오래된 캐시 ${keysToCheck.length}개 정리`);
+    }
+  } catch (e) {
+    console.error('localStorage 정리 실패:', e);
+  }
+}
+
+// 앱 시작 시 1회 실행
+cleanupOldStorage();
+
 // Firebase에 저장 (디바운스 적용)
 function saveData() {
   saveLocal();
@@ -3561,12 +3613,16 @@ function renderAsset() {
     }, 100);
   }
 
-  // 자산 시세 자동 갱신 (보유 탭에 있을 때만)
+  // 자산 시세 자동 갱신 (보유 탭에 있을 때만, 5분에 한 번)
   if (assetTab === 'holdings' && assets.some(a => a.ticker)) {
-    refreshAllAssetPrices().then(() => {
-      // 다 갱신되면 다시 렌더 (한 번만)
-      if (assetTab === 'holdings') renderAsset();
-    });
+    const lastRefresh = window._lastAssetRefresh || 0;
+    const fiveMin = 5 * 60 * 1000;
+    if (Date.now() - lastRefresh > fiveMin) {
+      window._lastAssetRefresh = Date.now();
+      refreshAllAssetPrices().then(() => {
+        if (assetTab === 'holdings') renderAsset();
+      });
+    }
   }
 
   // 유튜브 탭이면 영상 자동 로드
@@ -3687,6 +3743,7 @@ async function manualRefreshPrices() {
   exchangeRateCache = null;
   marketIndices = null;
   liveAssetData = {};
+  window._lastAssetRefresh = 0; // 자동갱신 캐시 리셋
 
   // 시세 새로 가져오기
   await refreshAllAssetPrices();
@@ -3739,7 +3796,7 @@ let aiMinuteResetTime = Date.now() + 60000;
 const MAX_CALLS_PER_MINUTE = 10; // 안전하게 10회로 제한 (Gemini 한도는 15)
 
 async function askGemini(prompt, options = {}) {
-  const { useCache = true, cacheKey = null, maxRetries = 2 } = options;
+  const { useCache = true, cacheKey = null, maxRetries = 2, autoRetryOnNetwork = true } = options;
 
   // 캐시 확인
   const cKey = cacheKey || prompt;
@@ -4003,6 +4060,17 @@ async function loadAIBriefing(forceRefresh) {
   const result = await generateMarketBriefing(forceRefresh);
 
   if (result.error) {
+    // 네트워크 에러면 5초 후 자동 재시도 (1회)
+    const isNetworkErr = result.error.includes('네트워크') || result.error.includes('시간 초과') || result.error.includes('모든 모델 실패');
+    if (isNetworkErr && !forceRefresh) {
+      container.innerHTML = `<div style="padding:12px; background:rgba(255,200,100,0.15); border-radius:8px; font-size:11px; color:#FFD;">
+        <i class="ti ti-refresh"></i> ${result.error}
+        <div style="margin-top:6px; opacity:0.7; font-size:10px;">5초 후 자동 재시도...</div>
+      </div>`;
+      setTimeout(() => loadAIBriefing(false), 5000);
+      return;
+    }
+
     container.innerHTML = `<div style="padding:12px; background:rgba(255,100,100,0.15); border-radius:8px; font-size:11px; color:#FFD;">
       <i class="ti ti-alert-circle"></i> ${result.error}
       <div style="margin-top:6px; opacity:0.7; font-size:10px;">잠시 후 다시 시도해주세요. 새로고침 버튼을 누르면 재시도됩니다.</div>
@@ -4823,18 +4891,9 @@ async function fetchNewsRSS() {
   }
 
   const sources = [
-    // 한국 경제 뉴스
-    { name:'한경 경제', url:'https://www.hankyung.com/feed/economy', tag:'경제' },
-    { name:'한경 증권', url:'https://www.hankyung.com/feed/finance', tag:'증시' },
-    { name:'한경 부동산', url:'https://www.hankyung.com/feed/realestate', tag:'부동산' },
-    { name:'한경 IT', url:'https://www.hankyung.com/feed/it', tag:'IT' },
-    { name:'한경 정치', url:'https://www.hankyung.com/feed/politics', tag:'정치' },
-    { name:'한경 국제', url:'https://www.hankyung.com/feed/international', tag:'국제' },
-    { name:'매일경제', url:'https://www.mk.co.kr/rss/30100041/', tag:'경제' },
-    { name:'매경 증권', url:'https://www.mk.co.kr/rss/50200011/', tag:'증시' },
-    { name:'매경 부동산', url:'https://www.mk.co.kr/rss/50300009/', tag:'부동산' },
-    // 미국 글로벌
-    { name:'Yahoo Finance', url:'https://finance.yahoo.com/news/rssindex', tag:'글로벌' },
+    { name:'인베스팅닷컴', url:'https://kr.investing.com/rss/news_25.rss', tag:'증시' },
+    { name:'Yahoo Finance', url:'https://finance.yahoo.com/news/rssindex', tag:'🇺🇸 글로벌' },
+    { name:'네이버 증권', url:'https://m.stock.naver.com/api/news/mainNews?pageSize=20&page=1', tag:'증시', isJson:true },
   ];
 
   const allItems = [];
@@ -4846,7 +4905,10 @@ async function fetchNewsRSS() {
     url => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`,
   ];
 
-  await Promise.all(sources.map(async (source) => {
+  // 전체 함수 최대 15초 안에 끝내기 (그 이후엔 무조건 결과 반환)
+  const overallTimeout = new Promise(resolve => setTimeout(resolve, 15000));
+
+  const fetchAll = Promise.all(sources.map(async (source) => {
     let success = false;
     
     for (const proxyFn of proxies) {
@@ -4856,13 +4918,10 @@ async function fetchNewsRSS() {
         const proxyUrl = proxyFn(source.url);
         
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10초
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5초로 단축
         
         const res = await fetch(proxyUrl, {
           signal: controller.signal,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          }
         });
         
         clearTimeout(timeoutId);
@@ -4871,8 +4930,36 @@ async function fetchNewsRSS() {
         
         const wrapper = await res.json();
         const xml = wrapper.contents;
+        if (!xml) throw new Error('빈 응답');
 
-        // 간단 XML 파싱
+        // JSON 형식 처리 (네이버 증권 등)
+        if (source.isJson) {
+          try {
+            const jsonData = JSON.parse(xml);
+            const newsList = jsonData?.newsList || jsonData?.list || jsonData?.items || [];
+            newsList.slice(0, 10).forEach(item => {
+              const title = (item.title || item.officeName || '').trim();
+              const link = item.officialUrl || item.url || `https://m.stock.naver.com/news/${item.articleId || ''}`;
+              const pubDate = item.datetime || item.publishedAt || new Date().toISOString();
+              if (title) {
+                allItems.push({
+                  title: title.substring(0, 100),
+                  link,
+                  pubDate,
+                  source: source.name,
+                  tag: source.tag,
+                });
+              }
+            });
+            success = true;
+            console.log(`✅ ${source.name} JSON 로드 (${newsList.length}개)`);
+            continue;
+          } catch (jsonErr) {
+            throw new Error('JSON 파싱 실패');
+          }
+        }
+
+        // XML 파싱 (일반 RSS)
         const parser = new DOMParser();
         const doc = parser.parseFromString(xml, 'text/xml');
         
@@ -4882,7 +4969,7 @@ async function fetchNewsRSS() {
         
         const items = doc.querySelectorAll('item');
 
-        Array.from(items).slice(0, 5).forEach(item => {
+        Array.from(items).slice(0, 10).forEach(item => {
           const title = item.querySelector('title')?.textContent?.trim() || '';
           const link = item.querySelector('link')?.textContent?.trim() || '';
           const pubDate = item.querySelector('pubDate')?.textContent?.trim() || '';
@@ -4899,17 +4986,20 @@ async function fetchNewsRSS() {
         });
         
         success = true;
-        console.log(`✅ ${source.name} RSS 로드 성공`);
+        console.log(`✅ ${source.name} 로드 성공 (${items.length}개)`);
         
       } catch (e) {
-        console.warn(`⚠️ ${source.name} (프록시 실패):`, e.message);
+        console.warn(`⚠️ ${source.name} 프록시 실패:`, e.message);
       }
     }
     
     if (!success) {
-      console.warn(`❌ ${source.name} 모든 프록시 실패 (뉴스 없으면 괜찮음)`);
+      console.warn(`❌ ${source.name} 모든 프록시 실패`);
     }
   }));
+
+  // 어느 쪽이든 먼저 끝나는 것에 따라 진행
+  await Promise.race([fetchAll, overallTimeout]);
 
   // 시간 순 정렬
   allItems.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
