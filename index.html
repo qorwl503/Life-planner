@@ -3366,10 +3366,13 @@ function renderAsset() {
     setTimeout(() => loadAINewsSummary(), 100);
   }
 
-  // 브리핑 탭이면 AI 시장 브리핑 로드
+  // 브리핑 탭이면 AI 시장 브리핑 로드 (순차적으로 호출 - 429 방지)
   if (assetTab === 'briefing') {
-    setTimeout(() => loadAIBriefing(false), 100);
-    setTimeout(() => loadAIActionAdvice(), 200);
+    setTimeout(async () => {
+      await loadAIBriefing(false);
+      // 시장 브리핑 완료 후 액션 호출 (2초 간격)
+      setTimeout(() => loadAIActionAdvice(), 2000);
+    }, 100);
   }
 
   // 자산 시세 자동 갱신 (보유 탭에 있을 때만)
@@ -3515,8 +3518,13 @@ function openVideo(videoId) {
 const aiCache = {};
 const AI_CACHE_TIME = 60 * 60 * 1000; // 1시간
 
+// 분당 호출 카운터 (429 방지)
+let aiCallsThisMinute = 0;
+let aiMinuteResetTime = Date.now() + 60000;
+const MAX_CALLS_PER_MINUTE = 10; // 안전하게 10회로 제한 (Gemini 한도는 15)
+
 async function askGemini(prompt, options = {}) {
-  const { useCache = true, cacheKey = null, maxRetries = 2 } = options;
+  const { useCache = true, cacheKey = null, maxRetries = 3 } = options;
 
   // 캐시 확인
   const cKey = cacheKey || prompt;
@@ -3524,16 +3532,28 @@ async function askGemini(prompt, options = {}) {
     return { text: aiCache[cKey].text, cached: true };
   }
 
+  // 분당 호출 제한 체크
+  if (Date.now() > aiMinuteResetTime) {
+    aiCallsThisMinute = 0;
+    aiMinuteResetTime = Date.now() + 60000;
+  }
+  if (aiCallsThisMinute >= MAX_CALLS_PER_MINUTE) {
+    const waitSec = Math.ceil((aiMinuteResetTime - Date.now()) / 1000);
+    return { error: `잠시 후 다시 시도해주세요 (${waitSec}초)` };
+  }
+
   const apiKey = window.GEMINI_API_KEY;
   if (!apiKey) return { error: 'AI 키가 설정되지 않았어요' };
 
-  // Gemini 2.0 Flash (무료, 빠름)
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+  // Gemini 1.5 Flash (안정적, 무료 한도 넉넉)
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000); // 30초
+
+      aiCallsThisMinute++;
 
       const res = await fetch(url, {
         method: 'POST',
@@ -3555,10 +3575,15 @@ async function askGemini(prompt, options = {}) {
       if (!res.ok) {
         const errData = await res.json().catch(() => null);
         console.error('Gemini 에러:', res.status, errData);
-        if (res.status === 429 && attempt < maxRetries) {
-          // 분당 한도 초과 → 잠시 대기 후 재시도
-          await new Promise(r => setTimeout(r, 2000));
-          continue;
+
+        if (res.status === 429) {
+          // 한도 초과 → 더 오래 대기 후 재시도
+          if (attempt < maxRetries) {
+            const waitTime = Math.pow(2, attempt) * 3000; // 3, 6, 12초 대기
+            await new Promise(r => setTimeout(r, waitTime));
+            continue;
+          }
+          return { error: '한도 초과. 1~2분 후 다시 시도해주세요.' };
         }
         return { error: `AI 호출 실패 (${res.status})` };
       }
@@ -3580,7 +3605,7 @@ async function askGemini(prompt, options = {}) {
       }
       console.error('Gemini 호출 실패:', e);
       if (attempt < maxRetries) {
-        await new Promise(r => setTimeout(r, 1000));
+        await new Promise(r => setTimeout(r, 2000));
         continue;
       }
       return { error: '네트워크 오류' };
@@ -3603,26 +3628,21 @@ function renderAIText(text) {
 }
 
 // ====== AI 시장 브리핑 ======
-async function loadAIBriefing(forceRefresh) {
-  const container = document.getElementById('ai-briefing-content');
-  if (!container) return;
+// 시장 브리핑 데이터 + 프롬프트 생성 (UI 없이 호출 가능)
+async function generateMarketBriefing(forceRefresh = false) {
+  const cacheKey = 'market-briefing-' + new Date().toDateString();
 
-  if (forceRefresh) {
-    // 캐시 무효화
-    delete aiCache['market-briefing-' + new Date().toDateString()];
+  if (forceRefresh) delete aiCache[cacheKey];
+
+  // 캐시 있으면 즉시 반환
+  if (aiCache[cacheKey] && Date.now() - aiCache[cacheKey].time < AI_CACHE_TIME) {
+    return { text: aiCache[cacheKey].text, cached: true };
   }
-
-  // 로딩 상태
-  container.innerHTML = `<div style="display:flex; align-items:center; gap:8px; padding:14px 0;">
-    <div class="spinner" style="border-color:rgba(255,255,255,0.3); border-top-color:white;"></div>
-    <span style="font-size:11px; opacity:0.8;">AI가 시장 상황 분석 중...</span>
-  </div>`;
 
   // 데이터 수집
   const indices = await fetchMarketIndices();
   const news = await fetchNewsRSS().catch(() => []);
 
-  // 보유 자산 정보 (이름과 비중만)
   const total = assets.reduce((s, a) => {
     const live = liveAssetData[a.id];
     return s + (live?.hasLive && live.krwValue ? live.krwValue : Number(a.qty) * Number(a.price));
@@ -3646,9 +3666,7 @@ async function loadAIBriefing(forceRefresh) {
 - 비트코인: ${indices.btc ? `$${indices.btc.price.toLocaleString()} (${indices.btc.changePct >= 0 ? '+' : ''}${indices.btc.changePct.toFixed(2)}%)` : '조회 불가'}
   `.trim();
 
-  // 최근 뉴스 헤드라인 (상위 10개)
   const newsHeadlines = news.slice(0, 10).map((n, i) => `${i+1}. [${n.source}] ${n.title}`).join('\n');
-
   const dateStr = new Date().toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' });
 
   const prompt = `당신은 한국 개인 투자자를 위한 전문 자산관리 코치입니다. 오늘(${dateStr}) 시장 상황과 사용자 포트폴리오를 분석해 간결하고 실용적인 브리핑을 작성해주세요.
@@ -3682,8 +3700,29 @@ ${newsHeadlines || '(뉴스 없음)'}
 
 ⚠️ 주의: 구체적 종목 매수 권유 금지 ("X 종목 사세요" X). 일반적 방향성만. "참고용, 투자 결정은 본인 책임"이라는 디스클레이머 끝에 작은 글씨로.`;
 
+  return await askGemini(prompt, { useCache: !forceRefresh, cacheKey });
+}
+
+async function loadAIBriefing(forceRefresh) {
+  const container = document.getElementById('ai-briefing-content');
+  if (!container) return;
+
+  // 캐시 있으면 즉시 표시
   const cacheKey = 'market-briefing-' + new Date().toDateString();
-  const result = await askGemini(prompt, { useCache: !forceRefresh, cacheKey });
+  if (!forceRefresh && aiCache[cacheKey] && Date.now() - aiCache[cacheKey].time < AI_CACHE_TIME) {
+    const text = aiCache[cacheKey].text;
+    container.innerHTML = `<p style="margin:0;">${renderAIText(text)}</p>
+      <div style="margin-top:10px; font-size:9px; opacity:0.5;">⚡ ${new Date(aiCache[cacheKey].time).toLocaleTimeString('ko-KR')} 분석 · 새로고침으로 최신 분석 받기</div>`;
+    return;
+  }
+
+  // 로딩 상태
+  container.innerHTML = `<div style="display:flex; align-items:center; gap:8px; padding:14px 0;">
+    <div class="spinner" style="border-color:rgba(255,255,255,0.3); border-top-color:white;"></div>
+    <span style="font-size:11px; opacity:0.8;">AI가 시장 상황 분석 중...</span>
+  </div>`;
+
+  const result = await generateMarketBriefing(forceRefresh);
 
   if (result.error) {
     container.innerHTML = `<div style="padding:12px; background:rgba(255,100,100,0.15); border-radius:8px; font-size:11px; color:#FFD;">
@@ -3693,31 +3732,30 @@ ${newsHeadlines || '(뉴스 없음)'}
     return;
   }
 
+  // 캐시 저장
+  localStorage.setItem('ai_cache_today', JSON.stringify(aiCache));
+
   container.innerHTML = `<p style="margin:0;">${renderAIText(result.text)}</p>
-    ${result.cached ? `<div style="margin-top:10px; font-size:9px; opacity:0.5;">⚡ 캐시됨 (1시간 유지) · 새로고침으로 최신 분석 받기</div>` : `<div style="margin-top:10px; font-size:9px; opacity:0.5;">✨ ${new Date().toLocaleTimeString('ko-KR')} 분석</div>`}`;
+    ${result.cached ? `<div style="margin-top:10px; font-size:9px; opacity:0.5;">⚡ 캐시됨 · 새로고침으로 최신 분석 받기</div>` : `<div style="margin-top:10px; font-size:9px; opacity:0.5;">✨ ${new Date().toLocaleTimeString('ko-KR')} 분석</div>`}`;
 }
 
 // ====== AI 추천 액션 ======
-async function loadAIActionAdvice() {
-  const container = document.getElementById('ai-action-advice');
-  if (!container) return;
+// 액션 액션 데이터 + 프롬프트 생성 (UI 없이 호출 가능)
+async function generateActionAdvice(forceRefresh = false) {
+  const cacheKey = 'action-advice-' + new Date().toDateString();
 
-  container.innerHTML = `<div class="ai-card" style="background:linear-gradient(135deg, #f0f4ff 0%, #e6f0ff 100%); border:0.5px solid var(--text-info);">
-    <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 분석 중</div>
-    <div style="display:flex; align-items:center; gap:8px; padding:8px 0;">
-      <div class="spinner"></div>
-      <span style="font-size:11px; color:var(--text-tertiary);">개인 맞춤 액션 분석 중...</span>
-    </div>
-  </div>`;
+  if (forceRefresh) delete aiCache[cacheKey];
 
-  // 데이터 수집
+  if (aiCache[cacheKey] && Date.now() - aiCache[cacheKey].time < AI_CACHE_TIME) {
+    return { text: aiCache[cacheKey].text, cached: true };
+  }
+
   const indices = await fetchMarketIndices();
   const total = assets.reduce((s, a) => {
     const live = liveAssetData[a.id];
     return s + (live?.hasLive && live.krwValue ? live.krwValue : Number(a.qty) * Number(a.price));
   }, 0);
 
-  // 자산 비중
   const byType = {};
   assets.forEach(a => {
     const live = liveAssetData[a.id];
@@ -3733,7 +3771,6 @@ async function loadAIActionAdvice() {
   const monthlyIncome = settings.monthlyIncome || 0;
   const monthlySaving = monthlyIncome - (budget.total || 0);
 
-  // 이번달 가계부 요약
   const thisMonthPrefix = `${currentYear}-${String(currentMonth+1).padStart(2,'0')}`;
   const thisMonthExpenses = budget.expenses.filter(e => !e.dateKey || e.dateKey.startsWith(thisMonthPrefix));
   const variableSpent = thisMonthExpenses.reduce((s, e) => s + Number(e.amt), 0);
@@ -3767,8 +3804,39 @@ ${typeSummary || '(미등록)'}
 
 ⚠️ 주의: 구체적 종목명 매수 권유 금지. 자산군/카테고리 단위로만 ("미국 S&P500 ETF" OK, "삼성전자 사세요" X). 끝에 작은 글씨로 "투자 책임은 본인" 표기.`;
 
+  return await askGemini(prompt, { useCache: !forceRefresh, cacheKey });
+}
+
+async function loadAIActionAdvice() {
+  const container = document.getElementById('ai-action-advice');
+  if (!container) return;
+
   const cacheKey = 'action-advice-' + new Date().toDateString();
-  const result = await askGemini(prompt, { useCache: true, cacheKey });
+
+  // 캐시 있으면 즉시 표시 (대기 없음!)
+  if (aiCache[cacheKey] && Date.now() - aiCache[cacheKey].time < AI_CACHE_TIME) {
+    const text = aiCache[cacheKey].text;
+    container.innerHTML = `<div class="ai-card" style="background:linear-gradient(135deg, #f0f4ff 0%, #e6f0ff 100%); border:0.5px solid var(--text-info);">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 맞춤 분석</div>
+        <button onclick="delete aiCache['${cacheKey}']; loadAIActionAdvice();" style="border:none; background:transparent; color:var(--text-info); padding:2px 6px; font-size:10px; cursor:pointer; font-family:inherit;">
+          <i class="ti ti-refresh" style="font-size:11px;"></i> 새로
+        </button>
+      </div>
+      <div class="ai-text" style="font-size:12px;"><p style="margin:0;">${renderAIText(text)}</p></div>
+    </div>`;
+    return;
+  }
+
+  container.innerHTML = `<div class="ai-card" style="background:linear-gradient(135deg, #f0f4ff 0%, #e6f0ff 100%); border:0.5px solid var(--text-info);">
+    <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 분석 중</div>
+    <div style="display:flex; align-items:center; gap:8px; padding:8px 0;">
+      <div class="spinner"></div>
+      <span style="font-size:11px; color:var(--text-tertiary);">개인 맞춤 액션 분석 중...</span>
+    </div>
+  </div>`;
+
+  const result = await generateActionAdvice();
 
   if (result.error) {
     container.innerHTML = `<div class="ai-card">
@@ -3778,6 +3846,9 @@ ${typeSummary || '(미등록)'}
     </div>`;
     return;
   }
+
+  // 캐시 저장
+  localStorage.setItem('ai_cache_today', JSON.stringify(aiCache));
 
   container.innerHTML = `<div class="ai-card" style="background:linear-gradient(135deg, #f0f4ff 0%, #e6f0ff 100%); border:0.5px solid var(--text-info);">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
@@ -3791,21 +3862,18 @@ ${typeSummary || '(미등록)'}
 }
 
 // ====== AI 뉴스 3줄 요약 ======
-async function loadAINewsSummary() {
-  const container = document.getElementById('ai-news-summary');
-  if (!container) return;
+// 뉴스 요약 생성 (UI 없이 호출 가능)
+async function generateNewsSummary(forceRefresh = false) {
+  const cacheKey = 'news-summary-' + new Date().toDateString();
 
-  container.innerHTML = `<div style="padding:14px; background:var(--bg-info); border-radius:var(--radius-md); font-size:11px; color:var(--text-info); display:flex; align-items:center; gap:8px;">
-    <div class="spinner"></div>
-    AI가 뉴스 핵심만 추리는 중...
-  </div>`;
+  if (forceRefresh) delete aiCache[cacheKey];
+
+  if (aiCache[cacheKey] && Date.now() - aiCache[cacheKey].time < AI_CACHE_TIME) {
+    return { text: aiCache[cacheKey].text, cached: true };
+  }
 
   const news = await fetchNewsRSS();
-
-  if (!news || news.length === 0) {
-    container.innerHTML = '';
-    return;
-  }
+  if (!news || news.length === 0) return { error: '뉴스 없음' };
 
   const headlines = news.slice(0, 15).map((n, i) => `${i+1}. [${n.source}] ${n.title}`).join('\n');
 
@@ -3828,13 +3896,47 @@ ${headlines}
 
 각 문장 짧고 명확하게. 광고/홍보 톤 X.`;
 
-  const cacheKey = 'news-summary-' + new Date().toDateString() + '-' + Math.floor(Date.now() / (30 * 60 * 1000)); // 30분 캐시
-  const result = await askGemini(prompt, { useCache: true, cacheKey });
+  return await askGemini(prompt, { useCache: !forceRefresh, cacheKey });
+}
+
+async function loadAINewsSummary() {
+  const container = document.getElementById('ai-news-summary');
+  if (!container) return;
+
+  const cacheKey = 'news-summary-' + new Date().toDateString();
+
+  // 캐시 있으면 즉시 표시
+  if (aiCache[cacheKey] && Date.now() - aiCache[cacheKey].time < AI_CACHE_TIME) {
+    const text = aiCache[cacheKey].text;
+    container.innerHTML = `<div style="padding:16px; background:linear-gradient(135deg, #FFF7E6 0%, #FFEFD5 100%); border-radius:var(--radius-md); border:0.5px solid #F4A261; margin-bottom:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <div style="display:flex; align-items:center; gap:6px;">
+          <i class="ti ti-sparkles" style="font-size:13px; color:#F4A261;"></i>
+          <span style="font-size:11px; font-weight:600; color:#B45309;">AI 뉴스 요약</span>
+        </div>
+        <button onclick="delete aiCache['${cacheKey}']; loadAINewsSummary();" style="border:none; background:transparent; color:#B45309; padding:2px 6px; font-size:10px; cursor:pointer; font-family:inherit;">
+          <i class="ti ti-refresh" style="font-size:11px;"></i>
+        </button>
+      </div>
+      <div style="font-size:12px; line-height:1.7; color:#5B3A0E;"><p style="margin:0;">${renderAIText(text)}</p></div>
+    </div>`;
+    return;
+  }
+
+  container.innerHTML = `<div style="padding:14px; background:var(--bg-info); border-radius:var(--radius-md); font-size:11px; color:var(--text-info); display:flex; align-items:center; gap:8px;">
+    <div class="spinner"></div>
+    AI가 뉴스 핵심만 추리는 중...
+  </div>`;
+
+  const result = await generateNewsSummary();
 
   if (result.error) {
     container.innerHTML = '';
     return;
   }
+
+  // 캐시 저장
+  localStorage.setItem('ai_cache_today', JSON.stringify(aiCache));
 
   container.innerHTML = `<div style="padding:16px; background:linear-gradient(135deg, #FFF7E6 0%, #FFEFD5 100%); border-radius:var(--radius-md); border:0.5px solid #F4A261; margin-bottom:14px;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
@@ -5471,11 +5573,51 @@ function initAuth() {
         saveLocal();
       }
       startApp();
+
+      // localStorage에서 어제 AI 캐시 복원 (즉시 표시용)
+      try {
+        const todayStr = new Date().toDateString();
+        const lastDate = localStorage.getItem('ai_prewarm_date');
+        const savedCache = localStorage.getItem('ai_cache_today');
+        if (savedCache && lastDate === todayStr) {
+          const parsed = JSON.parse(savedCache);
+          Object.assign(aiCache, parsed);
+          console.log('✅ AI 캐시 복원');
+        }
+      } catch (e) {
+        console.error('캐시 복원 실패:', e);
+      }
     } else {
       currentUser = null;
       showLoginScreen();
     }
   });
+}
+
+// prewarmAI 함수는 유지하되 자동 호출 안 함 (수동 호출용으로 보관)
+async function prewarmAI() {
+  console.log('🤖 AI 백그라운드 사전 로드 시작...');
+  const todayStr = new Date().toDateString();
+  try {
+    await fetchMarketIndices();
+    await fetchNewsRSS();
+  } catch (e) {}
+  await prewarmOne('briefing', () => generateMarketBriefing());
+  await new Promise(r => setTimeout(r, 3000));
+  await prewarmOne('action', () => generateActionAdvice());
+  await new Promise(r => setTimeout(r, 3000));
+  await prewarmOne('news', () => generateNewsSummary());
+  localStorage.setItem('ai_cache_today', JSON.stringify(aiCache));
+  localStorage.setItem('ai_prewarm_date', todayStr);
+  console.log('✅ AI 사전 로드 완료');
+}
+
+async function prewarmOne(name, fn) {
+  try {
+    await fn();
+  } catch (e) {
+    console.error(`${name} 실패:`, e);
+  }
 }
 
 if (window._fb) {
