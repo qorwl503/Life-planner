@@ -2733,64 +2733,25 @@ function renderMoneyAI(spent, projected) {
   const thisMonthPrefix = `${currentYear}-${String(currentMonth+1).padStart(2,'0')}`;
   const byCategory = {};
   budget.expenses.forEach(e => {
-    // dateKey 있으면 이번 달만, 없으면 옛날 데이터 포함
     if (e.dateKey && !e.dateKey.startsWith(thisMonthPrefix)) return;
     byCategory[e.cat] = (byCategory[e.cat] || 0) + Number(e.amt);
   });
 
-  // 카테고리 순위
   const ranked = Object.entries(byCategory).sort((a,b) => b[1] - a[1]);
   const topCat = ranked[0];
-
-  // 지난달 데이터 (history)
   const lastMonth = budget.history?.[budget.history.length - 1];
 
-  let html = `<div class="ai-card" style="margin-bottom:14px;">
-    <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 가계부 코치</div>`;
+  // AI 코치 카드 (진짜 AI)
+  let html = `<div id="ai-budget-coach"></div>`;
 
-  if (spent === 0) {
-    html += `<h3>아직 지출 기록이 없어요</h3>
-    <div class="ai-text">지출을 입력하면 카테고리 분석, 지난달 비교, 절약 조언을 받을 수 있어요.</div>
-    </div>`;
-    return html;
-  }
-
-  // 메인 한 줄 분석
-  let mainMsg = '';
-  if (topCat) {
-    const pct = Math.round((topCat[1] / spent) * 100);
-    mainMsg = `이번 달 가장 많이 쓴 분야는 <b>${topCat[0]} (${topCat[1].toLocaleString()}원, 전체의 ${pct}%)</b>이에요. `;
-  }
-
-  // 지난달 비교
-  if (lastMonth) {
-    const diff = projected - lastMonth.total;
-    const diffPct = lastMonth.total > 0 ? Math.round((diff / lastMonth.total) * 100) : 0;
-    if (Math.abs(diffPct) > 5) {
-      if (diff > 0) {
-        mainMsg += `지난달보다 <b>${Math.abs(diffPct)}% 더 쓰는 추세</b>예요.`;
-      } else {
-        mainMsg += `지난달보다 <b>${Math.abs(diffPct)}% 절약</b> 중이에요! 👏`;
-      }
-    } else {
-      mainMsg += `지난달과 비슷한 페이스예요.`;
-    }
-  } else {
-    mainMsg += `이번 페이스로 월말 약 <b>${projected.toLocaleString()}원</b> 예상.`;
-  }
-
-  html += `<h3>이번 달 한눈에</h3>
-    <div class="ai-text">${mainMsg}</div>`;
-
-  // 카테고리별 비교
+  // 카테고리별 통계 (이건 데이터 분석이라 그대로 유지)
   if (ranked.length >= 2) {
-    html += `<div style="margin-top:14px; padding-top:14px; border-top:0.5px solid rgba(255,255,255,0.15);">
-      <div style="font-size:11px; opacity:0.7; margin-bottom:8px;">카테고리별 지출 TOP 3</div>`;
+    html += `<div class="ai-card" style="margin-bottom:14px;">
+      <div class="ai-badge" style="background:rgba(255,255,255,0.15); color:white;"><i class="ti ti-chart-bar" style="font-size:11px;"></i> 카테고리별 지출</div>
+      <div style="margin-top:10px;">`;
 
-    ranked.slice(0, 3).forEach(([cat, amt]) => {
+    ranked.slice(0, 5).forEach(([cat, amt]) => {
       const pct = Math.round((amt / spent) * 100);
-
-      // 지난달 같은 카테고리와 비교
       let compare = '';
       if (lastMonth?.byCategory?.[cat]) {
         const lastAmt = lastMonth.byCategory[cat];
@@ -2798,7 +2759,6 @@ function renderMoneyAI(spent, projected) {
         if (diffPct > 10) compare = `<span style="color:#FFA0A0;">↑${diffPct}%</span>`;
         else if (diffPct < -10) compare = `<span style="color:#90EE90;">↓${Math.abs(diffPct)}%</span>`;
       }
-
       html += `<div style="display:flex; align-items:center; gap:10px; padding:6px 0; font-size:12px;">
         <div style="width:80px;">${cat}</div>
         <div style="flex:1; height:6px; background:rgba(255,255,255,0.15); border-radius:3px; overflow:hidden;">
@@ -2807,22 +2767,124 @@ function renderMoneyAI(spent, projected) {
         <div style="font-size:11px; text-align:right; min-width:80px;">${amt.toLocaleString()}원 ${compare}</div>
       </div>`;
     });
-    html += `</div>`;
+    html += `</div></div>`;
   }
 
-  html += `</div>`;
-
-  // 추가 인사이트 카드들
-  if (ranked.length > 0 && topCat[1] / spent > 0.4) {
-    html += `<div style="padding:12px 14px; background:var(--bg-warning); border-radius:var(--radius-md); margin-bottom:14px; display:flex; gap:8px; align-items:flex-start;">
-      <i class="ti ti-bulb" style="font-size:14px; color:var(--text-warning); margin-top:1px;"></i>
-      <div style="font-size:11px; color:var(--text-warning); line-height:1.6;">
-        <b style="font-weight:600;">${topCat[0]}</b> 비중이 너무 높아요 (${Math.round((topCat[1]/spent)*100)}%). 다음달 ${topCat[0]} 예산을 따로 정해보세요.
-      </div>
-    </div>`;
-  }
+  // 비동기로 AI 코치 호출
+  setTimeout(() => loadAIBudgetCoach(spent, projected, byCategory, lastMonth), 100);
 
   return html;
+}
+
+// AI 가계부 코치 - 진짜 Gemini 분석
+async function loadAIBudgetCoach(spent, projected, byCategory, lastMonth) {
+  const container = document.getElementById('ai-budget-coach');
+  if (!container) return;
+
+  // 키 없으면 안내
+  if (!window.GEMINI_API_KEY) {
+    container.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
+      <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 가계부 코치</div>
+      <div class="ai-text" style="margin-bottom:10px;">
+        AI 가계부 분석을 사용하려면 본인 Gemini API 키를 입력해주세요.
+      </div>
+      <button onclick="openAIKeyModal()" style="padding:8px 14px; border:none; border-radius:6px; background:#FFD700; color:black; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
+        <i class="ti ti-key" style="font-size:12px; vertical-align:-2px;"></i> AI 키 입력하기
+      </button>
+    </div>`;
+    return;
+  }
+
+  const cacheKey = 'budget-coach-' + new Date().toDateString();
+
+  // 캐시 있으면 즉시 표시
+  if (aiCache[cacheKey] && Date.now() - aiCache[cacheKey].time < AI_CACHE_TIME) {
+    const text = aiCache[cacheKey].text;
+    container.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 가계부 코치</div>
+        <button onclick="delete aiCache['${cacheKey}']; loadAIBudgetCoach(${spent}, ${projected}, ${JSON.stringify(byCategory).replace(/"/g, '&quot;')}, ${lastMonth ? JSON.stringify(lastMonth).replace(/"/g, '&quot;') : 'null'});" style="border:none; background:transparent; color:white; opacity:0.7; padding:2px 6px; font-size:10px; cursor:pointer; font-family:inherit;">
+          <i class="ti ti-refresh" style="font-size:11px;"></i>
+        </button>
+      </div>
+      <div class="ai-text"><p style="margin:0;">${renderAIText(text)}</p></div>
+    </div>`;
+    return;
+  }
+
+  if (spent === 0) {
+    container.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
+      <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 가계부 코치</div>
+      <h3 style="margin: 8px 0 4px;">아직 지출 기록이 없어요</h3>
+      <div class="ai-text">지출을 입력하면 AI가 카테고리 분석, 지난달 비교, 절약 조언을 해드릴게요.</div>
+    </div>`;
+    return;
+  }
+
+  container.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
+    <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 분석 중</div>
+    <div style="display:flex; align-items:center; gap:8px; padding:8px 0;">
+      <div class="spinner" style="border-color:rgba(255,255,255,0.3); border-top-color:white;"></div>
+      <span style="font-size:11px; opacity:0.8;">가계부 패턴 분석 중...</span>
+    </div>
+  </div>`;
+
+  const categoryList = Object.entries(byCategory)
+    .sort((a, b) => b[1] - a[1])
+    .map(([cat, amt]) => `- ${cat}: ${amt.toLocaleString()}원`)
+    .join('\n');
+
+  const lastMonthInfo = lastMonth
+    ? `\n## 지난달 비교\n- 지난달 총 지출: ${lastMonth.total?.toLocaleString() || 0}원\n- 지난달 카테고리: ${lastMonth.byCategory ? Object.entries(lastMonth.byCategory).map(([c, v]) => `${c} ${v.toLocaleString()}원`).join(', ') : '데이터 없음'}`
+    : '';
+
+  const prompt = `한국 개인 사용자의 가계부 분석 AI 코치입니다. 이번 달 지출 패턴을 분석해 실용적인 조언을 해주세요.
+
+## 이번 달 지출 (${currentMonth+1}월 ${today}일 기준)
+- 총 지출: ${spent.toLocaleString()}원
+- 월말 예상 지출 (현재 페이스): ${projected.toLocaleString()}원
+
+## 카테고리별 지출
+${categoryList || '(데이터 없음)'}
+${lastMonthInfo}
+
+---
+
+다음 형식으로 한국어로 분석해주세요. 마크다운 사용. 짧고 실용적으로:
+
+**💡 이번 달 한눈에**
+(전반적 가계 상황 1~2문장)
+
+**📊 패턴 분석**
+(가장 많이 쓴 카테고리, 비중, 비교 1~2문장)
+
+**🎯 실행 가능한 조언**
+(구체적 절약 팁 1~2개, 본인 패턴에 맞춘)
+
+⚠️ 일반론 말고, 본인 *실제 지출 데이터* 기반으로. 친근한 톤. 너무 길지 않게.`;
+
+  const result = await askGemini(prompt, { useCache: true, cacheKey });
+
+  if (result.error) {
+    container.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
+      <div class="ai-badge"><i class="ti ti-alert-circle" style="font-size:11px;"></i> AI 분석 실패</div>
+      <div class="ai-text">${result.error}</div>
+      ${result.needsKey ? `<button onclick="openAIKeyModal()" style="margin-top:8px; padding:6px 12px; border:none; border-radius:6px; background:#FFD700; color:black; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">AI 키 입력하기</button>` : ''}
+    </div>`;
+    return;
+  }
+
+  localStorage.setItem('ai_cache_today', JSON.stringify(aiCache));
+
+  container.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 가계부 코치</div>
+      <button onclick="delete aiCache['${cacheKey}']; loadAIBudgetCoach(${spent}, ${projected}, ${JSON.stringify(byCategory).replace(/"/g, '&quot;')}, ${lastMonth ? JSON.stringify(lastMonth).replace(/"/g, '&quot;') : 'null'});" style="border:none; background:transparent; color:white; opacity:0.7; padding:2px 6px; font-size:10px; cursor:pointer; font-family:inherit;">
+        <i class="ti ti-refresh" style="font-size:11px;"></i>
+      </button>
+    </div>
+    <div class="ai-text"><p style="margin:0;">${renderAIText(result.text)}</p></div>
+  </div>`;
 }
 
 // 매월 1일에 자동으로 지난달 기록 백업
@@ -3719,7 +3781,7 @@ async function generateMarketBriefing(forceRefresh = false) {
   const newsHeadlines = news.slice(0, 10).map((n, i) => `${i+1}. [${n.source}] ${n.title}`).join('\n');
   const dateStr = new Date().toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' });
 
-  const prompt = `당신은 한국 개인 투자자를 위한 전문 자산관리 코치입니다. 오늘(${dateStr}) 시장 상황과 사용자 포트폴리오를 분석해 간결하고 실용적인 브리핑을 작성해주세요.
+  const prompt = `당신은 한국 개인 투자자를 위한 글로벌 자산관리 코치입니다. 오늘(${dateStr}) 미국과 한국 시장을 모두 분석해 균형잡힌 브리핑을 작성해주세요.
 
 ## 시장 지수 (실시간)
 ${indexInfo}
@@ -3734,21 +3796,27 @@ ${newsHeadlines || '(뉴스 없음)'}
 
 ---
 
-다음 형식으로 한국어 브리핑을 작성해주세요. 각 섹션 2~3문장. 마크다운 사용. 광고/홍보 톤 X, 직설적/실용적으로:
+다음 형식으로 한국어 브리핑을 작성해주세요. **미국과 한국 모두 비중있게 다루세요**. 각 섹션 2~3문장. 마크다운 사용. 광고/홍보 톤 X, 직설적/실용적으로:
 
-**📊 오늘의 시장**
-(전반적 시장 분위기 + 한국/미국 차이점)
+**🇺🇸 미국 시장**
+(S&P500, 나스닥 동향 + 미국 경제 이슈 - Fed 금리, 기업 실적, 빅테크 등)
+
+**🇰🇷 한국 시장**
+(코스피/코스닥 동향 + 환율 영향 + 한국 특수 이슈)
+
+**🌍 글로벌 상관관계**
+(미국-한국 시장 연관성, 오늘 어느 쪽이 주도했는지)
 
 **💼 내 자산 관점**
-(보유 자산 상황 + 오늘 시황과의 연관성)
+(보유 자산이 국내/해외 어느 쪽에 노출됐는지 + 오늘 시황과의 연관성)
 
 **🔍 주목할 뉴스**
-(헤드라인 중 자산 관련 가장 중요한 1-2개 짚어내기)
+(미국/한국 헤드라인 중 가장 중요한 1-2개)
 
 **🎯 오늘의 한 마디**
 (액션 아이템 또는 관망 이유 1줄)
 
-⚠️ 주의: 구체적 종목 매수 권유 금지 ("X 종목 사세요" X). 일반적 방향성만. "참고용, 투자 결정은 본인 책임"이라는 디스클레이머 끝에 작은 글씨로.`;
+⚠️ 주의: 구체적 종목 매수 권유 금지. "참고용, 투자 결정은 본인 책임"이라는 디스클레이머 끝에 작은 글씨로.`;
 
   return await askGemini(prompt, { useCache: !forceRefresh, cacheKey });
 }
@@ -3850,23 +3918,32 @@ async function generateActionAdvice(forceRefresh = false) {
 ## 자산 구성 (총 ${total.toLocaleString()}원)
 ${typeSummary || '(미등록)'}
 
-## 오늘 시장 상황
-- 코스피: ${indices.kospi ? `${indices.kospi.changePct >= 0 ? '+' : ''}${indices.kospi.changePct.toFixed(2)}%` : '?'}
-- S&P500: ${indices.sp500 ? `${indices.sp500.changePct >= 0 ? '+' : ''}${indices.sp500.changePct.toFixed(2)}%` : '?'}
+## 오늘 글로벌 시장 상황
+**🇺🇸 미국**
+- S&P500: ${indices.sp500 ? `${indices.sp500.price.toFixed(2)} (${indices.sp500.changePct >= 0 ? '+' : ''}${indices.sp500.changePct.toFixed(2)}%)` : '?'}
+- 나스닥: ${indices.nasdaq ? `${indices.nasdaq.price.toFixed(2)} (${indices.nasdaq.changePct >= 0 ? '+' : ''}${indices.nasdaq.changePct.toFixed(2)}%)` : '?'}
+
+**🇰🇷 한국**
+- 코스피: ${indices.kospi ? `${indices.kospi.price.toFixed(2)} (${indices.kospi.changePct >= 0 ? '+' : ''}${indices.kospi.changePct.toFixed(2)}%)` : '?'}
+- 코스닥: ${indices.kosdaq ? `${indices.kosdaq.price.toFixed(2)} (${indices.kosdaq.changePct >= 0 ? '+' : ''}${indices.kosdaq.changePct.toFixed(2)}%)` : '?'}
+
+**💱 환율 & 원자재**
 - USD/KRW: ${indices.usdkrw ? `${indices.usdkrw.price.toFixed(0)}원 (${indices.usdkrw.changePct >= 0 ? '+' : ''}${indices.usdkrw.changePct.toFixed(2)}%)` : '?'}
 - KRX 금: ${indices.goldKrx ? `${indices.goldKrx.changePct >= 0 ? '+' : ''}${indices.goldKrx.changePct.toFixed(2)}%` : '?'}
+- 비트코인: ${indices.btc ? `${indices.btc.changePct >= 0 ? '+' : ''}${indices.btc.changePct.toFixed(2)}%` : '?'}
 
 ---
 
 이번 달 우선순위 액션 3가지를 추천하되, 다음 조건 지켜주세요:
-1. 시장 상황(환율, 지수 등) 반영
-2. 본인 자산 비중 분석
-3. **구체적 금액** 제시 (예: "이번 달 20만원을 ~에")
-4. 우선순위 1, 2, 3 명확히 구분
-5. 각 액션 1~2문장으로 짧게
-6. 마크다운 사용 (**bold** 등)
+1. **미국 시장**과 **한국 시장** 모두 반영 (한쪽만 X)
+2. 환율 동향이 본인 자산에 미치는 영향 고려
+3. 본인 자산 비중 분석 (국내/해외 균형)
+4. **구체적 금액** 제시 (예: "이번 달 20만원을 ~에")
+5. 우선순위 1, 2, 3 명확히 구분
+6. 각 액션 1~2문장으로 짧게
+7. 마크다운 사용 (**bold** 등)
 
-⚠️ 주의: 구체적 종목명 매수 권유 금지. 자산군/카테고리 단위로만 ("미국 S&P500 ETF" OK, "삼성전자 사세요" X). 끝에 작은 글씨로 "투자 책임은 본인" 표기.`;
+⚠️ 주의: 구체적 종목명 매수 권유 금지. 자산군/카테고리 단위로만 ("미국 S&P500 ETF", "한국 코스피200 ETF" OK, "삼성전자 사세요" X). 끝에 작은 글씨로 "투자 책임은 본인" 표기.`;
 
   return await askGemini(prompt, { useCache: !forceRefresh, cacheKey });
 }
@@ -3950,24 +4027,35 @@ async function generateNewsSummary(forceRefresh = false) {
   const news = await fetchNewsRSS();
   if (!news || news.length === 0) return { error: '뉴스 없음' };
 
-  const headlines = news.slice(0, 15).map((n, i) => `${i+1}. [${n.source}] ${n.title}`).join('\n');
+  // 한국/미국 뉴스 분리
+  const koreaNews = news.filter(n => !n.tag?.includes('🇺🇸')).slice(0, 10);
+  const usNews = news.filter(n => n.tag?.includes('🇺🇸')).slice(0, 10);
 
-  const prompt = `한국 경제 뉴스 헤드라인 15개입니다. 이 중 가장 중요한 3가지 흐름을 한국어로 요약해주세요.
+  const koreaHeadlines = koreaNews.map((n, i) => `${i+1}. [${n.source}] ${n.title}`).join('\n');
+  const usHeadlines = usNews.map((n, i) => `${i+1}. [${n.source}] ${n.title}`).join('\n');
 
-${headlines}
+  const prompt = `한국 투자자를 위한 글로벌 뉴스 요약입니다. 한국과 미국 시장 뉴스를 균형있게 요약해주세요.
+
+## 🇰🇷 한국 경제 뉴스
+${koreaHeadlines || '(데이터 없음)'}
+
+## 🇺🇸 미국 시장 뉴스
+${usHeadlines || '(데이터 없음)'}
 
 ---
 
-다음 형식으로:
+다음 형식으로 한국어 요약. 미국+한국 둘 다 다루기:
 
-**📰 오늘의 핵심 3가지**
+**🇺🇸 미국 핵심**
+1. (미국 가장 중요한 흐름, 1문장)
+2. (두번째, 1문장)
 
-1. (가장 중요한 흐름, 1문장)
-2. (두번째, 1문장)  
-3. (세번째, 1문장)
+**🇰🇷 한국 핵심**
+1. (한국 가장 중요한 흐름, 1문장)
+2. (두번째, 1문장)
 
-**💡 이게 시장에 미치는 영향**
-(전체 흐름이 한국 투자자에게 주는 의미 2문장)
+**💡 종합 시사점**
+(미국+한국 흐름이 한국 투자자에게 주는 의미 2문장)
 
 각 문장 짧고 명확하게. 광고/홍보 톤 X.`;
 
@@ -4234,13 +4322,33 @@ async function searchYoutube(query, maxResults = 8) {
 
   try {
     const apiKey = window.YOUTUBE_API_KEY;
+    if (!apiKey) {
+      console.error('YouTube API 키 없음');
+      return { error: 'YouTube API 키가 설정되지 않았어요' };
+    }
+
     const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=${maxResults}&q=${encodeURIComponent(query)}&type=video&relevanceLanguage=ko&key=${apiKey}`;
-    const res = await fetch(url);
+    console.log('🎬 YouTube 검색:', query);
+
+    const res = await fetch(url, { referrerPolicy: 'origin' });
     const data = await res.json();
 
-    if (data.error) {
-      console.error('YouTube API 에러:', data.error);
-      return { error: data.error.message };
+    if (!res.ok || data.error) {
+      const errMsg = data.error?.message || `HTTP ${res.status}`;
+      const errReason = data.error?.errors?.[0]?.reason || '';
+      console.error('YouTube API 에러:', res.status, errMsg, errReason);
+
+      // 친절한 에러 메시지
+      let friendlyMsg = errMsg;
+      if (errReason === 'quotaExceeded') {
+        friendlyMsg = 'YouTube 일일 한도 초과 (내일 다시 시도)';
+      } else if (errReason === 'keyInvalid' || res.status === 400) {
+        friendlyMsg = 'YouTube API 키 문제';
+      } else if (res.status === 403) {
+        friendlyMsg = '권한 거부 (도메인 제한 또는 한도 초과)';
+      }
+
+      return { error: friendlyMsg };
     }
 
     const videos = (data.items || []).map(item => ({
@@ -4251,11 +4359,12 @@ async function searchYoutube(query, maxResults = 8) {
       publishedAt: item.snippet.publishedAt,
     }));
 
+    console.log(`✅ YouTube ${videos.length}개 영상`);
     ytCache[cacheKey] = { data: videos, time: Date.now() };
     return videos;
   } catch (e) {
     console.error('YouTube 검색 실패:', e);
-    return { error: '네트워크 오류' };
+    return { error: '네트워크 오류: ' + (e.message || '알 수 없음') };
   }
 }
 
@@ -4371,15 +4480,6 @@ function renderAssetBriefing(total, byType) {
           </div>
         </div>
       </div>
-    </div>
-  `;
-
-  // 기존 자산 코칭 한마디
-  html += `
-    <div class="ai-card" style="margin-bottom:14px;">
-      <div class="ai-badge"><i class="ti ti-chart-pie" style="font-size:11px;"></i> 자산 비중 분석</div>
-      <h3>현재 포트폴리오</h3>
-      <div class="ai-text">${coachMsg}</div>
     </div>
   `;
 
@@ -4591,10 +4691,14 @@ async function fetchNewsRSS() {
   }
 
   const sources = [
+    // 한국 뉴스
     { name:'한국경제', url:'https://www.hankyung.com/feed/economy', tag:'경제' },
     { name:'매일경제', url:'https://www.mk.co.kr/rss/30100041/', tag:'경제' },
     { name:'한경 증권', url:'https://www.hankyung.com/feed/finance', tag:'증시' },
-    { name:'Yahoo Finance', url:'https://finance.yahoo.com/news/rssindex', tag:'글로벌' },
+    // 미국 뉴스
+    { name:'Yahoo Finance', url:'https://finance.yahoo.com/news/rssindex', tag:'🇺🇸 글로벌' },
+    { name:'CNBC', url:'https://www.cnbc.com/id/100003114/device/rss/rss.html', tag:'🇺🇸 시장' },
+    { name:'MarketWatch', url:'https://feeds.marketwatch.com/marketwatch/topstories/', tag:'🇺🇸 시장' },
   ];
 
   const allItems = [];
@@ -4892,80 +4996,167 @@ function ytSearchFromInput() {
   openYoutubeSearch(q);
 }
 
-// ★ AI 코칭 메인 - 강화 버전
+// ★ AI 자산 코치 - 진짜 Gemini 사용
 function renderAICoaching(total, byType) {
   if (total === 0) {
     return `<div class="ai-card">
       <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 자산 코치</div>
       <h3>먼저 자산을 입력해주세요</h3>
-      <div class="ai-text">보유한 주식, 예금, 현금 등을 입력하면 포트폴리오를 분석하고 맞춤 자산 플랜을 추천해드려요.</div>
+      <div class="ai-text">보유한 주식, 예금, 현금 등을 입력하면 AI가 포트폴리오를 분석하고 맞춤 자산 플랜을 추천해드려요.</div>
     </div>`;
   }
 
+  // 시뮬레이션 부분 (단순 수식)은 유지 - 데이터 계산이라 AI 아님
   const stockPct = ((byType['주식'] || 0) + (byType['펀드'] || 0)) / total * 100;
   const safePct = ((byType['예적금'] || 0) + (byType['현금'] || 0) + (byType['채권'] || 0)) / total * 100;
-  const coinPct = (byType['코인'] || 0) / total * 100;
-  const realEstatePct = (byType['부동산'] || 0) / total * 100;
+  const goldPct = (byType['금'] || 0) / total * 100;
 
-  // 1년 / 3년 / 10년 예측
   const monthlySaving = settings.savingsGoal || 0;
   const yearly = monthlySaving * 12;
 
-  // 현재 비중 기반 예상 연 수익률
   let expectedReturn = 0;
-  expectedReturn += (stockPct / 100) * 0.08;  // 주식 8%
-  expectedReturn += (safePct / 100) * 0.035;  // 안전자산 3.5%
-  expectedReturn += (coinPct / 100) * 0.15;   // 코인 15% (변동성 큼)
-  expectedReturn += (realEstatePct / 100) * 0.05; // 부동산 5%
+  expectedReturn += (stockPct / 100) * 0.08;
+  expectedReturn += (safePct / 100) * 0.035;
+  expectedReturn += (goldPct / 100) * 0.05;
+  expectedReturn = Math.max(expectedReturn, 0.02);
 
   const expected1Y = Math.round(total * (1 + expectedReturn) + yearly);
   const expected3Y = Math.round(total * Math.pow(1 + expectedReturn, 3) + yearly * ((Math.pow(1 + expectedReturn, 3) - 1) / expectedReturn));
   const expected10Y = Math.round(total * Math.pow(1 + expectedReturn, 10) + yearly * ((Math.pow(1 + expectedReturn, 10) - 1) / expectedReturn));
 
-  let analysis = '';
-  let advice = '';
+  // AI 분석 부분은 div로만 두고 비동기로 채움
+  const html = `<div id="ai-asset-coach-card"></div>
 
-  if (stockPct > 70) {
-    analysis = `주식 비중이 <b>${Math.round(stockPct)}%</b>로 매우 공격적이에요. `;
-    advice = '시장 하락 시 큰 손실 가능. 안전자산 30% 정도 확보 권장.';
-  } else if (stockPct > 50) {
-    analysis = `주식 비중 <b>${Math.round(stockPct)}%</b>, 적극적인 자산 배분이에요. `;
-    advice = '30대라면 적당, 40대 이상이면 안전자산 비중 점진적 확대 고려.';
-  } else if (safePct > 70) {
-    analysis = `안전자산 비중이 <b>${Math.round(safePct)}%</b>로 매우 보수적이에요. `;
-    advice = '인플레이션을 못 이깁니다. 적립식 ETF로 주식 비중 20-30% 권장.';
-  } else {
-    analysis = `주식 <b>${Math.round(stockPct)}%</b> · 안전자산 <b>${Math.round(safePct)}%</b>, 균형 잡힌 포트폴리오예요. `;
-    advice = '이 비율 유지하면서 매월 적립식으로 늘려가세요.';
-  }
-
-  if (coinPct > 10) {
-    advice += ` 코인 ${Math.round(coinPct)}%는 변동성 위험, 5% 이내 권장.`;
-  }
-
-  return `<div class="ai-card">
-    <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 자산 코치</div>
-    <h3>현재 포트폴리오 분석</h3>
-    <div class="ai-text">${analysis}${advice}</div>
-
-    <div style="margin-top:14px; padding-top:14px; border-top:0.5px solid rgba(255,255,255,0.15);">
-      <div style="font-size:11px; opacity:0.7; margin-bottom:8px;">미래 자산 예상 (현재 비중 + 월 ${(monthlySaving/10000).toFixed(0)}만원 저축)</div>
-      <div style="display:flex; gap:8px;">
-        <div style="flex:1;">
-          <div style="font-size:10px; opacity:0.6;">1년 후</div>
-          <div style="font-size:14px; font-weight:600;">${formatMoney(expected1Y)}</div>
+    <div class="ai-card" style="margin-bottom:14px;">
+      <div class="ai-badge" style="background:rgba(255,255,255,0.15); color:white;"><i class="ti ti-trending-up" style="font-size:11px;"></i> 미래 자산 시뮬레이션</div>
+      <div style="margin-top:10px;">
+        <div style="font-size:11px; opacity:0.7; margin-bottom:8px;">현재 비중 + 월 ${(monthlySaving/10000).toFixed(0)}만원 저축 기준</div>
+        <div style="display:flex; gap:8px;">
+          <div style="flex:1;">
+            <div style="font-size:10px; opacity:0.6;">1년 후</div>
+            <div style="font-size:14px; font-weight:600;">${formatMoney(expected1Y)}</div>
+          </div>
+          <div style="flex:1;">
+            <div style="font-size:10px; opacity:0.6;">3년 후</div>
+            <div style="font-size:14px; font-weight:600;">${formatMoney(expected3Y)}</div>
+          </div>
+          <div style="flex:1;">
+            <div style="font-size:10px; opacity:0.6;">10년 후</div>
+            <div style="font-size:14px; font-weight:600; color:#FFD66E;">${formatMoney(expected10Y)}</div>
+          </div>
         </div>
-        <div style="flex:1;">
-          <div style="font-size:10px; opacity:0.6;">3년 후</div>
-          <div style="font-size:14px; font-weight:600;">${formatMoney(expected3Y)}</div>
-        </div>
-        <div style="flex:1;">
-          <div style="font-size:10px; opacity:0.6;">10년 후</div>
-          <div style="font-size:14px; font-weight:600; color:#FFD66E;">${formatMoney(expected10Y)}</div>
-        </div>
+        <div style="font-size:9px; opacity:0.5; margin-top:6px;">예상 연수익률 ${(expectedReturn*100).toFixed(1)}% 기준 · 실제와 다를 수 있음</div>
       </div>
-      <div style="font-size:9px; opacity:0.5; margin-top:6px;">예상 연수익률 ${(expectedReturn*100).toFixed(1)}% 기준 · 실제와 다를 수 있음</div>
+    </div>`;
+
+  // 비동기로 AI 코치 호출
+  setTimeout(() => loadAIAssetCoach(total, byType, expected1Y, expected3Y, expected10Y), 100);
+
+  return html;
+}
+
+// AI 자산 코치 - 진짜 Gemini 분석
+async function loadAIAssetCoach(total, byType, expected1Y, expected3Y, expected10Y) {
+  const container = document.getElementById('ai-asset-coach-card');
+  if (!container) return;
+
+  if (!window.GEMINI_API_KEY) {
+    container.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
+      <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 자산 코치</div>
+      <div class="ai-text" style="margin-bottom:10px;">
+        AI 자산 분석을 사용하려면 본인 Gemini API 키를 입력해주세요.
+      </div>
+      <button onclick="openAIKeyModal()" style="padding:8px 14px; border:none; border-radius:6px; background:#FFD700; color:black; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
+        <i class="ti ti-key" style="font-size:12px; vertical-align:-2px;"></i> AI 키 입력하기
+      </button>
+    </div>`;
+    return;
+  }
+
+  const cacheKey = 'asset-coach-' + new Date().toDateString();
+
+  if (aiCache[cacheKey] && Date.now() - aiCache[cacheKey].time < AI_CACHE_TIME) {
+    const text = aiCache[cacheKey].text;
+    container.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 자산 코치</div>
+        <button onclick="delete aiCache['${cacheKey}']; loadAIAssetCoach(${total}, ${JSON.stringify(byType).replace(/"/g, '&quot;')}, ${expected1Y}, ${expected3Y}, ${expected10Y});" style="border:none; background:transparent; color:white; opacity:0.7; padding:2px 6px; font-size:10px; cursor:pointer; font-family:inherit;">
+          <i class="ti ti-refresh" style="font-size:11px;"></i>
+        </button>
+      </div>
+      <div class="ai-text"><p style="margin:0;">${renderAIText(text)}</p></div>
+    </div>`;
+    return;
+  }
+
+  container.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
+    <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 분석 중</div>
+    <div style="display:flex; align-items:center; gap:8px; padding:8px 0;">
+      <div class="spinner" style="border-color:rgba(255,255,255,0.3); border-top-color:white;"></div>
+      <span style="font-size:11px; opacity:0.8;">자산 포트폴리오 분석 중...</span>
     </div>
+  </div>`;
+
+  const typeSummary = Object.entries(byType).map(([type, v]) => {
+    const pct = total > 0 ? ((v / total) * 100).toFixed(1) : '0';
+    return `- ${type}: ${v.toLocaleString()}원 (${pct}%)`;
+  }).join('\n');
+
+  const monthlyIncome = settings.monthlyIncome || 0;
+  const monthlySaving = settings.savingsGoal || 0;
+  const userAge = settings.age || '미입력';
+
+  const prompt = `한국 개인 투자자를 위한 자산관리 AI 코치입니다. 사용자의 포트폴리오를 종합 분석하고 *맞춤형* 조언을 제공해주세요.
+
+## 사용자 정보
+- 나이: ${userAge}
+- 월 소득: ${monthlyIncome.toLocaleString()}원
+- 월 저축 가능액: ${monthlySaving.toLocaleString()}원
+
+## 현재 자산 (총 ${total.toLocaleString()}원)
+${typeSummary || '(미등록)'}
+
+## 미래 시뮬레이션
+- 1년 후 예상: ${expected1Y.toLocaleString()}원
+- 3년 후: ${expected3Y.toLocaleString()}원
+- 10년 후: ${expected10Y.toLocaleString()}원
+
+---
+
+다음 형식으로 분석해주세요. 마크다운 사용. 본인 *실제 자산 데이터* 기반으로:
+
+**📊 포트폴리오 진단**
+(현재 자산 비중의 강점과 약점 1~2문장)
+
+**⚠️ 주의해야 할 점**
+(가장 큰 리스크 또는 약점 1~2문장)
+
+**💎 추천 방향**
+(다음 단계에 무엇을 해야 할지 1~2문장, 구체적 자산군 카테고리)
+
+⚠️ 일반론 X, 본인 데이터에 맞춰서. 구체적 종목명 추천 금지 (자산군만). 친근한 톤. 끝에 작은 글씨로 "투자 책임은 본인" 표기.`;
+
+  const result = await askGemini(prompt, { useCache: true, cacheKey });
+
+  if (result.error) {
+    container.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
+      <div class="ai-badge"><i class="ti ti-alert-circle" style="font-size:11px;"></i> AI 분석 실패</div>
+      <div class="ai-text">${result.error}</div>
+      ${result.needsKey ? `<button onclick="openAIKeyModal()" style="margin-top:8px; padding:6px 12px; border:none; border-radius:6px; background:#FFD700; color:black; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">AI 키 입력하기</button>` : ''}
+    </div>`;
+    return;
+  }
+
+  localStorage.setItem('ai_cache_today', JSON.stringify(aiCache));
+
+  container.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 자산 코치</div>
+      <button onclick="delete aiCache['${cacheKey}']; loadAIAssetCoach(${total}, ${JSON.stringify(byType).replace(/"/g, '&quot;')}, ${expected1Y}, ${expected3Y}, ${expected10Y});" style="border:none; background:transparent; color:white; opacity:0.7; padding:2px 6px; font-size:10px; cursor:pointer; font-family:inherit;">
+        <i class="ti ti-refresh" style="font-size:11px;"></i>
+      </button>
+    </div>
+    <div class="ai-text"><p style="margin:0;">${renderAIText(result.text)}</p></div>
   </div>`;
 }
 
