@@ -3588,7 +3588,7 @@ async function askGemini(prompt, options = {}) {
             }],
             generationConfig: {
               temperature: 0.7,
-              maxOutputTokens: 1024,
+              maxOutputTokens: 8000,
             },
           }),
           signal: controller.signal,
@@ -3623,9 +3623,10 @@ async function askGemini(prompt, options = {}) {
 
         const data = await res.json();
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        const finishReason = data.candidates?.[0]?.finishReason;
 
         if (!text) {
-          const blockReason = data.candidates?.[0]?.finishReason || data.promptFeedback?.blockReason;
+          const blockReason = finishReason || data.promptFeedback?.blockReason;
           if (blockReason) {
             return { error: `응답 차단됨: ${blockReason}` };
           }
@@ -3633,9 +3634,15 @@ async function askGemini(prompt, options = {}) {
           break;
         }
 
+        // 토큰 한도로 잘린 경우 경고 표시 (텍스트는 있어도)
+        let finalText = text;
+        if (finishReason === 'MAX_TOKENS') {
+          finalText = text + '\n\n*※ 답변이 길어서 일부 잘렸어요. "새로고침" 버튼으로 다시 받으세요.*';
+        }
+
         console.log(`✅ Gemini ${model} 성공`);
-        aiCache[cKey] = { text, time: Date.now() };
-        return { text, cached: false };
+        aiCache[cKey] = { text: finalText, time: Date.now() };
+        return { text: finalText, cached: false };
 
       } catch (e) {
         if (e.name === 'AbortError') {
