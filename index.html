@@ -3524,7 +3524,7 @@ let aiMinuteResetTime = Date.now() + 60000;
 const MAX_CALLS_PER_MINUTE = 10; // 안전하게 10회로 제한 (Gemini 한도는 15)
 
 async function askGemini(prompt, options = {}) {
-  const { useCache = true, cacheKey = null, maxRetries = 3 } = options;
+  const { useCache = true, cacheKey = null, maxRetries = 2 } = options;
 
   // 캐시 확인
   const cKey = cacheKey || prompt;
@@ -3539,78 +3539,107 @@ async function askGemini(prompt, options = {}) {
   }
   if (aiCallsThisMinute >= MAX_CALLS_PER_MINUTE) {
     const waitSec = Math.ceil((aiMinuteResetTime - Date.now()) / 1000);
-    return { error: `잠시 후 다시 시도해주세요 (${waitSec}초)` };
+    return { error: `잠시 후 다시 시도해주세요 (${waitSec}초 대기)` };
   }
 
   const apiKey = window.GEMINI_API_KEY;
   if (!apiKey) return { error: 'AI 키가 설정되지 않았어요' };
 
-  // Gemini 1.5 Flash (안정적, 무료 한도 넉넉)
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
+  // 여러 모델 시도 (안정성)
+  const models = [
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
+    'gemini-1.5-flash-latest',
+    'gemini-flash-latest',
+  ];
 
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30초
+  let lastError = '알 수 없는 오류';
 
-      aiCallsThisMinute++;
+  for (const model of models) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            parts: [{ text: prompt }]
-          }],
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 1024,
-          },
-        }),
-        signal: controller.signal,
-      });
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 90000); // 90초 (Gemini는 때로 1분 이상 걸릴 수 있음)
 
-      clearTimeout(timeoutId);
+        aiCallsThisMinute++;
 
-      if (!res.ok) {
-        const errData = await res.json().catch(() => null);
-        console.error('Gemini 에러:', res.status, errData);
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [{ text: prompt }]
+            }],
+            generationConfig: {
+              temperature: 0.7,
+              maxOutputTokens: 1024,
+            },
+          }),
+          signal: controller.signal,
+        });
 
-        if (res.status === 429) {
-          // 한도 초과 → 더 오래 대기 후 재시도
-          if (attempt < maxRetries) {
-            const waitTime = Math.pow(2, attempt) * 3000; // 3, 6, 12초 대기
+        clearTimeout(timeoutId);
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => null);
+          const errMsg = errData?.error?.message || `HTTP ${res.status}`;
+          console.error(`Gemini ${model} 에러:`, res.status, errData);
+          lastError = `${res.status}: ${errMsg.substring(0, 80)}`;
+
+          if (res.status === 404) {
+            // 모델 없음 → 다음 모델 시도
+            break;
+          }
+          if (res.status === 429 && attempt < maxRetries) {
+            // 한도 초과 → 대기 후 재시도
+            const waitTime = Math.pow(2, attempt) * 3000;
             await new Promise(r => setTimeout(r, waitTime));
             continue;
           }
-          return { error: '한도 초과. 1~2분 후 다시 시도해주세요.' };
+          if (res.status === 403) {
+            return { error: `권한 거부 (도메인 제한 또는 API 비활성화)\n원인: ${errMsg.substring(0, 100)}` };
+          }
+          if (res.status === 400) {
+            return { error: `요청 오류: ${errMsg.substring(0, 100)}` };
+          }
+          break; // 다음 모델 시도
         }
-        return { error: `AI 호출 실패 (${res.status})` };
-      }
 
-      const data = await res.json();
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        const data = await res.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
-      if (!text) {
-        return { error: '응답이 비어있어요' };
-      }
+        if (!text) {
+          const blockReason = data.candidates?.[0]?.finishReason || data.promptFeedback?.blockReason;
+          if (blockReason) {
+            return { error: `응답 차단됨: ${blockReason}` };
+          }
+          lastError = '응답이 비어있음';
+          break;
+        }
 
-      // 캐시 저장
-      aiCache[cKey] = { text, time: Date.now() };
-      return { text, cached: false };
+        console.log(`✅ Gemini ${model} 성공`);
+        aiCache[cKey] = { text, time: Date.now() };
+        return { text, cached: false };
 
-    } catch (e) {
-      if (e.name === 'AbortError') {
-        return { error: 'AI 응답 시간 초과 (30초)' };
+      } catch (e) {
+        if (e.name === 'AbortError') {
+          lastError = '응답 시간 초과 (90초) - 네트워크 확인 후 다시 시도해주세요';
+          break;
+        }
+        console.error(`${model} 호출 실패:`, e);
+        lastError = `네트워크: ${e.message?.substring(0, 50)}`;
+        if (attempt < maxRetries) {
+          await new Promise(r => setTimeout(r, 2000));
+          continue;
+        }
+        break;
       }
-      console.error('Gemini 호출 실패:', e);
-      if (attempt < maxRetries) {
-        await new Promise(r => setTimeout(r, 2000));
-        continue;
-      }
-      return { error: '네트워크 오류' };
     }
   }
+
+  return { error: `모든 모델 실패. 마지막 에러: ${lastError}` };
 }
 
 // AI 응답을 마크다운 → HTML로 간단 변환
