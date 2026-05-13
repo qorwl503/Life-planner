@@ -1416,6 +1416,78 @@ function goToToday() {
   renderCalendar();
 }
 
+// 가계부 월 이동
+let budgetViewYear, budgetViewMonth;
+
+function prevBudgetMonth() {
+  if (budgetViewMonth === 0) { budgetViewMonth = 11; budgetViewYear--; }
+  else budgetViewMonth--;
+  renderMoney();
+}
+
+function nextBudgetMonth() {
+  if (budgetViewYear === currentYear && budgetViewMonth === currentMonth) return;
+  if (budgetViewMonth === 11) { budgetViewMonth = 0; budgetViewYear++; }
+  else budgetViewMonth++;
+  renderMoney();
+}
+
+function openBudgetMonthPicker() {
+  const monthsWithData = new Set();
+  budget.expenses.forEach(e => {
+    if (e.dateKey) monthsWithData.add(e.dateKey.substring(0, 7));
+  });
+  const currentKey = `${currentYear}-${String(currentMonth+1).padStart(2,'0')}`;
+  monthsWithData.add(currentKey);
+
+  const sortedMonths = Array.from(monthsWithData).sort().reverse();
+
+  let html = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+        <h2>월 선택</h2>
+        <button class="modal-save" onclick="closeModal()">완료</button>
+      </div>
+
+      <div style="font-size:12px; color:var(--text-secondary); margin-bottom:14px;">지출 내역이 있는 달만 표시돼요</div>
+
+      <div style="display:flex; flex-direction:column; gap:6px;">`;
+
+  sortedMonths.forEach(monthKey => {
+    const [y, m] = monthKey.split('-').map(Number);
+    const isCurrent = y === currentYear && m === currentMonth + 1;
+    const isViewing = y === budgetViewYear && m === budgetViewMonth + 1;
+
+    const monthExpenses = budget.expenses.filter(e => e.dateKey?.startsWith(monthKey));
+    const monthTotal = monthExpenses.reduce((s, e) => s + Number(e.amt), 0);
+
+    html += `<button onclick="jumpToBudgetMonth(${y}, ${m-1})" style="display:flex; justify-content:space-between; align-items:center; padding:14px 16px; border:0.5px solid ${isViewing ? 'var(--text-info)' : 'var(--border-tertiary)'}; border-radius:var(--radius-md); background:${isViewing ? 'var(--bg-info)' : 'white'}; cursor:pointer; font-family:inherit;">
+      <div style="display:flex; flex-direction:column; align-items:flex-start; gap:2px;">
+        <div style="font-size:14px; font-weight:600; color:${isViewing ? 'var(--text-info)' : 'var(--text-primary)'};">
+          ${y}년 ${m}월 ${isCurrent ? '<span style="font-size:10px; color:var(--text-success);">(이번 달)</span>' : ''}
+        </div>
+        <div style="font-size:11px; color:var(--text-tertiary);">${monthExpenses.length}건 지출</div>
+      </div>
+      <div style="font-size:13px; font-weight:600; color:${isViewing ? 'var(--text-info)' : 'var(--text-primary)'};">
+        ${monthTotal.toLocaleString()}원
+      </div>
+    </button>`;
+  });
+
+  html += `</div></div>`;
+  modal.innerHTML = html;
+  modal.classList.add('show');
+}
+
+function jumpToBudgetMonth(y, m) {
+  budgetViewYear = y;
+  budgetViewMonth = m;
+  closeModal();
+  renderMoney();
+}
+
 // 년/월 선택 모달
 function openMonthPicker() {
   let html = `
@@ -2334,24 +2406,44 @@ function renderWorkout() {
   html += `</div>`;
 
   // 영상 결과
-  html += `<div style="font-size:13px; font-weight:600; margin: 16px 0 8px;">"${currentWorkoutYtQuery}" 검색 결과</div>
-    <div id="wo-yt-results">
-      <div style="text-align:center; padding:30px 20px; color:var(--text-tertiary); font-size:12px;">
-        <div class="spinner" style="margin:0 auto 10px;"></div>
-        영상 불러오는 중...
-      </div>
+  if (currentWorkoutYtQuery) {
+    html += `<div style="font-size:13px; font-weight:600; margin: 16px 0 8px;">"${currentWorkoutYtQuery}" 검색 결과</div>
+    <div style="display:flex; gap:6px; margin-bottom:10px; overflow-x:auto;">
+      <button onclick="setWorkoutYtOrder('relevance')" style="padding:6px 12px; border:0.5px solid ${currentWorkoutYtOrder === 'relevance' ? 'var(--text-danger)' : 'var(--border-tertiary)'}; border-radius:999px; background:${currentWorkoutYtOrder === 'relevance' ? 'var(--bg-danger)' : 'white'}; color:${currentWorkoutYtOrder === 'relevance' ? 'var(--text-danger)' : 'var(--text-secondary)'}; font-size:11px; cursor:pointer; font-family:inherit; white-space:nowrap;">⚡ 관련성순</button>
+      <button onclick="setWorkoutYtOrder('date')" style="padding:6px 12px; border:0.5px solid ${currentWorkoutYtOrder === 'date' ? 'var(--text-danger)' : 'var(--border-tertiary)'}; border-radius:999px; background:${currentWorkoutYtOrder === 'date' ? 'var(--bg-danger)' : 'white'}; color:${currentWorkoutYtOrder === 'date' ? 'var(--text-danger)' : 'var(--text-secondary)'}; font-size:11px; cursor:pointer; font-family:inherit; white-space:nowrap;">🆕 최신순</button>
+      <button onclick="setWorkoutYtOrder('viewCount')" style="padding:6px 12px; border:0.5px solid ${currentWorkoutYtOrder === 'viewCount' ? 'var(--text-danger)' : 'var(--border-tertiary)'}; border-radius:999px; background:${currentWorkoutYtOrder === 'viewCount' ? 'var(--bg-danger)' : 'white'}; color:${currentWorkoutYtOrder === 'viewCount' ? 'var(--text-danger)' : 'var(--text-secondary)'}; font-size:11px; cursor:pointer; font-family:inherit; white-space:nowrap;">🔥 조회수순</button>
     </div>
-  `;
+      <div id="wo-yt-results">
+        <div style="text-align:center; padding:30px 20px; color:var(--text-tertiary); font-size:12px;">
+          <div class="spinner" style="margin:0 auto 10px;"></div>
+          영상 불러오는 중...
+        </div>
+      </div>
+    `;
+  } else {
+    html += `<div id="wo-yt-results"></div>`;
+  }
 
   screen.innerHTML = html;
-  drawGrass();
-  drawDowBars();
 
-  // 운동 영상 자동 로드
-  setTimeout(() => loadVideosInto('wo-yt-results', currentWorkoutYtQuery, 10), 50);
+  // drawGrass 함수가 있으면 호출
+  if (typeof drawGrass === 'function') {
+    try { drawGrass(); } catch(e) { console.error('drawGrass 에러:', e); }
+  }
+
+  // 운동 영상 자동 로드 (검색어 있을 때만)
+  if (currentWorkoutYtQuery) {
+    setTimeout(() => loadVideosInto('wo-yt-results', currentWorkoutYtQuery, 10, currentWorkoutYtOrder), 50);
+  }
 }
 
-let currentWorkoutYtQuery = '10분 홈트 초보';
+function setWorkoutYtOrder(order) {
+  currentWorkoutYtOrder = order;
+  renderWorkout();
+}
+
+let currentWorkoutYtQuery = '';
+let currentWorkoutYtOrder = 'relevance';
 
 function setWorkoutYtQuery(q) {
   currentWorkoutYtQuery = q;
@@ -2467,6 +2559,13 @@ function deleteWorkout(key) {
 
 // ====== 가계부 ======
 function renderMoney() {
+  // 가계부에서 보고 있는 월 (기본: 현재 월)
+  if (typeof budgetViewYear === 'undefined') budgetViewYear = currentYear;
+  if (typeof budgetViewMonth === 'undefined') budgetViewMonth = currentMonth;
+
+  const isCurrentMonth = budgetViewYear === currentYear && budgetViewMonth === currentMonth;
+  const monthLabel = `${budgetViewYear}년 ${budgetViewMonth + 1}월`;
+
   header.innerHTML = `
     <h1>가계부</h1>
     <div class="header-actions">
@@ -2480,22 +2579,23 @@ function renderMoney() {
   const fixedRemaining = fixedTotal - fixedPaid;
   const variableBudget = budget.total - fixedTotal;
 
-  // 이번 달 지출만 합산 (dateKey가 있으면 그걸로, 없으면 옛날 데이터로 가정)
-  const thisMonthPrefix = `${currentYear}-${String(currentMonth+1).padStart(2,'0')}`;
-  const thisMonthExpenses = budget.expenses.filter(e =>
-    e.dateKey ? e.dateKey.startsWith(thisMonthPrefix) : true
+  // 보고 있는 월의 지출 합산
+  const viewMonthPrefix = `${budgetViewYear}-${String(budgetViewMonth+1).padStart(2,'0')}`;
+  const viewMonthExpenses = budget.expenses.filter(e =>
+    e.dateKey && e.dateKey.startsWith(viewMonthPrefix)
   );
-  const variableSpent = thisMonthExpenses.reduce((s, e) => s + Number(e.amt), 0);
+  const variableSpent = viewMonthExpenses.reduce((s, e) => s + Number(e.amt), 0);
   const variableRemaining = variableBudget - variableSpent;
   const variableUsedPct = variableBudget > 0 ? Math.round((variableSpent / variableBudget) * 100) : 0;
 
-  // 현재 월 기준 (가계부는 이번 달 기준)
-  const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
-  const daysLeft = daysInMonth - today;
-  const daysPassed = today;
+  // 보고 있는 월 기준
+  const daysInMonth = new Date(budgetViewYear, budgetViewMonth + 1, 0).getDate();
+  const dayInMonth = isCurrentMonth ? today : daysInMonth; // 과거 월이면 월 전체 일수
+  const daysLeft = isCurrentMonth ? (daysInMonth - today) : 0;
+  const daysPassed = isCurrentMonth ? today : daysInMonth;
   const idealDaily = Math.round(variableBudget / daysInMonth);
   const actualDaily = daysPassed > 0 ? Math.round(variableSpent / daysPassed) : 0;
-  const projectedTotal = actualDaily * daysInMonth;
+  const projectedTotal = isCurrentMonth ? (actualDaily * daysInMonth) : variableSpent;
   const isOverPace = actualDaily > idealDaily;
   const safeDaily = daysLeft > 0 ? Math.round(variableRemaining / daysLeft) : 0;
 
@@ -2504,20 +2604,36 @@ function renderMoney() {
   else if (variableUsedPct >= 70) heroClass = 'warning';
 
   let html = `
+    <!-- 월 이동 -->
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; background:var(--bg-secondary); border-radius:var(--radius-md); padding:6px;">
+      <button onclick="prevBudgetMonth()" style="border:none; background:transparent; padding:6px 10px; cursor:pointer; font-family:inherit; color:var(--text-secondary);">
+        <i class="ti ti-chevron-left" style="font-size:16px;"></i>
+      </button>
+      <button onclick="openBudgetMonthPicker()" style="border:none; background:transparent; padding:6px 10px; cursor:pointer; font-family:inherit; font-size:13px; font-weight:600; color:var(--text-primary);">
+        ${monthLabel} ${!isCurrentMonth ? '<span style="font-size:10px; color:var(--text-tertiary); margin-left:4px;">(과거)</span>' : ''}
+      </button>
+      <button onclick="nextBudgetMonth()" style="border:none; background:transparent; padding:6px 10px; cursor:pointer; font-family:inherit; color:var(--text-secondary); ${isCurrentMonth ? 'opacity:0.3; pointer-events:none;' : ''}">
+        <i class="ti ti-chevron-right" style="font-size:16px;"></i>
+      </button>
+    </div>
+
     <div class="budget-hero ${heroClass}">
-      <div class="label">변동 생활비 (남은 금액)</div>
-      <div class="big-num">${variableRemaining.toLocaleString()}원</div>
+      <div class="label">${isCurrentMonth ? '변동 생활비 (남은 금액)' : `${monthLabel} 지출 내역`}</div>
+      <div class="big-num">${isCurrentMonth ? variableRemaining.toLocaleString() + '원' : variableSpent.toLocaleString() + '원'}</div>
       <div class="sub">${variableBudget.toLocaleString()}원 중 ${variableSpent.toLocaleString()}원 사용 · ${variableUsedPct}%</div>
       <div class="budget-bar"><div style="width:${Math.min(variableUsedPct,100)}%;"></div></div>
       <div class="budget-bar-labels"><span>0</span><span>${variableBudget.toLocaleString()}원</span></div>
-      <div class="day-pace">
+      ${isCurrentMonth ? `<div class="day-pace">
         <div class="item"><div class="pn">${safeDaily.toLocaleString()}원</div><div class="pl">남은 ${daysLeft}일 일일 한도</div></div>
         <div class="item"><div class="pn">${actualDaily.toLocaleString()}원</div><div class="pl">현재 일평균</div></div>
-      </div>
+      </div>` : `<div class="day-pace">
+        <div class="item"><div class="pn">${actualDaily.toLocaleString()}원</div><div class="pl">일평균 지출</div></div>
+        <div class="item"><div class="pn">${daysInMonth}일</div><div class="pl">총 일수</div></div>
+      </div>`}
     </div>
   `;
 
-  if (variableSpent > 0) {
+  if (variableSpent > 0 && isCurrentMonth) {
     if (isOverPace) {
       html += `<div style="padding:12px 14px; background:var(--bg-warning); border-radius:var(--radius-md); margin-bottom:14px; display:flex; gap:8px; align-items:flex-start;">
         <i class="ti ti-alert-triangle" style="font-size:14px; color:var(--text-warning); margin-top:1px;"></i>
@@ -2556,14 +2672,16 @@ function renderMoney() {
     </div>
   </div>`;
 
-  // 최근 지출 (이번 달, 옛날 데이터 호환)
-  const recentExp = thisMonthExpenses.slice(-10).reverse();
-  html += `<div style="font-size:14px; font-weight:600; margin: 18px 0 8px;">최근 변동 지출</div>`;
+  // 보고 있는 월의 지출
+  const recentExp = isCurrentMonth
+    ? viewMonthExpenses.slice(-10).reverse()
+    : viewMonthExpenses.slice().reverse();
+  html += `<div style="font-size:14px; font-weight:600; margin: 18px 0 8px;">${isCurrentMonth ? '최근 변동 지출' : `${monthLabel} 전체 지출 (${viewMonthExpenses.length}건)`}</div>`;
   if (recentExp.length === 0) {
     html += `<div class="empty-state" style="padding:30px 20px;">
       <i class="ti ti-receipt"></i>
-      아직 입력된 지출이 없어요<br>
-      <span style="font-size:11px; opacity:0.7;">+ 버튼으로 지출을 추가하세요</span>
+      ${isCurrentMonth ? '아직 입력된 지출이 없어요' : '이 달엔 입력된 지출이 없어요'}<br>
+      ${isCurrentMonth ? '<span style="font-size:11px; opacity:0.7;">+ 버튼으로 지출을 추가하세요</span>' : ''}
     </div>`;
   } else {
     html += `<div class="card" style="padding:6px 14px;">`;
@@ -3453,7 +3571,7 @@ function renderAsset() {
 
   // 유튜브 탭이면 영상 자동 로드
   if (assetTab === 'youtube') {
-    setTimeout(() => loadVideosInto('yt-results', currentAssetYtQuery, 10), 50);
+    setTimeout(() => loadVideosInto('yt-results', currentAssetYtQuery, 10, currentAssetYtOrder), 50);
   }
 }
 
@@ -3957,10 +4075,10 @@ async function loadAIActionAdvice() {
   // 캐시 있으면 즉시 표시 (대기 없음!)
   if (aiCache[cacheKey] && Date.now() - aiCache[cacheKey].time < AI_CACHE_TIME) {
     const text = aiCache[cacheKey].text;
-    container.innerHTML = `<div class="ai-card" style="background:linear-gradient(135deg, #f0f4ff 0%, #e6f0ff 100%); border:0.5px solid var(--text-info);">
+    container.innerHTML = `<div class="ai-card">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-        <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 맞춤 분석</div>
-        <button onclick="delete aiCache['${cacheKey}']; loadAIActionAdvice();" style="border:none; background:transparent; color:var(--text-info); padding:2px 6px; font-size:10px; cursor:pointer; font-family:inherit;">
+        <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px; color:#FFD700;"></i> AI 맞춤 분석</div>
+        <button onclick="delete aiCache['${cacheKey}']; loadAIActionAdvice();" style="border:none; background:rgba(255,255,255,0.15); color:white; padding:5px 10px; border-radius:6px; font-size:10px; cursor:pointer; font-family:inherit;">
           <i class="ti ti-refresh" style="font-size:11px;"></i> 새로
         </button>
       </div>
@@ -3971,7 +4089,7 @@ async function loadAIActionAdvice() {
 
   // 자산 미등록 안내
   if (assets.length === 0) {
-    container.innerHTML = `<div class="ai-card" style="background:var(--bg-secondary);">
+    container.innerHTML = `<div class="ai-card">
       <div class="ai-badge"><i class="ti ti-info-circle" style="font-size:11px;"></i> 자산 등록 필요</div>
       <div class="ai-text" style="font-size:12px;">
         자산을 먼저 등록해주세요. 보유 탭에서 자산을 추가하면 AI가 맞춤 분석을 시작합니다.
@@ -3980,21 +4098,21 @@ async function loadAIActionAdvice() {
     return;
   }
 
-  container.innerHTML = `<div class="ai-card" style="background:linear-gradient(135deg, #f0f4ff 0%, #e6f0ff 100%); border:0.5px solid var(--text-info);">
-    <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 분석 중</div>
+  container.innerHTML = `<div class="ai-card">
+    <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px; color:#FFD700;"></i> AI 분석 중</div>
     <div style="display:flex; align-items:center; gap:8px; padding:8px 0;">
-      <div class="spinner"></div>
-      <span style="font-size:11px; color:var(--text-tertiary);">개인 맞춤 액션 분석 중... (10초 정도)</span>
+      <div class="spinner" style="border-color:rgba(255,255,255,0.3); border-top-color:white;"></div>
+      <span style="font-size:11px; opacity:0.8;">개인 맞춤 액션 분석 중... (10초 정도)</span>
     </div>
   </div>`;
 
   const result = await generateActionAdvice();
 
   if (result.error) {
-    container.innerHTML = `<div class="ai-card" style="background:var(--bg-danger);">
+    container.innerHTML = `<div class="ai-card">
       <div class="ai-badge"><i class="ti ti-alert-circle" style="font-size:11px;"></i> AI 분석 실패</div>
-      <div class="ai-text" style="color:var(--text-danger); font-size:12px;">${result.error}</div>
-      <button onclick="loadAIActionAdvice()" style="margin-top:8px; padding:6px 12px; border:none; border-radius:6px; background:var(--text-info); color:white; font-size:11px; cursor:pointer; font-family:inherit;">다시 시도</button>
+      <div class="ai-text">${result.error}</div>
+      <button onclick="loadAIActionAdvice()" style="margin-top:8px; padding:6px 12px; border:none; border-radius:6px; background:rgba(255,255,255,0.15); color:white; font-size:11px; cursor:pointer; font-family:inherit;">다시 시도</button>
     </div>`;
     return;
   }
@@ -4002,10 +4120,10 @@ async function loadAIActionAdvice() {
   // 캐시 저장
   localStorage.setItem('ai_cache_today', JSON.stringify(aiCache));
 
-  container.innerHTML = `<div class="ai-card" style="background:linear-gradient(135deg, #f0f4ff 0%, #e6f0ff 100%); border:0.5px solid var(--text-info);">
+  container.innerHTML = `<div class="ai-card">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-      <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 맞춤 분석</div>
-      <button onclick="delete aiCache['${cacheKey}']; loadAIActionAdvice();" style="border:none; background:transparent; color:var(--text-info); padding:2px 6px; font-size:10px; cursor:pointer; font-family:inherit;">
+      <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px; color:#FFD700;"></i> AI 맞춤 분석</div>
+      <button onclick="delete aiCache['${cacheKey}']; loadAIActionAdvice();" style="border:none; background:rgba(255,255,255,0.15); color:white; padding:5px 10px; border-radius:6px; font-size:10px; cursor:pointer; font-family:inherit;">
         <i class="ti ti-refresh" style="font-size:11px;"></i> 새로
       </button>
     </div>
@@ -4311,11 +4429,11 @@ async function fetchMarketIndices() {
 // ====== YouTube Data API ======
 const ytCache = {}; // 같은 검색 반복 방지
 
-async function searchYoutube(query, maxResults = 8) {
+async function searchYoutube(query, maxResults = 8, order = 'relevance') {
   if (!query) return [];
 
-  // 캐시 확인 (5분 유효)
-  const cacheKey = `${query}_${maxResults}`;
+  // 캐시 확인 (5분 유효) - 정렬 옵션 포함
+  const cacheKey = `${query}_${maxResults}_${order}`;
   if (ytCache[cacheKey] && Date.now() - ytCache[cacheKey].time < 5 * 60 * 1000) {
     return ytCache[cacheKey].data;
   }
@@ -4327,8 +4445,9 @@ async function searchYoutube(query, maxResults = 8) {
       return { error: 'YouTube API 키가 설정되지 않았어요' };
     }
 
-    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=${maxResults}&q=${encodeURIComponent(query)}&type=video&relevanceLanguage=ko&key=${apiKey}`;
-    console.log('🎬 YouTube 검색:', query);
+    // order: relevance(관련성), date(최신순), viewCount(조회수순), rating(평점순)
+    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=${maxResults}&q=${encodeURIComponent(query)}&type=video&order=${order}&relevanceLanguage=ko&key=${apiKey}`;
+    console.log(`🎬 YouTube 검색: ${query} (정렬: ${order})`);
 
     const res = await fetch(url, { referrerPolicy: 'origin' });
     const data = await res.json();
@@ -4338,7 +4457,6 @@ async function searchYoutube(query, maxResults = 8) {
       const errReason = data.error?.errors?.[0]?.reason || '';
       console.error('YouTube API 에러:', res.status, errMsg, errReason);
 
-      // 친절한 에러 메시지
       let friendlyMsg = errMsg;
       if (errReason === 'quotaExceeded') {
         friendlyMsg = 'YouTube 일일 한도 초과 (내일 다시 시도)';
@@ -4411,16 +4529,27 @@ function renderVideoCard(v) {
 }
 
 // 영상 목록을 컨테이너에 렌더링
-async function loadVideosInto(containerId, query, maxResults = 8) {
+async function loadVideosInto(containerId, query, maxResults = 8, order = 'relevance') {
   const container = document.getElementById(containerId);
   if (!container) return;
+
+  // 검색어 없으면 안내
+  if (!query || !query.trim()) {
+    container.innerHTML = `<div style="text-align:center; padding:40px 20px; color:var(--text-tertiary); font-size:12px;">
+      <i class="ti ti-brand-youtube" style="font-size:32px; display:block; margin-bottom:8px; opacity:0.5;"></i>
+      위에서 채널을 선택하거나 검색해주세요
+    </div>`;
+    return;
+  }
 
   container.innerHTML = `<div style="text-align:center; padding:30px 20px; color:var(--text-tertiary); font-size:12px;">
     <div class="spinner" style="margin:0 auto 10px;"></div>
     영상 불러오는 중...
   </div>`;
 
-  const result = await searchYoutube(query, maxResults);
+  console.log(`📺 영상 로드 시작: "${query}" (${containerId}, ${order})`);
+  const result = await searchYoutube(query, maxResults, order);
+  console.log(`📺 영상 로드 결과:`, result);
 
   if (result.error) {
     container.innerHTML = `<div style="text-align:center; padding:24px; color:var(--text-danger); font-size:12px; background:var(--bg-danger); border-radius:var(--radius-md);">
@@ -4829,7 +4958,8 @@ function refreshNews() {
 }
 
 // ====== 자산 - 유튜브 ======
-let currentAssetYtQuery = '슈카월드'; // 기본 검색어
+let currentAssetYtQuery = ''; // 사용자가 직접 검색 또는 채널 선택
+let currentAssetYtOrder = 'relevance'; // 정렬 (relevance/date/viewCount)
 
 function renderAssetYoutube() {
   const channels = userChannels.asset;
@@ -4876,17 +5006,28 @@ function renderAssetYoutube() {
 
   html += `
     <div style="display:flex; justify-content:space-between; align-items:center; margin: 16px 0 8px;">
-      <div style="font-size:13px; font-weight:600;">"${currentAssetYtQuery}" 검색 결과</div>
+      <div style="font-size:13px; font-weight:600;">${currentAssetYtQuery ? `"${currentAssetYtQuery}" 검색 결과` : '검색 결과'}</div>
     </div>
+    ${currentAssetYtQuery ? `
+    <div style="display:flex; gap:6px; margin-bottom:10px; overflow-x:auto;">
+      <button onclick="setAssetYtOrder('relevance')" style="padding:6px 12px; border:0.5px solid ${currentAssetYtOrder === 'relevance' ? 'var(--text-info)' : 'var(--border-tertiary)'}; border-radius:999px; background:${currentAssetYtOrder === 'relevance' ? 'var(--bg-info)' : 'white'}; color:${currentAssetYtOrder === 'relevance' ? 'var(--text-info)' : 'var(--text-secondary)'}; font-size:11px; cursor:pointer; font-family:inherit; white-space:nowrap;">⚡ 관련성순</button>
+      <button onclick="setAssetYtOrder('date')" style="padding:6px 12px; border:0.5px solid ${currentAssetYtOrder === 'date' ? 'var(--text-info)' : 'var(--border-tertiary)'}; border-radius:999px; background:${currentAssetYtOrder === 'date' ? 'var(--bg-info)' : 'white'}; color:${currentAssetYtOrder === 'date' ? 'var(--text-info)' : 'var(--text-secondary)'}; font-size:11px; cursor:pointer; font-family:inherit; white-space:nowrap;">🆕 최신순</button>
+      <button onclick="setAssetYtOrder('viewCount')" style="padding:6px 12px; border:0.5px solid ${currentAssetYtOrder === 'viewCount' ? 'var(--text-info)' : 'var(--border-tertiary)'}; border-radius:999px; background:${currentAssetYtOrder === 'viewCount' ? 'var(--bg-info)' : 'white'}; color:${currentAssetYtOrder === 'viewCount' ? 'var(--text-info)' : 'var(--text-secondary)'}; font-size:11px; cursor:pointer; font-family:inherit; white-space:nowrap;">🔥 조회수순</button>
+    </div>` : ''}
     <div id="yt-results">
-      <div style="text-align:center; padding:30px 20px; color:var(--text-tertiary); font-size:12px;">
+      ${currentAssetYtQuery ? `<div style="text-align:center; padding:30px 20px; color:var(--text-tertiary); font-size:12px;">
         <div class="spinner" style="margin:0 auto 10px;"></div>
         영상 불러오는 중...
-      </div>
+      </div>` : ''}
     </div>
   `;
 
   return html;
+}
+
+function setAssetYtOrder(order) {
+  currentAssetYtOrder = order;
+  renderAsset();
 }
 
 function setAssetYtQuery(q) {
@@ -4988,12 +5129,6 @@ function deleteChannel(type, id) {
     showToast('삭제됨');
     render();
   }
-}
-
-function ytSearchFromInput() {
-  const q = document.getElementById('yt-search').value.trim();
-  if (!q) { showToast('검색어를 입력해주세요'); return; }
-  openYoutubeSearch(q);
 }
 
 // ★ AI 자산 코치 - 진짜 Gemini 사용
