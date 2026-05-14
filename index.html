@@ -3871,12 +3871,12 @@ async function askGemini(prompt, options = {}) {
     return { error: 'AI 키가 설정되지 않았어요. 아래 버튼을 눌러 키를 입력하세요.', needsKey: true };
   }
 
-  // 여러 모델 시도 (3.1 Pro 우선, 안 되면 대체)
+  // 여러 모델 시도 (속도 우선 - Flash 먼저, Pro 백업)
   const models = [
-    'gemini-3.1-pro',          // 본인 Pro 키면 최우선
-    'gemini-2.5-flash',
-    'gemini-2.0-flash',
-    'gemini-1.5-flash',
+    'gemini-2.5-flash',         // 빠름 (3~5초)
+    'gemini-2.0-flash',         // 더 빠름
+    'gemini-1.5-flash',         // 안정적
+    'gemini-3.1-pro',           // 느리지만 정확
     'gemini-1.5-flash-latest',
     'gemini-flash-latest',
   ];
@@ -4951,8 +4951,6 @@ async function fetchNewsRSS() {
 
   const sources = [
     { name:'인베스팅닷컴', url:'https://kr.investing.com/rss/news_25.rss', tag:'증시' },
-    { name:'Yahoo Finance', url:'https://finance.yahoo.com/news/rssindex', tag:'🇺🇸 글로벌' },
-    { name:'네이버 증권', url:'https://m.stock.naver.com/api/news/mainNews?pageSize=20&page=1', tag:'증시', isJson:true },
     { name:'한경 증권', url:'https://www.hankyung.com/feed/finance', tag:'증시' },
     { name:'한국경제', url:'https://www.hankyung.com/feed/economy', tag:'경제' },
   ];
