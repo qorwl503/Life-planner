@@ -4950,7 +4950,8 @@ async function fetchNewsRSS() {
   }
 
   const sources = [
-    { name:'인베스팅닷컴', url:'https://kr.investing.com/rss/news_25.rss', tag:'증시' },
+    { name:'인베스팅닷컴 (주식)', url:'https://kr.investing.com/rss/news_25.rss', tag:'증시' },
+    { name:'인베스팅닷컴 (지수)', url:'https://kr.investing.com/rss/news_95.rss', tag:'지수' },
     { name:'한경 증권', url:'https://www.hankyung.com/feed/finance', tag:'증시' },
     { name:'한국경제', url:'https://www.hankyung.com/feed/economy', tag:'경제' },
   ];
@@ -5027,12 +5028,17 @@ async function fetchNewsRSS() {
           throw new Error('XML 파싱 실패');
         }
         
-        const items = doc.querySelectorAll('item');
+        const items = doc.getElementsByTagName('item');
 
         Array.from(items).slice(0, 10).forEach(item => {
-          const title = item.querySelector('title')?.textContent?.trim() || '';
-          const link = item.querySelector('link')?.textContent?.trim() || '';
-          const pubDate = item.querySelector('pubDate')?.textContent?.trim() || '';
+          // getElementsByTagName 으로 namespace 문제 회피
+          const titleEl = item.getElementsByTagName('title')[0];
+          const linkEl = item.getElementsByTagName('link')[0];
+          const pubDateEl = item.getElementsByTagName('pubDate')[0];
+
+          const title = titleEl?.textContent?.trim() || '';
+          const link = linkEl?.textContent?.trim() || '';
+          const pubDate = pubDateEl?.textContent?.trim() || '';
 
           if (title && link) {
             allItems.push({
