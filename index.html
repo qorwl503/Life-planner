@@ -4951,10 +4951,10 @@ async function fetchNewsRSS() {
 
   const sources = [
     { name:'인베스팅닷컴', url:'https://kr.investing.com/rss/news_25.rss', tag:'증시' },
+    { name:'Investing.com', url:'https://www.investing.com/rss/news_25.rss', tag:'🇺🇸 글로벌' },
     { name:'한경 증권', url:'https://www.hankyung.com/feed/finance', tag:'증시' },
     { name:'한국경제', url:'https://www.hankyung.com/feed/economy', tag:'경제' },
     { name:'Yahoo Finance', url:'https://finance.yahoo.com/news/rssindex', tag:'🇺🇸 글로벌' },
-    { name:'CNBC', url:'https://www.cnbc.com/id/100003114/device/rss/rss.html', tag:'🇺🇸 시장' },
   ];
 
   const allItems = [];
@@ -5083,11 +5083,49 @@ async function fetchNewsRSS() {
   // 어느 쪽이든 먼저 끝나는 것에 따라 진행
   await Promise.race([fetchAll, overallTimeout]);
 
-  // 시간 순 정렬
-  allItems.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
+  // 날짜 파싱 안전 처리 (인베스팅 등 다양한 형식 호환)
+  function parseDate(dateStr) {
+    if (!dateStr) return new Date(0); // 빈 값이면 1970년 (제일 뒤)
+    try {
+      // "2026-05-14 06:41:28" 형식 처리 (인베스팅) → ISO로
+      let cleaned = dateStr.trim();
+      if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(cleaned)) {
+        cleaned = cleaned.replace(' ', 'T') + '+09:00'; // 한국 시간으로 가정
+      }
+      const d = new Date(cleaned);
+      if (isNaN(d.getTime())) return new Date(0);
+      return d;
+    } catch (e) {
+      return new Date(0);
+    }
+  }
 
-  newsCache = { items: allItems, time: Date.now() };
-  return allItems;
+  // 시간 순 정렬
+  allItems.sort((a, b) => parseDate(b.pubDate) - parseDate(a.pubDate));
+
+  // 소스별 균등 배치: 각 소스에서 최소 3개씩은 상단에
+  const bySource = {};
+  allItems.forEach(item => {
+    if (!bySource[item.source]) bySource[item.source] = [];
+    bySource[item.source].push(item);
+  });
+
+  // 인터리브: 각 소스에서 1개씩 돌아가며 추가 (최대 8개씩)
+  const interleaved = [];
+  let maxIter = 8;
+  for (let i = 0; i < maxIter; i++) {
+    Object.values(bySource).forEach(arr => {
+      if (arr[i]) interleaved.push(arr[i]);
+    });
+  }
+
+  // 나머지 추가 (이미 추가된 거 제외)
+  const interleavedSet = new Set(interleaved);
+  const remaining = allItems.filter(item => !interleavedSet.has(item));
+  const finalItems = [...interleaved, ...remaining];
+
+  newsCache = { items: finalItems, time: Date.now() };
+  return finalItems;
 }
 
 function renderAssetNews() {
@@ -5106,7 +5144,7 @@ function renderAssetNews() {
 
     <div style="padding:10px 12px; background:var(--bg-info); border-radius:var(--radius-md); margin-bottom:14px; font-size:11px; color:var(--text-info); line-height:1.5;">
       <i class="ti ti-info-circle" style="font-size:12px; vertical-align:-1px;"></i>
-      인베스팅닷컴, 한경증권, 한국경제, Yahoo Finance, CNBC에서 자동으로 가져와요 (5분마다 갱신)
+      인베스팅닷컴, 한경증권, 한국경제, Yahoo Finance에서 자동으로 가져와요 (5분마다 갱신)
     </div>
 
     <div id="news-list">
