@@ -4950,10 +4950,11 @@ async function fetchNewsRSS() {
   }
 
   const sources = [
-    { name:'인베스팅닷컴 (주식)', url:'https://kr.investing.com/rss/news_25.rss', tag:'증시' },
-    { name:'인베스팅닷컴 (지수)', url:'https://kr.investing.com/rss/news_95.rss', tag:'지수' },
+    { name:'인베스팅닷컴', url:'https://kr.investing.com/rss/news_25.rss', tag:'증시' },
     { name:'한경 증권', url:'https://www.hankyung.com/feed/finance', tag:'증시' },
     { name:'한국경제', url:'https://www.hankyung.com/feed/economy', tag:'경제' },
+    { name:'Yahoo Finance', url:'https://finance.yahoo.com/news/rssindex', tag:'🇺🇸 글로벌' },
+    { name:'CNBC', url:'https://www.cnbc.com/id/100003114/device/rss/rss.html', tag:'🇺🇸 시장' },
   ];
 
   const allItems = [];
@@ -4966,8 +4967,8 @@ async function fetchNewsRSS() {
     url => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`,
   ];
 
-  // 전체 함수 최대 15초 안에 끝내기 (그 이후엔 무조건 결과 반환)
-  const overallTimeout = new Promise(resolve => setTimeout(resolve, 15000));
+  // 전체 함수 최대 25초 안에 끝내기 (인베스팅 시간 충분히)
+  const overallTimeout = new Promise(resolve => setTimeout(resolve, 25000));
 
   const fetchAll = Promise.all(sources.map(async (source) => {
     let success = false;
@@ -4979,7 +4980,7 @@ async function fetchNewsRSS() {
         const proxyUrl = proxyFn(source.url);
         
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5초로 단축
+        const timeoutId = setTimeout(() => controller.abort(), 12000); // 12초 (인베스팅 등 느린 사이트 위해)
         
         const res = await fetch(proxyUrl, {
           signal: controller.signal,
@@ -5029,30 +5030,45 @@ async function fetchNewsRSS() {
         }
         
         const items = doc.getElementsByTagName('item');
+        console.log(`📡 ${source.name}: ${items.length}개 item 발견`);
 
-        Array.from(items).slice(0, 10).forEach(item => {
-          // getElementsByTagName 으로 namespace 문제 회피
-          const titleEl = item.getElementsByTagName('title')[0];
-          const linkEl = item.getElementsByTagName('link')[0];
-          const pubDateEl = item.getElementsByTagName('pubDate')[0];
+        let addedCount = 0;
+        Array.from(items).slice(0, 10).forEach((item, idx) => {
+          // 모든 직접 자식 노드 중에서 link 찾기 (enclosure 무시)
+          const children = Array.from(item.children);
+
+          const titleEl = children.find(c => c.tagName === 'title');
+          const pubDateEl = children.find(c => c.tagName === 'pubDate');
+          // link 태그 중에서 enclosure가 아닌 거 (직접 자식 link)
+          const linkEl = children.find(c => c.tagName === 'link');
 
           const title = titleEl?.textContent?.trim() || '';
-          const link = linkEl?.textContent?.trim() || '';
-          const pubDate = pubDateEl?.textContent?.trim() || '';
+          let link = linkEl?.textContent?.trim() || '';
+          // link 태그 자체에 텍스트 없으면 href 속성 시도 (Atom 형식)
+          if (!link && linkEl) {
+            link = linkEl.getAttribute('href') || '';
+          }
+          const pubDate = pubDateEl?.textContent?.trim() || new Date().toISOString();
 
-          if (title && link) {
+          // 디버그용 첫 번째 아이템 정보
+          if (idx === 0) {
+            console.log(`   첫 item: title="${title.substring(0,30)}", link="${link.substring(0,40)}"`);
+          }
+
+          if (title) {  // link 없어도 title만 있으면 추가
             allItems.push({
               title: title.replace(/<!\[CDATA\[|\]\]>/g, '').substring(0, 100),
-              link: link.replace(/<!\[CDATA\[|\]\]>/g, ''),
+              link: link.replace(/<!\[CDATA\[|\]\]>/g, '') || '#',
               pubDate,
               source: source.name,
               tag: source.tag,
             });
+            addedCount++;
           }
         });
         
         success = true;
-        console.log(`✅ ${source.name} 로드 성공 (${items.length}개)`);
+        console.log(`✅ ${source.name} 로드 성공 (${addedCount}/${items.length}개 추가)`);
         
       } catch (e) {
         console.warn(`⚠️ ${source.name} 프록시 실패:`, e.message);
@@ -5090,7 +5106,7 @@ function renderAssetNews() {
 
     <div style="padding:10px 12px; background:var(--bg-info); border-radius:var(--radius-md); margin-bottom:14px; font-size:11px; color:var(--text-info); line-height:1.5;">
       <i class="ti ti-info-circle" style="font-size:12px; vertical-align:-1px;"></i>
-      인베스팅닷컴, 한경증권, 한국경제에서 자동으로 가져와요 (5분마다 갱신)
+      인베스팅닷컴, 한경증권, 한국경제, Yahoo Finance, CNBC에서 자동으로 가져와요 (5분마다 갱신)
     </div>
 
     <div id="news-list">
