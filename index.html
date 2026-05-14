@@ -1014,6 +1014,48 @@ function cleanupOldStorage() {
 // 앱 시작 시 1회 실행
 cleanupOldStorage();
 
+// 오프라인 감지
+function setupOfflineHandler() {
+  // 오프라인 배너 만들기
+  if (!document.getElementById('offline-banner')) {
+    const banner = document.createElement('div');
+    banner.id = 'offline-banner';
+    banner.style.cssText = 'position:fixed; top:0; left:0; right:0; background:#FF3B30; color:white; padding:8px 14px; font-size:12px; text-align:center; z-index:9999; display:none; font-family:inherit;';
+    banner.innerHTML = '<i class="ti ti-wifi-off" style="vertical-align:-2px;"></i> 인터넷 연결이 끊겼습니다. 일부 기능이 작동하지 않을 수 있어요.';
+    document.body.appendChild(banner);
+  }
+
+  const banner = document.getElementById('offline-banner');
+
+  function updateOnlineStatus() {
+    if (navigator.onLine) {
+      banner.style.display = 'none';
+    } else {
+      banner.style.display = 'block';
+    }
+  }
+
+  // 상태 변경 리스너
+  window.addEventListener('online', () => {
+    banner.style.display = 'none';
+    showToast('인터넷 연결됨');
+  });
+  window.addEventListener('offline', () => {
+    banner.style.display = 'block';
+    showToast('인터넷 연결 끊김');
+  });
+
+  // 초기 상태 체크
+  updateOnlineStatus();
+}
+
+// body 로드 후 실행
+if (document.body) {
+  setupOfflineHandler();
+} else {
+  document.addEventListener('DOMContentLoaded', setupOfflineHandler);
+}
+
 // Firebase에 저장 (디바운스 적용)
 function saveData() {
   saveLocal();
@@ -3738,12 +3780,15 @@ async function manualRefreshPrices() {
   const btn = document.getElementById('refresh-btn');
   if (btn) btn.style.animation = 'spin 1s linear infinite';
 
-  // 시세 캐시만 초기화 (AI 캐시는 유지!)
-  priceCache = {};
+  // 캐시 강제 만료 (이전 데이터는 보존, 다음 호출 시 자동 갱신)
+  // priceCache는 종목별이므로 안 날림 - fetchYahooPrice 안에서 cached 사용
+  Object.keys(priceCache).forEach(k => {
+    if (priceCache[k]) priceCache[k].time = 0; // 시간만 0으로 = 강제 만료
+  });
   exchangeRateCache = null;
   marketIndices = null;
   liveAssetData = {};
-  window._lastAssetRefresh = 0; // 자동갱신 캐시 리셋
+  window._lastAssetRefresh = 0;
 
   // 시세 새로 가져오기
   await refreshAllAssetPrices();
@@ -3752,7 +3797,6 @@ async function manualRefreshPrices() {
   loadMarketIndices();
 
   // 보유 탭이면 자산 카드도 다시 그려야 함 (가격 변동 반영)
-  // 브리핑/뉴스/플랜/유튜브 탭이면 AI 다시 호출되니까 건드리지 않음
   if (assetTab === 'holdings') {
     renderAsset();
   }
@@ -3762,7 +3806,15 @@ async function manualRefreshPrices() {
     setTimeout(() => { btn.style.animation = ''; }, 500);
   }
 
-  showToast('시세 갱신 완료');
+  // 실패 / 성공 카운트
+  const total = Object.keys(priceCache).length;
+  const success = Object.values(priceCache).filter(v => v?.data?.price).length;
+
+  if (success === total || total === 0) {
+    showToast('시세 갱신 완료');
+  } else {
+    showToast(`시세 갱신 (${success}/${total} 성공)`);
+  }
 }
 
 function switchAssetTab(t) { assetTab = t; renderAsset(); }
@@ -4343,8 +4395,15 @@ async function fetchYahooPrice(ticker) {
   // Yahoo Finance API URL
   const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=2d`;
 
-  // CORS 프록시 후보들 (순서대로 시도)
+  // CORS 프록시 후보들 (본인 Cloudflare Worker 1순위)
   const proxies = [
+    {
+      url: `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(yahooUrl)}`,
+      parse: async (res) => {
+        const w = await res.json();
+        return JSON.parse(w.contents);
+      }
+    },
     {
       url: `https://api.allorigins.win/get?url=${encodeURIComponent(yahooUrl)}`,
       parse: async (res) => {
@@ -4898,8 +4957,9 @@ async function fetchNewsRSS() {
 
   const allItems = [];
 
-  // 여러 프록시 서버 시도 (안정성)
+  // 여러 프록시 서버 시도 (본인 Cloudflare Worker 1순위 - 안정적)
   const proxies = [
+    url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
     url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
     url => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`,
