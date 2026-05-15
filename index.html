@@ -210,23 +210,23 @@
     align-items: center;
     cursor: pointer;
   }
-  .evt-todo { background: #EEF3FB; border-left-color: #A8C5F0; }
-  .evt-workout { background: #EAF6EE; border-left-color: #A8D8B9; }
-  .evt-money { background: #FFF6E5; border-left-color: #FFD18E; }
-  .evt-asset { background: #F2EEFB; border-left-color: #C5B8F0; }
-  .evt-challenge { background: #FBEEF3; border-left-color: #F0B8C8; }
+  .evt-todo { background: #E0EBF8; border-left-color: #6B9FD9; }
+  .evt-workout { background: #DDEFE3; border-left-color: #6BC495; }
+  .evt-money { background: #FFEDD0; border-left-color: #F5A852; }
+  .evt-asset { background: #E8E3F5; border-left-color: #9C8FE0; }
+  .evt-challenge { background: #F8E0E8; border-left-color: #E091A8; }
   .evt-icon { font-size: 16px; flex-shrink: 0; }
-  .evt-todo .evt-icon { color: #6B8FCC; }
-  .evt-workout .evt-icon { color: #6BAE85; }
-  .evt-money .evt-icon { color: #C99445; }
-  .evt-asset .evt-icon { color: #8C7DCC; }
-  .evt-challenge .evt-icon { color: #C97D95; }
+  .evt-todo .evt-icon { color: #4A82C2; }
+  .evt-workout .evt-icon { color: #4DA275; }
+  .evt-money .evt-icon { color: #C9863A; }
+  .evt-asset .evt-icon { color: #7D6FC9; }
+  .evt-challenge .evt-icon { color: #C9758F; }
   .evt-challenge .title, .evt-challenge .sub { color: #A05674; }
   .evt-body { flex: 1; min-width: 0; }
   .evt-body .title { font-size: 13px; font-weight: 500; }
   .evt-body .sub { font-size: 10px; opacity: 0.85; margin-top: 2px; }
-  .evt-todo .title, .evt-todo .sub { color: #4F70AB; }
-  .evt-workout .title, .evt-workout .sub { color: #4D9670; }
+  .evt-todo .title, .evt-todo .sub { color: #3D6FAA; }
+  .evt-workout .title, .evt-workout .sub { color: #3D8A60; }
   .evt-money .title, .evt-money .sub { color: #A87836; }
   .evt-asset .title, .evt-asset .sub { color: #6B5CB8; }
   .evt-amount { font-size: 11px; font-weight: 500; flex-shrink: 0; }
@@ -1346,43 +1346,94 @@ function renderCalendar() {
     return dots;
   }
 
-  // 부드러운 파스텔 색상 (아기자기)
+  // 적당히 진한 파스텔 (보기 편한 톤)
   const dotColor = {
-    w:'#A8D8B9',  // 민트 - 운동
-    m:'#FFD18E',  // 살구 - 가계부
-    t:'#A8C5F0',  // 베이비블루 - 할일
-    a:'#C5B8F0',  // 라일락 - 자산
-    c:'#F0B8C8',  // 베이비핑크 - 챌린지
+    w:'#6BC495',  // 진한 민트 - 운동
+    m:'#F5A852',  // 진한 살구 - 가계부
+    t:'#6B9FD9',  // 진한 베이비블루 - 할일
+    a:'#9C8FE0',  // 진한 라일락 - 자산
+    c:'#E091A8',  // 진한 베이비핑크 - 챌린지
   };
 
+  // 월/주 토글
+  const isWeekView = window.calendarMode === 'week';
+
   let html = `
+    <div style="display:flex; gap:4px; padding:3px; background:var(--bg-secondary); border-radius:8px; margin-bottom:12px;">
+      <button onclick="setCalendarMode('month')" style="flex:1; padding:6px; border:none; background:${!isWeekView ? 'white' : 'transparent'}; color:${!isWeekView ? 'var(--text-info)' : 'var(--text-secondary)'}; font-size:11px; font-weight:600; border-radius:6px; cursor:pointer; font-family:inherit; ${!isWeekView ? 'box-shadow:0 1px 3px rgba(0,0,0,0.08);' : ''}">월</button>
+      <button onclick="setCalendarMode('week')" style="flex:1; padding:6px; border:none; background:${isWeekView ? 'white' : 'transparent'}; color:${isWeekView ? 'var(--text-info)' : 'var(--text-secondary)'}; font-size:11px; font-weight:600; border-radius:6px; cursor:pointer; font-family:inherit; ${isWeekView ? 'box-shadow:0 1px 3px rgba(0,0,0,0.08);' : ''}">주</button>
+    </div>
     <div class="cal-weekdays">
       <span>일</span><span>월</span><span>화</span><span>수</span>
       <span>목</span><span>금</span><span>토</span>
-    </div>
-    <div class="cal-grid">`;
+    </div>`;
 
-  const totalCells = Math.ceil((startOffset + daysInMonth) / 7) * 7;
-  for (let i = 0; i < totalCells; i++) {
-    const dayNum = i - startOffset + 1;
-    if (i < startOffset || dayNum > daysInMonth) {
-      html += `<div></div>`; continue;
+  if (isWeekView) {
+    // ====== 주간 보기 ======
+    // 선택된 날 기준 그 주의 일~토
+    const selectedDate = new Date(viewYear, viewMonth, selectedDay);
+    const selectedDow = selectedDate.getDay();
+    const weekStart = new Date(selectedDate);
+    weekStart.setDate(selectedDate.getDate() - selectedDow);
+
+    html += `<div style="display:grid; grid-template-columns: repeat(7, 1fr); gap:4px; margin-bottom:14px;">`;
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(weekStart);
+      d.setDate(weekStart.getDate() + i);
+      const dKey = dateKey(d.getFullYear(), d.getMonth(), d.getDate());
+      const todayKey = dateKey(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+      const isToday = dKey === todayKey;
+      const isInSelectedMonth = d.getMonth() === viewMonth && d.getFullYear() === viewYear;
+      const isSun = i === 0;
+      const isSat = i === 6;
+
+      // 이 날의 데이터
+      const dayWorkout = workoutLog[dKey]?.done;
+      const dayTodos = todos.filter(t => t.dateKey === dKey);
+      const dayExpenses = budget.expenses.filter(e => e.dateKey === dKey);
+      const dayChs = challenges.filter(c => !c.completed && c.startDate <= dKey);
+
+      const colorCount = (dayWorkout ? 1 : 0) + (dayTodos.length > 0 ? 1 : 0) + (dayExpenses.length > 0 ? 1 : 0) + (dayChs.length > 0 ? 1 : 0);
+
+      html += `
+        <div onclick="selectDayFromWeek('${dKey}')" style="cursor:pointer; min-height:130px; background:${isToday ? 'rgba(0,122,255,0.06)' : 'white'}; border:1px solid ${isToday ? 'var(--text-info)' : 'var(--border-tertiary)'}; border-radius:8px; padding:6px 4px; display:flex; flex-direction:column; gap:3px; ${!isInSelectedMonth ? 'opacity:0.4;' : ''}">
+          <div style="font-size:9px; color:${isSun?'#FF6B6B':isSat?'#6B9FD9':'var(--text-tertiary)'}; text-align:center; font-weight:500;">${dayLabels[i]}</div>
+          <div style="font-size:14px; font-weight:${isToday?'700':'600'}; color:${isToday?'var(--text-info)':isSun?'#FF6B6B':isSat?'#6B9FD9':'var(--text-primary)'}; text-align:center; margin-bottom:2px;">${d.getDate()}</div>
+          ${dayWorkout ? `<div style="font-size:8px; padding:2px 4px; background:#DDEFE3; color:#3D8A60; border-radius:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">💪 운동</div>` : ''}
+          ${dayTodos.slice(0, 3).map(t => `<div style="font-size:8px; padding:2px 4px; background:#E0EBF8; color:#3D6FAA; border-radius:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${t.done?'<s>':''}${(t.title||'').substring(0,8)}${t.done?'</s>':''}</div>`).join('')}
+          ${dayTodos.length > 3 ? `<div style="font-size:7px; color:var(--text-tertiary); text-align:center;">+${dayTodos.length-3}</div>` : ''}
+          ${dayExpenses.length > 0 ? `<div style="font-size:8px; padding:2px 4px; background:#FFEDD0; color:#A87836; border-radius:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">💰 ${dayExpenses.length}건</div>` : ''}
+          ${dayChs.length > 0 ? `<div style="font-size:8px; padding:2px 4px; background:#F8E0E8; color:#A05674; border-radius:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">🎯 챌린지</div>` : ''}
+        </div>
+      `;
     }
-    const isToday = dayNum === today && isViewingCurrentMonth();
-    const isSelected = dayNum === selectedDay && !isToday;
-    const isSun = i % 7 === 0;
-    const isSat = i % 7 === 6;
-    const dots = getDots(dayNum).slice(0, 4).map(d => `<span class="dot" style="background:${dotColor[d]}"></span>`).join('');
-    const cls = `cal-day ${isToday ? 'today' : ''} ${isSelected ? 'selected' : ''} ${isSun ? 'sun' : ''} ${isSat ? 'sat' : ''}`;
-    html += `<button class="${cls}" onclick="selectDay(${dayNum})"><span class="num">${dayNum}</span><div class="dots">${dots}</div></button>`;
+    html += `</div>`;
+  } else {
+    // ====== 월간 보기 (기존) ======
+    html += `<div class="cal-grid">`;
+    const totalCells = Math.ceil((startOffset + daysInMonth) / 7) * 7;
+    for (let i = 0; i < totalCells; i++) {
+      const dayNum = i - startOffset + 1;
+      if (i < startOffset || dayNum > daysInMonth) {
+        html += `<div></div>`; continue;
+      }
+      const isToday = dayNum === today && isViewingCurrentMonth();
+      const isSelected = dayNum === selectedDay && !isToday;
+      const isSun = i % 7 === 0;
+      const isSat = i % 7 === 6;
+      const dots = getDots(dayNum).slice(0, 4).map(d => `<span class="dot" style="background:${dotColor[d]}"></span>`).join('');
+      const cls = `cal-day ${isToday ? 'today' : ''} ${isSelected ? 'selected' : ''} ${isSun ? 'sun' : ''} ${isSat ? 'sat' : ''}`;
+      html += `<button class="${cls}" onclick="selectDay(${dayNum})"><span class="num">${dayNum}</span><div class="dots">${dots}</div></button>`;
+    }
+    html += `</div>`;
   }
 
-  html += `</div>
+  html += `
     <div class="cal-legend">
-      <span><span class="ld" style="background:#A8D8B9"></span>운동</span>
-      <span><span class="ld" style="background:#FFD18E"></span>가계부</span>
-      <span><span class="ld" style="background:#A8C5F0"></span>할일</span>
-      <span><span class="ld" style="background:#F0B8C8"></span>챌린지</span>
+      <span><span class="ld" style="background:#6BC495"></span>운동</span>
+      <span><span class="ld" style="background:#F5A852"></span>가계부</span>
+      <span><span class="ld" style="background:#6B9FD9"></span>할일</span>
+      <span><span class="ld" style="background:#E091A8"></span>챌린지</span>
     </div>`;
 
   const dow = (startOffset + selectedDay - 1) % 7;
@@ -1495,6 +1546,25 @@ function getEventsForDay(d) {
 }
 
 function selectDay(d) { selectedDay = d; renderCalendar(); }
+
+// 월/주 토글
+function setCalendarMode(mode) {
+  window.calendarMode = mode;
+  renderCalendar();
+}
+
+// 주간보기에서 날짜 선택
+function selectDayFromWeek(dateKeyStr) {
+  const [y, m, d] = dateKeyStr.split('-').map(Number);
+  if (y !== viewYear || (m - 1) !== viewMonth) {
+    // 다른 달이면 그 달로 이동
+    viewYear = y;
+    viewMonth = m - 1;
+  }
+  selectedDay = d;
+  // 주간보기 유지하고 그 날의 자세한 내용은 아래 리스트로 표시됨
+  renderCalendar();
+}
 function filter(f) { currentFilter = f; renderCalendar(); }
 
 // 캘린더 월 네비게이션
@@ -1741,18 +1811,15 @@ function renderTodo() {
   const weekDone = weekTodos.filter(t => t.done).length;
   const weekPct = weekTodos.length > 0 ? Math.round((weekDone / weekTodos.length) * 100) : 0;
 
-  // 연속 달성일 (오늘부터 거꾸로 - 모든 할일 완료한 날이 며칠 연속인지)
-  let streak = 0;
-  for (let i = 0; i < 30; i++) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    const k = dateKey(d.getFullYear(), d.getMonth(), d.getDate());
-    const dayTodos = todos.filter(t => t.dateKey === k);
-    if (dayTodos.length === 0) continue; // 할일 없는 날은 스킵
-    const allDone = dayTodos.every(t => t.done);
-    if (allDone) streak++;
-    else break;
-  }
+  // 연속 달성일 (사용 안함 - 곧 마감으로 대체)
+  // 곧 마감 = 3일 안에 마감인 미완료 할일
+  const today3D = new Date();
+  const day3Later = new Date();
+  day3Later.setDate(today3D.getDate() + 3);
+  const todayKeyStr = dateKey(today3D.getFullYear(), today3D.getMonth(), today3D.getDate());
+  const day3LaterKey = dateKey(day3Later.getFullYear(), day3Later.getMonth(), day3Later.getDate());
+  const soonDueTodos = todos.filter(t => !t.done && t.dateKey && t.dateKey >= todayKeyStr && t.dateKey <= day3LaterKey);
+  const flaggedTodos = todos.filter(t => !t.done && t.flag);
 
   html += `
     <div style="display:flex; align-items:center; gap:8px; margin: 18px 0 8px;">
@@ -1789,16 +1856,16 @@ function renderTodo() {
         </div>
       </div>
 
-      <!-- 연속 달성 -->
-      <div style="padding:12px; border-radius:12px; background:${streak > 0 ? 'rgba(255,159,10,0.1)' : 'var(--bg-secondary)'}; border:0.5px solid ${streak > 0 ? 'rgba(255,159,10,0.3)' : 'var(--border-tertiary)'};">
+      <!-- 곧 마감 (3일 이내) -->
+      <div style="padding:12px; border-radius:12px; background:${soonDueTodos.length > 0 ? 'rgba(245,168,82,0.12)' : 'var(--bg-secondary)'}; border:0.5px solid ${soonDueTodos.length > 0 ? 'rgba(245,168,82,0.3)' : 'var(--border-tertiary)'};">
         <div style="display:flex; align-items:center; justify-content:space-between;">
-          <span style="font-size:10px; color:${streak > 0 ? '#FF9F0A' : 'var(--text-secondary)'}; font-weight:600;">🔥 연속</span>
+          <span style="font-size:10px; color:${soonDueTodos.length > 0 ? '#C9863A' : 'var(--text-secondary)'}; font-weight:600;">⏱️ 곧 마감</span>
         </div>
-        <div style="font-size:20px; font-weight:700; color:${streak > 0 ? '#FF9F0A' : 'var(--text-tertiary)'}; margin-top:4px;">
-          ${streak}<span style="font-size:13px; opacity:0.6;">일</span>
+        <div style="font-size:20px; font-weight:700; color:${soonDueTodos.length > 0 ? '#C9863A' : 'var(--text-tertiary)'}; margin-top:4px;">
+          ${soonDueTodos.length}<span style="font-size:13px; opacity:0.6;">개</span>
         </div>
-        <div style="font-size:10px; color:${streak > 0 ? '#FF9F0A' : 'var(--text-tertiary)'}; opacity:0.85; margin-top:2px;">
-          ${streak === 0 ? '오늘부터 시작!' : streak >= 7 ? '대단해요!' : '계속 가요'}
+        <div style="font-size:10px; color:${soonDueTodos.length > 0 ? '#C9863A' : 'var(--text-tertiary)'}; opacity:0.85; margin-top:2px;">
+          ${soonDueTodos.length === 0 ? '여유 있어요' : '3일 이내'}
         </div>
       </div>
 
