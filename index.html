@@ -2747,7 +2747,114 @@ function renderMoney() {
         <i class="ti ti-chevron-right" style="font-size:16px;"></i>
       </button>
     </div>
+  `;
 
+  // ===== 월별 자산 흐름 요약 카드 =====
+  const monthlyIncome = Number(settings.monthlyIncome) || 0;
+  // 투자 카테고리 = 자산 종류와 동일
+  const investCategories = ['투자', '주식', 'ETF', '펀드', '채권', '금', '달러', '예적금', '부동산'];
+  const investSpent = viewMonthExpenses
+    .filter(e => investCategories.includes(e.cat))
+    .reduce((s, e) => s + Number(e.amt), 0);
+  const livingSpent = variableSpent - investSpent;
+  const totalExpense = fixedTotal + livingSpent + investSpent;
+  const remaining = monthlyIncome - totalExpense;
+
+  const pct = (v) => monthlyIncome > 0 ? (v / monthlyIncome * 100) : 0;
+  const fixedPct = pct(fixedTotal);
+  const livingPct = pct(livingSpent);
+  const investPct = pct(investSpent);
+  const remainPct = monthlyIncome > 0 ? Math.max(0, 100 - fixedPct - livingPct - investPct) : 0;
+
+  // SVG 도넛 차트
+  let cumDeg = 0;
+  const radius = 54;
+  const cx = 70, cy = 70;
+  function arc(deg) {
+    if (deg <= 0) return '';
+    if (deg >= 360) deg = 359.99;
+    const startAngle = (cumDeg - 90) * Math.PI / 180;
+    const endAngle = (cumDeg + deg - 90) * Math.PI / 180;
+    const x1 = cx + radius * Math.cos(startAngle);
+    const y1 = cy + radius * Math.sin(startAngle);
+    const x2 = cx + radius * Math.cos(endAngle);
+    const y2 = cy + radius * Math.sin(endAngle);
+    const largeArc = deg > 180 ? 1 : 0;
+    cumDeg += deg;
+    return `M ${cx} ${cy} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`;
+  }
+  const fixedArc = monthlyIncome > 0 ? arc(360 * fixedPct / 100) : '';
+  const livingArc = monthlyIncome > 0 ? arc(360 * livingPct / 100) : '';
+  const investArc = monthlyIncome > 0 ? arc(360 * investPct / 100) : '';
+  const remainArc = monthlyIncome > 0 ? arc(360 * remainPct / 100) : '';
+
+  html += `
+    <div style="background:white; border:0.5px solid var(--border-tertiary); border-radius:14px; padding:16px; margin-bottom:14px; box-shadow: 0 1px 3px rgba(0,0,0,0.03);">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+        <div style="font-size:13px; font-weight:600;">${monthLabel} 자산 흐름</div>
+        ${monthlyIncome === 0 ? '<button onclick="openSettingsModal()" style="border:none; background:var(--text-info); color:white; padding:5px 10px; border-radius:999px; font-size:10px; font-weight:500; cursor:pointer; font-family:inherit;">수입 설정</button>' : ''}
+      </div>
+
+      ${monthlyIncome === 0 ? `
+        <div style="text-align:center; padding:20px; color:var(--text-tertiary); font-size:12px;">
+          월 수입을 설정하면<br>전체 자산 흐름이 표시돼요
+        </div>
+      ` : `
+        <div style="display:flex; align-items:center; gap:14px;">
+          <div style="flex-shrink:0; position:relative;">
+            <svg width="140" height="140" viewBox="0 0 140 140">
+              ${fixedPct > 0 ? `<path d="${fixedArc}" fill="#FF9F0A" />` : ''}
+              ${livingPct > 0 ? `<path d="${livingArc}" fill="#FF6B6B" />` : ''}
+              ${investPct > 0 ? `<path d="${investArc}" fill="#5E5CE6" />` : ''}
+              ${remainPct > 0 ? `<path d="${remainArc}" fill="#34C759" />` : ''}
+              <circle cx="70" cy="70" r="34" fill="white" />
+            </svg>
+            <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); text-align:center;">
+              <div style="font-size:9px; color:var(--text-tertiary);">잔액</div>
+              <div style="font-size:13px; font-weight:700; color:${remaining >= 0 ? 'var(--text-success)' : 'var(--text-danger)'};">${remaining >= 0 ? '+' : ''}${(remaining/10000).toFixed(0)}만</div>
+            </div>
+          </div>
+
+          <div style="flex:1; min-width:0;">
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:5px 0; border-bottom:0.5px solid var(--border-tertiary);">
+              <span style="font-size:10px; color:var(--text-tertiary);">💰 수입</span>
+              <div style="font-size:12px; font-weight:600;">${monthlyIncome.toLocaleString()}원</div>
+            </div>
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:5px 0; border-bottom:0.5px solid var(--border-tertiary);">
+              <div style="display:flex; align-items:center; gap:6px;">
+                <div style="width:8px; height:8px; border-radius:50%; background:#FF9F0A;"></div>
+                <span style="font-size:11px;">고정지출</span>
+              </div>
+              <div style="font-size:11px; font-weight:600; color:#FF9F0A;">${fixedTotal.toLocaleString()}원 <span style="font-size:9px; color:var(--text-tertiary);">${fixedPct.toFixed(0)}%</span></div>
+            </div>
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:5px 0; border-bottom:0.5px solid var(--border-tertiary);">
+              <div style="display:flex; align-items:center; gap:6px;">
+                <div style="width:8px; height:8px; border-radius:50%; background:#FF6B6B;"></div>
+                <span style="font-size:11px;">변동 생활비</span>
+              </div>
+              <div style="font-size:11px; font-weight:600; color:#FF6B6B;">${livingSpent.toLocaleString()}원 <span style="font-size:9px; color:var(--text-tertiary);">${livingPct.toFixed(0)}%</span></div>
+            </div>
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:5px 0; border-bottom:0.5px solid var(--border-tertiary);">
+              <div style="display:flex; align-items:center; gap:6px;">
+                <div style="width:8px; height:8px; border-radius:50%; background:#5E5CE6;"></div>
+                <span style="font-size:11px;">자산 투자</span>
+              </div>
+              <div style="font-size:11px; font-weight:600; color:#5E5CE6;">${investSpent.toLocaleString()}원 <span style="font-size:9px; color:var(--text-tertiary);">${investPct.toFixed(0)}%</span></div>
+            </div>
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:5px 0;">
+              <div style="display:flex; align-items:center; gap:6px;">
+                <div style="width:8px; height:8px; border-radius:50%; background:#34C759;"></div>
+                <span style="font-size:11px; font-weight:600;">잔액</span>
+              </div>
+              <div style="font-size:12px; font-weight:700; color:${remaining >= 0 ? '#34C759' : 'var(--text-danger)'};">${remaining >= 0 ? '+' : ''}${remaining.toLocaleString()}원 <span style="font-size:9px; color:var(--text-tertiary);">${remainPct.toFixed(0)}%</span></div>
+            </div>
+          </div>
+        </div>
+      `}
+    </div>
+  `;
+
+  html += `
     <div class="budget-hero ${heroClass}">
       <div class="label">${isCurrentMonth ? '변동 생활비 (남은 금액)' : `${monthLabel} 지출 내역`}</div>
       <div class="big-num">${isCurrentMonth ? variableRemaining.toLocaleString() + '원' : variableSpent.toLocaleString() + '원'}</div>
@@ -3328,6 +3435,7 @@ function openExpenseModal(forDateKey) {
 
       <div class="field">
         <div class="field-label">카테고리</div>
+        <div style="margin-bottom:8px; font-size:10px; color:var(--text-tertiary); font-weight:500;">생활비</div>
         <div class="cat-grid" id="cat-grid">
           <button class="cat-btn active" data-c="식비"><i class="ti ti-bowl"></i><span>식비</span></button>
           <button class="cat-btn" data-c="교통"><i class="ti ti-bus"></i><span>교통</span></button>
@@ -3337,6 +3445,17 @@ function openExpenseModal(forDateKey) {
           <button class="cat-btn" data-c="의료"><i class="ti ti-heartbeat"></i><span>의료</span></button>
           <button class="cat-btn" data-c="생활"><i class="ti ti-home-2"></i><span>생활</span></button>
           <button class="cat-btn" data-c="기타"><i class="ti ti-dots"></i><span>기타</span></button>
+        </div>
+        <div style="margin:14px 0 8px; font-size:10px; color:var(--text-tertiary); font-weight:500;">💎 자산 투자</div>
+        <div class="cat-grid" id="cat-grid-invest">
+          <button class="cat-btn" data-c="주식"><i class="ti ti-chart-line"></i><span>주식</span></button>
+          <button class="cat-btn" data-c="ETF"><i class="ti ti-chart-area-line"></i><span>ETF</span></button>
+          <button class="cat-btn" data-c="펀드"><i class="ti ti-chart-pie"></i><span>펀드</span></button>
+          <button class="cat-btn" data-c="채권"><i class="ti ti-certificate"></i><span>채권</span></button>
+          <button class="cat-btn" data-c="금"><i class="ti ti-coin"></i><span>금</span></button>
+          <button class="cat-btn" data-c="달러"><i class="ti ti-currency-dollar"></i><span>달러</span></button>
+          <button class="cat-btn" data-c="예적금"><i class="ti ti-pig-money"></i><span>예적금</span></button>
+          <button class="cat-btn" data-c="부동산"><i class="ti ti-building"></i><span>부동산</span></button>
         </div>
       </div>
 
@@ -3348,11 +3467,16 @@ function openExpenseModal(forDateKey) {
   `;
   modal.classList.add('show');
   setTimeout(() => {
+    // 두 그리드 (생활비 + 투자) 연동 - 하나 선택하면 다른쪽 해제
+    function selectCat(b) {
+      document.querySelectorAll('#cat-grid .cat-btn, #cat-grid-invest .cat-btn').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+    }
     document.querySelectorAll('#cat-grid .cat-btn').forEach(b => {
-      b.addEventListener('click', () => {
-        document.querySelectorAll('#cat-grid .cat-btn').forEach(x => x.classList.remove('active'));
-        b.classList.add('active');
-      });
+      b.addEventListener('click', () => selectCat(b));
+    });
+    document.querySelectorAll('#cat-grid-invest .cat-btn').forEach(b => {
+      b.addEventListener('click', () => selectCat(b));
     });
   }, 50);
 }
@@ -3360,7 +3484,9 @@ function openExpenseModal(forDateKey) {
 function saveExpense() {
   const amt = Number(document.getElementById('amt-input').value);
   const memo = document.getElementById('memo').value.trim();
-  const cat = document.querySelector('#cat-grid .cat-btn.active').dataset.c;
+  // 생활비 또는 투자 카테고리 중 활성화된 것
+  const activeBtn = document.querySelector('#cat-grid .cat-btn.active, #cat-grid-invest .cat-btn.active');
+  const cat = activeBtn?.dataset.c || '기타';
   const dateKeyVal = document.getElementById('exp-date').value || todayKey();
   if (!amt) { showToast('금액을 입력해주세요'); return; }
 
@@ -6258,6 +6384,7 @@ function openAssetAddModal() {
           <button class="cat-btn" data-t="펀드"><i class="ti ti-chart-pie"></i><span>펀드</span></button>
           <button class="cat-btn" data-t="채권"><i class="ti ti-certificate"></i><span>채권</span></button>
           <button class="cat-btn" data-t="금"><i class="ti ti-coin"></i><span>금</span></button>
+          <button class="cat-btn" data-t="달러"><i class="ti ti-currency-dollar"></i><span>달러</span></button>
           <button class="cat-btn" data-t="예적금"><i class="ti ti-pig-money"></i><span>예적금</span></button>
           <button class="cat-btn" data-t="현금"><i class="ti ti-cash"></i><span>현금</span></button>
           <button class="cat-btn" data-t="부동산"><i class="ti ti-building"></i><span>부동산</span></button>
@@ -6340,6 +6467,27 @@ function renderAssetFormFields(type) {
         </div>
       `;
     }
+
+  } else if (type === '달러') {
+    html += `
+      <div class="field">
+        <div class="field-label">티커 (선택, USD/KRW 환율 자동 갱신)</div>
+        <input type="text" id="a-ticker" placeholder="예: KRW=X (환율 자동)" />
+      </div>
+      <div class="field" style="display:flex; gap:8px;">
+        <div style="flex:1;">
+          <div class="field-label">달러 금액 ($)</div>
+          <input type="number" id="a-qty" placeholder="1000" step="0.01" />
+        </div>
+        <div style="flex:1;">
+          <div class="field-label">평균 매입 환율 (원/$)</div>
+          <input type="number" id="a-price" placeholder="예: 1380" step="0.01" />
+        </div>
+      </div>
+      <div style="padding:10px 12px; background:var(--bg-info); border-radius:var(--radius-md); font-size:11px; color:var(--text-info); line-height:1.6;">
+        💡 KRW=X 입력하면 현재 환율로 자동 평가
+      </div>
+    `;
 
   } else if (type === '금') {
     html += `
@@ -6474,6 +6622,7 @@ function getNamePlaceholder(type) {
     '펀드': '예: KB증권 차이나포커스펀드',
     '채권': '예: 국고채 3년물',
     '금': '예: 한국조폐공사 골드바',
+    '달러': '예: 외화예금, 미국 주식 계좌',
     '예적금': '예: 토스 정기예금',
     '현금': '예: 통장 잔액',
     '부동산': '예: 서울 강남 아파트',
@@ -6489,6 +6638,7 @@ function getNotePlaceholder(type) {
     '펀드': '예: 운용보수 0.5%',
     '채권': '예: 만기 2027.01',
     '금': '예: 신한은행 골드뱅킹',
+    '달러': '예: 외화통장, 매수일',
     '예적금': '예: 월 50만 자동이체',
     '현금': '예: 비상금',
     '부동산': '예: 25평, 2018년 매입',
