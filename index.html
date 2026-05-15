@@ -210,25 +210,25 @@
     align-items: center;
     cursor: pointer;
   }
-  .evt-todo { background: var(--bg-secondary); border-left-color: var(--text-primary); }
-  .evt-workout { background: var(--bg-success); border-left-color: var(--text-success); }
-  .evt-money { background: var(--bg-warning); border-left-color: var(--text-warning); }
-  .evt-asset { background: var(--bg-info); border-left-color: var(--text-info); }
-  .evt-challenge { background: #F5EFFF; border-left-color: #9B59B6; }
+  .evt-todo { background: #EEF3FB; border-left-color: #A8C5F0; }
+  .evt-workout { background: #EAF6EE; border-left-color: #A8D8B9; }
+  .evt-money { background: #FFF6E5; border-left-color: #FFD18E; }
+  .evt-asset { background: #F2EEFB; border-left-color: #C5B8F0; }
+  .evt-challenge { background: #FBEEF3; border-left-color: #F0B8C8; }
   .evt-icon { font-size: 16px; flex-shrink: 0; }
-  .evt-todo .evt-icon { color: var(--text-tertiary); }
-  .evt-workout .evt-icon { color: var(--text-success); }
-  .evt-money .evt-icon { color: var(--text-warning); }
-  .evt-asset .evt-icon { color: var(--text-info); }
-  .evt-challenge .evt-icon { color: #9B59B6; }
-  .evt-challenge .title, .evt-challenge .sub { color: #6B3F8B; }
+  .evt-todo .evt-icon { color: #6B8FCC; }
+  .evt-workout .evt-icon { color: #6BAE85; }
+  .evt-money .evt-icon { color: #C99445; }
+  .evt-asset .evt-icon { color: #8C7DCC; }
+  .evt-challenge .evt-icon { color: #C97D95; }
+  .evt-challenge .title, .evt-challenge .sub { color: #A05674; }
   .evt-body { flex: 1; min-width: 0; }
   .evt-body .title { font-size: 13px; font-weight: 500; }
   .evt-body .sub { font-size: 10px; opacity: 0.85; margin-top: 2px; }
-  .evt-workout .title, .evt-workout .sub { color: var(--text-success); }
-  .evt-money .title, .evt-money .sub { color: var(--text-warning); }
-  .evt-asset .title, .evt-asset .sub { color: var(--text-info); }
-  .evt-todo .sub { color: var(--text-tertiary); }
+  .evt-todo .title, .evt-todo .sub { color: #4F70AB; }
+  .evt-workout .title, .evt-workout .sub { color: #4D9670; }
+  .evt-money .title, .evt-money .sub { color: #A87836; }
+  .evt-asset .title, .evt-asset .sub { color: #6B5CB8; }
   .evt-amount { font-size: 11px; font-weight: 500; flex-shrink: 0; }
   .evt-money .evt-amount { color: var(--text-warning); }
   .evt-asset .evt-amount { color: var(--text-info); }
@@ -282,8 +282,8 @@
   .cal-day.sun { color: var(--text-danger); }
   .cal-day.sat { color: var(--text-info); }
   .cal-day .num { font-size: 13px; }
-  .cal-day .dots { display: flex; gap: 2px; height: 4px; align-items: center; }
-  .cal-day .dot { width: 4px; height: 4px; border-radius: 50%; }
+  .cal-day .dots { display: flex; gap: 2px; height: 5px; align-items: center; justify-content: center; }
+  .cal-day .dot { width: 5px; height: 5px; border-radius: 50%; }
 
   .cal-legend {
     display: flex; gap: 10px;
@@ -1346,12 +1346,13 @@ function renderCalendar() {
     return dots;
   }
 
+  // 부드러운 파스텔 색상 (아기자기)
   const dotColor = {
-    w:'var(--text-success)',
-    m:'var(--text-warning)',
-    t:'var(--text-primary)',
-    a:'var(--text-info)',
-    c:'#9B59B6'
+    w:'#A8D8B9',  // 민트 - 운동
+    m:'#FFD18E',  // 살구 - 가계부
+    t:'#A8C5F0',  // 베이비블루 - 할일
+    a:'#C5B8F0',  // 라일락 - 자산
+    c:'#F0B8C8',  // 베이비핑크 - 챌린지
   };
 
   let html = `
@@ -1378,10 +1379,10 @@ function renderCalendar() {
 
   html += `</div>
     <div class="cal-legend">
-      <span><span class="ld" style="background:var(--text-success)"></span>운동</span>
-      <span><span class="ld" style="background:var(--text-warning)"></span>가계부</span>
-      <span><span class="ld" style="background:var(--text-primary)"></span>할일</span>
-      <span><span class="ld" style="background:#9B59B6"></span>챌린지</span>
+      <span><span class="ld" style="background:#A8D8B9"></span>운동</span>
+      <span><span class="ld" style="background:#FFD18E"></span>가계부</span>
+      <span><span class="ld" style="background:#A8C5F0"></span>할일</span>
+      <span><span class="ld" style="background:#F0B8C8"></span>챌린지</span>
     </div>`;
 
   const dow = (startOffset + selectedDay - 1) % 7;
@@ -1719,17 +1720,100 @@ function renderTodo() {
   const done = todos.filter(t => t.done).length;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
 
+  // 할일 통계 계산 - 세분화
+  const todayK = todayKey();
+  const todayTodos = todos.filter(t => t.dateKey === todayK);
+  const todayDone = todayTodos.filter(t => t.done).length;
+
+  const pastTodos = todos.filter(t => todoGroup(t.dateKey) === 'past' && !t.done);
+  const pastDoneAll = todos.filter(t => t.dateKey && t.dateKey < todayK && t.done);
+
+  // 이번주 (월~일)
+  const todayDate = new Date();
+  const dayOfWeek = todayDate.getDay() === 0 ? 7 : todayDate.getDay(); // 일=7
+  const monday = new Date(todayDate);
+  monday.setDate(todayDate.getDate() - (dayOfWeek - 1));
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  const mondayK = dateKey(monday.getFullYear(), monday.getMonth(), monday.getDate());
+  const sundayK = dateKey(sunday.getFullYear(), sunday.getMonth(), sunday.getDate());
+  const weekTodos = todos.filter(t => t.dateKey && t.dateKey >= mondayK && t.dateKey <= sundayK);
+  const weekDone = weekTodos.filter(t => t.done).length;
+  const weekPct = weekTodos.length > 0 ? Math.round((weekDone / weekTodos.length) * 100) : 0;
+
+  // 연속 달성일 (오늘부터 거꾸로 - 모든 할일 완료한 날이 며칠 연속인지)
+  let streak = 0;
+  for (let i = 0; i < 30; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const k = dateKey(d.getFullYear(), d.getMonth(), d.getDate());
+    const dayTodos = todos.filter(t => t.dateKey === k);
+    if (dayTodos.length === 0) continue; // 할일 없는 날은 스킵
+    const allDone = dayTodos.every(t => t.done);
+    if (allDone) streak++;
+    else break;
+  }
+
   html += `
     <div style="display:flex; align-items:center; gap:8px; margin: 18px 0 8px;">
       <span style="font-size:14px; font-weight:600;">📋 할일</span>
     </div>
 
-    <div style="margin: 6px 0 14px; padding:14px; border-radius:var(--radius-md); background:var(--bg-secondary);">
-      <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px;">
-        <span style="font-size:12px; color:var(--text-tertiary);">진행률</span>
-        <span style="font-size:12px; font-weight:600;">${done} / ${total}</span>
+    <!-- 4가지 카드 통계 -->
+    <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap:8px; margin-bottom:14px;">
+      <!-- 오늘 -->
+      <div style="padding:12px; border-radius:12px; background:var(--bg-info); border:0.5px solid rgba(0,122,255,0.2);">
+        <div style="display:flex; align-items:center; justify-content:space-between;">
+          <span style="font-size:10px; color:var(--text-info); font-weight:600;">📅 오늘</span>
+          ${todayTodos.length > 0 && todayDone === todayTodos.length ? '<span style="font-size:14px;">✨</span>' : ''}
+        </div>
+        <div style="font-size:20px; font-weight:700; color:var(--text-info); margin-top:4px;">
+          ${todayDone}<span style="font-size:13px; opacity:0.6;">/${todayTodos.length}</span>
+        </div>
+        <div style="font-size:10px; color:var(--text-info); opacity:0.85; margin-top:2px;">
+          ${todayTodos.length === 0 ? '할일 없음' : todayTodos.length === todayDone ? '오늘 끝!' : (todayTodos.length - todayDone) + '개 남음'}
+        </div>
       </div>
-      <div class="progress"><div style="width:${pct}%"></div></div>
+
+      <!-- 이번 주 -->
+      <div style="padding:12px; border-radius:12px; background:var(--bg-secondary); border:0.5px solid var(--border-tertiary);">
+        <div style="display:flex; align-items:center; justify-content:space-between;">
+          <span style="font-size:10px; color:var(--text-secondary); font-weight:600;">📊 이번 주</span>
+          <span style="font-size:9px; color:var(--text-tertiary);">${weekPct}%</span>
+        </div>
+        <div style="font-size:20px; font-weight:700; margin-top:4px;">
+          ${weekDone}<span style="font-size:13px; opacity:0.6;">/${weekTodos.length}</span>
+        </div>
+        <div style="height:4px; background:rgba(0,0,0,0.08); border-radius:2px; margin-top:6px; overflow:hidden;">
+          <div style="height:100%; width:${weekPct}%; background:var(--text-success);"></div>
+        </div>
+      </div>
+
+      <!-- 연속 달성 -->
+      <div style="padding:12px; border-radius:12px; background:${streak > 0 ? 'rgba(255,159,10,0.1)' : 'var(--bg-secondary)'}; border:0.5px solid ${streak > 0 ? 'rgba(255,159,10,0.3)' : 'var(--border-tertiary)'};">
+        <div style="display:flex; align-items:center; justify-content:space-between;">
+          <span style="font-size:10px; color:${streak > 0 ? '#FF9F0A' : 'var(--text-secondary)'}; font-weight:600;">🔥 연속</span>
+        </div>
+        <div style="font-size:20px; font-weight:700; color:${streak > 0 ? '#FF9F0A' : 'var(--text-tertiary)'}; margin-top:4px;">
+          ${streak}<span style="font-size:13px; opacity:0.6;">일</span>
+        </div>
+        <div style="font-size:10px; color:${streak > 0 ? '#FF9F0A' : 'var(--text-tertiary)'}; opacity:0.85; margin-top:2px;">
+          ${streak === 0 ? '오늘부터 시작!' : streak >= 7 ? '대단해요!' : '계속 가요'}
+        </div>
+      </div>
+
+      <!-- 지난 미완료 -->
+      <div style="padding:12px; border-radius:12px; background:${pastTodos.length > 0 ? 'var(--bg-danger)' : 'var(--bg-secondary)'}; border:0.5px solid ${pastTodos.length > 0 ? 'rgba(255,59,48,0.2)' : 'var(--border-tertiary)'};">
+        <div style="display:flex; align-items:center; justify-content:space-between;">
+          <span style="font-size:10px; color:${pastTodos.length > 0 ? 'var(--text-danger)' : 'var(--text-secondary)'}; font-weight:600;">⏰ 밀린</span>
+        </div>
+        <div style="font-size:20px; font-weight:700; color:${pastTodos.length > 0 ? 'var(--text-danger)' : 'var(--text-tertiary)'}; margin-top:4px;">
+          ${pastTodos.length}<span style="font-size:13px; opacity:0.6;">개</span>
+        </div>
+        <div style="font-size:10px; color:${pastTodos.length > 0 ? 'var(--text-danger)' : 'var(--text-tertiary)'}; opacity:0.85; margin-top:2px;">
+          ${pastTodos.length === 0 ? '깨끗해요 ✨' : '처리해주세요'}
+        </div>
+      </div>
     </div>
   `;
 
@@ -2056,13 +2140,37 @@ function openChallengeModal() {
       </div>
 
       <div class="field">
-        <div class="field-label">기간 (일)</div>
-        <div style="display:flex; gap:6px; flex-wrap:wrap;" id="ch-days">
-          <button class="chip" data-d="7">7일</button>
-          <button class="chip active" data-d="14">14일</button>
-          <button class="chip" data-d="21">21일</button>
-          <button class="chip" data-d="30">30일</button>
-          <button class="chip" data-d="100">100일</button>
+        <div class="field-label">기간 설정</div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px;" id="ch-mode">
+          <button class="chip active" data-m="preset">📅 기간 선택</button>
+          <button class="chip" data-m="custom">🗓️ 날짜 직접</button>
+        </div>
+
+        <!-- 프리셋 모드 -->
+        <div id="ch-preset-mode">
+          <div style="display:flex; gap:6px; flex-wrap:wrap;" id="ch-days">
+            <button class="chip" data-d="7">7일</button>
+            <button class="chip active" data-d="14">14일</button>
+            <button class="chip" data-d="21">21일</button>
+            <button class="chip" data-d="30">30일</button>
+            <button class="chip" data-d="100">100일</button>
+          </div>
+        </div>
+
+        <!-- 직접 입력 모드 -->
+        <div id="ch-custom-mode" style="display:none;">
+          <div style="display:flex; gap:8px; align-items:center;">
+            <div style="flex:1;">
+              <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:4px;">시작일</div>
+              <input type="date" id="ch-start" value="${todayKey()}" style="width:100%; padding:10px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; font-family:inherit;" />
+            </div>
+            <div style="font-size:11px; color:var(--text-tertiary); margin-top:14px;">~</div>
+            <div style="flex:1;">
+              <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:4px;">종료일</div>
+              <input type="date" id="ch-end" style="width:100%; padding:10px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; font-family:inherit;" />
+            </div>
+          </div>
+          <div style="font-size:10px; color:var(--text-tertiary); margin-top:6px;" id="ch-days-info">두 날짜를 선택하세요</div>
         </div>
       </div>
 
@@ -2107,6 +2215,36 @@ function openChallengeModal() {
         b.classList.add('active');
       });
     });
+
+    // 기간 모드 전환
+    document.querySelectorAll('#ch-mode .chip').forEach(b => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('#ch-mode .chip').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        const m = b.dataset.m;
+        document.getElementById('ch-preset-mode').style.display = m === 'preset' ? 'block' : 'none';
+        document.getElementById('ch-custom-mode').style.display = m === 'custom' ? 'block' : 'none';
+      });
+    });
+
+    // 시작일/종료일 변경 시 일수 계산
+    function updateChDaysInfo() {
+      const startV = document.getElementById('ch-start')?.value;
+      const endV = document.getElementById('ch-end')?.value;
+      const infoEl = document.getElementById('ch-days-info');
+      if (startV && endV && infoEl) {
+        const days = Math.floor((new Date(endV) - new Date(startV)) / (24*60*60*1000)) + 1;
+        if (days > 0) {
+          infoEl.textContent = `총 ${days}일`;
+          infoEl.style.color = 'var(--text-info)';
+        } else {
+          infoEl.textContent = '종료일이 시작일보다 빠릅니다';
+          infoEl.style.color = 'var(--text-danger)';
+        }
+      }
+    }
+    document.getElementById('ch-start')?.addEventListener('change', updateChDaysInfo);
+    document.getElementById('ch-end')?.addEventListener('change', updateChDaysInfo);
   }, 50);
 }
 
@@ -2136,18 +2274,40 @@ function saveChallenge() {
   const title = document.getElementById('ch-title').value.trim();
   if (!title) { showToast('챌린지 이름을 입력해주세요'); return; }
   const type = document.querySelector('#ch-type .chip.active').dataset.t;
-  const totalDays = Number(document.querySelector('#ch-days .chip.active').dataset.d);
   const targetCount = type === 'count' ? Number(document.getElementById('ch-count').value) : null;
+
+  // 기간 모드 확인
+  const mode = document.querySelector('#ch-mode .chip.active')?.dataset.m || 'preset';
+  let totalDays, startDate;
+
+  if (mode === 'custom') {
+    const startV = document.getElementById('ch-start')?.value;
+    const endV = document.getElementById('ch-end')?.value;
+    if (!startV || !endV) {
+      showToast('시작일과 종료일을 모두 선택해주세요');
+      return;
+    }
+    const days = Math.floor((new Date(endV) - new Date(startV)) / (24*60*60*1000)) + 1;
+    if (days <= 0) {
+      showToast('종료일이 시작일보다 빨라요');
+      return;
+    }
+    totalDays = days;
+    startDate = startV;
+  } else {
+    totalDays = Number(document.querySelector('#ch-days .chip.active').dataset.d);
+    startDate = dateKey(currentYear, currentMonth, today);
+  }
 
   challenges.push({
     id: Date.now(),
     title, type, totalDays, targetCount,
-    startDate: dateKey(currentYear, currentMonth, today),
+    startDate,
     checks: {},
     completed: false,
   });
   saveData();
-  showToast(`"${title}" 챌린지 시작! 🚀`);
+  showToast(`"${title}" 챌린지 시작! 🚀 (${totalDays}일)`);
   closeModal();
   renderTodo();
 }
@@ -3527,9 +3687,9 @@ function openExpenseModal(forDateKey) {
               <input type="number" id="inv-qty" placeholder="0" step="0.0001" />
             </div>
             <div style="flex:1;">
-              <div class="field-label">매입가</div>
-              <input type="number" id="inv-price" placeholder="0" readonly style="background:var(--bg-secondary);" />
-              <div style="font-size:9px; color:var(--text-tertiary); margin-top:3px;">금액÷수량 자동</div>
+              <div class="field-label">매입가 (1주당)</div>
+              <input type="number" id="inv-price" placeholder="0" />
+              <div style="font-size:9px; color:var(--text-tertiary); margin-top:3px;">비워두면 금액÷수량 자동</div>
             </div>
           </div>
         </div>
@@ -3545,7 +3705,8 @@ function openExpenseModal(forDateKey) {
             </div>
             <div style="flex:1;">
               <div class="field-label">g당 가격</div>
-              <input type="number" id="inv-gold-price" placeholder="0" readonly style="background:var(--bg-secondary);" />
+              <input type="number" id="inv-gold-price" placeholder="0" />
+              <div style="font-size:9px; color:var(--text-tertiary); margin-top:3px;">비워두면 금액÷중량 자동</div>
             </div>
           </div>
         </div>
@@ -3557,7 +3718,8 @@ function openExpenseModal(forDateKey) {
             </div>
             <div style="flex:1;">
               <div class="field-label">매입 환율</div>
-              <input type="number" id="inv-dollar-rate" placeholder="0" readonly style="background:var(--bg-secondary);" />
+              <input type="number" id="inv-dollar-rate" placeholder="0" />
+              <div style="font-size:9px; color:var(--text-tertiary); margin-top:3px;">비워두면 금액÷달러 자동</div>
             </div>
           </div>
         </div>
@@ -3727,9 +3889,28 @@ function openTodoModal(forDateKey, editTodoObj) {
 
       <div class="field">
         <div class="field-label">카테고리</div>
-        <div style="display:flex; gap:6px; flex-wrap:wrap;" id="tag-grid">
-          ${['업무','생활','건강','가족','취미','서류'].map(tag => `
-            <button class="chip ${(isEdit ? editTodoObj.tag : '업무') === tag ? 'active' : ''}" data-tag="${tag}">${tag}</button>
+        <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:6px;" id="tag-grid">
+          ${[
+            {tag:'업무', emoji:'💼'},
+            {tag:'미팅', emoji:'🤝'},
+            {tag:'학습', emoji:'📚'},
+            {tag:'서류', emoji:'📄'},
+            {tag:'생활', emoji:'🏠'},
+            {tag:'쇼핑', emoji:'🛒'},
+            {tag:'금융', emoji:'💰'},
+            {tag:'건강', emoji:'🏥'},
+            {tag:'운동', emoji:'💪'},
+            {tag:'식사', emoji:'🍽️'},
+            {tag:'가족', emoji:'👨‍👩‍👧'},
+            {tag:'친구', emoji:'👥'},
+            {tag:'데이트', emoji:'💕'},
+            {tag:'여행', emoji:'✈️'},
+            {tag:'취미', emoji:'🎨'},
+            {tag:'기타', emoji:'🗂️'}
+          ].map(({tag, emoji}) => `
+            <button class="chip ${(isEdit ? editTodoObj.tag : '업무') === tag ? 'active' : ''}" data-tag="${tag}" style="display:flex; align-items:center; justify-content:center; gap:4px; padding:8px 6px; font-size:11px;">
+              <span style="font-size:13px;">${emoji}</span>${tag}
+            </button>
           `).join('')}
         </div>
       </div>
