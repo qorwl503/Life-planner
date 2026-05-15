@@ -3859,10 +3859,39 @@ let aiCallsThisMinute = 0;
 let aiMinuteResetTime = Date.now() + 60000;
 const MAX_CALLS_PER_MINUTE = 10; // 안전하게 10회로 제한 (Gemini 한도는 15)
 
+// AI 호출 큐 — 동시 호출 방지, 순차적 처리
+let aiQueue = Promise.resolve();
+let lastAICallTime = 0;
+const MIN_INTERVAL_MS = 2500; // 호출 간 최소 2.5초 간격 (429 방지)
+
 async function askGemini(prompt, options = {}) {
   const { useCache = true, cacheKey = null, maxRetries = 2, autoRetryOnNetwork = true } = options;
 
-  // 캐시 확인
+  // 캐시 확인 (큐 대기 전)
+  const cKey = cacheKey || prompt;
+  if (useCache && aiCache[cKey] && Date.now() - aiCache[cKey].time < AI_CACHE_TIME) {
+    return { text: aiCache[cKey].text, cached: true };
+  }
+
+  // 큐에 추가 - 이전 호출 끝날 때까지 대기, 그리고 추가로 간격 유지
+  const myTurn = aiQueue.then(async () => {
+    const elapsed = Date.now() - lastAICallTime;
+    if (elapsed < MIN_INTERVAL_MS) {
+      await new Promise(r => setTimeout(r, MIN_INTERVAL_MS - elapsed));
+    }
+    lastAICallTime = Date.now();
+  });
+  aiQueue = myTurn.catch(() => {}); // 에러 발생해도 큐 연속성 유지
+
+  await myTurn;
+
+  return askGeminiInner(prompt, { useCache, cacheKey, maxRetries, autoRetryOnNetwork });
+}
+
+async function askGeminiInner(prompt, options = {}) {
+  const { useCache = true, cacheKey = null, maxRetries = 2, autoRetryOnNetwork = true } = options;
+
+  // 캐시 다시 확인 (대기 중 다른 호출이 캐시 채웠을 수도)
   const cKey = cacheKey || prompt;
   if (useCache && aiCache[cKey] && Date.now() - aiCache[cKey].time < AI_CACHE_TIME) {
     return { text: aiCache[cKey].text, cached: true };
@@ -3883,14 +3912,11 @@ async function askGemini(prompt, options = {}) {
     return { error: 'AI 키가 설정되지 않았어요. 아래 버튼을 눌러 키를 입력하세요.', needsKey: true };
   }
 
-  // 여러 모델 시도 (속도 우선 - Flash 먼저, Pro 백업)
+  // 2.0-flash가 가장 안정적 (분당 15회 한도) - 백업 버전이랑 동일 순서
   const models = [
-    'gemini-2.5-flash',         // 빠름 (3~5초)
-    'gemini-2.0-flash',         // 더 빠름
-    'gemini-1.5-flash',         // 안정적
-    'gemini-3.1-pro',           // 느리지만 정확
-    'gemini-1.5-flash-latest',
-    'gemini-flash-latest',
+    'gemini-2.0-flash',         // 빠르고 안정적 (분당 15회)
+    'gemini-flash-latest',      // 최신 (백업)
+    'gemini-2.5-flash',         // 백업 (분당 10회 한도)
   ];
 
   let lastError = '알 수 없는 오류';
