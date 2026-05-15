@@ -1890,7 +1890,7 @@ function renderChallengeCard(c) {
       ? 'linear-gradient(135deg, #6B3F08 0%, #854F0B 100%)'
       : 'linear-gradient(135deg, #185FA5 0%, #2D7BC9 100%)';
 
-  // 최근 7일 표시
+  // 최근 7일 표시 (이미 지난 날짜도 클릭해서 토글 가능)
   let last7Days = '';
   for (let i = 6; i >= 0; i--) {
     const d = new Date(todayD);
@@ -1904,7 +1904,7 @@ function renderChallengeCard(c) {
       let icon = '';
       if (check === true) { bg = 'rgba(255,255,255,0.95)'; icon = `<i class="ti ti-check" style="font-size:10px; color:#2A4D1B;"></i>`; }
       else if (check === 'fail') { bg = 'rgba(255,100,100,0.6)'; icon = `<i class="ti ti-x" style="font-size:10px; color:white;"></i>`; }
-      last7Days += `<div style="flex:1; aspect-ratio:1; border-radius:50%; background:${bg}; display:flex; align-items:center; justify-content:center;">${icon}</div>`;
+      last7Days += `<button onclick="toggleChallengeDate(${c.id}, '${k}')" style="flex:1; aspect-ratio:1; border-radius:50%; background:${bg}; display:flex; align-items:center; justify-content:center; border:none; cursor:pointer; padding:0;" title="${k} 토글">${icon}</button>`;
     }
   }
 
@@ -1999,6 +1999,30 @@ function checkChallenge(id, value) {
 
   saveData();
   showToast(value === true ? '체크 완료! 💪' : value === 'fail' ? '괜찮아요, 내일 다시!' : '체크 해제');
+  renderTodo();
+}
+
+// 챌린지 - 지난 날짜 토글 (과거 기록 수정용)
+function toggleChallengeDate(id, dateKeyStr) {
+  const c = challenges.find(x => x.id === id);
+  if (!c) return;
+  if (!c.checks) c.checks = {};
+
+  const current = c.checks[dateKeyStr];
+
+  if (c.type === 'forbidden') {
+    // 금지형: 빈상태 → 성공 → 위반 → 빈상태 순환
+    if (current === undefined) c.checks[dateKeyStr] = true;
+    else if (current === true) c.checks[dateKeyStr] = 'fail';
+    else delete c.checks[dateKeyStr];
+  } else {
+    // 일반: 토글
+    if (current === true) delete c.checks[dateKeyStr];
+    else c.checks[dateKeyStr] = true;
+  }
+
+  saveData();
+  showToast(`${dateKeyStr} 변경됨`);
   renderTodo();
 }
 
@@ -2313,7 +2337,7 @@ function renderWorkout() {
   }
   html += `</div>`;
 
-  // 오늘 빠른 체크 (현재 월일 때만) - O/X 두 버튼
+  // 오늘 빠른 체크 (현재 월일 때만) - 세그먼트 컨트롤
   if (isWorkoutCurrentMonth()) {
     const todayLog = workoutLog[todayKey()];
     const isDone = todayLog?.done;
@@ -2326,12 +2350,12 @@ function renderWorkout() {
           </div>
           ${isDone || isMarkedX ? `<button onclick="openWorkoutModal('${todayKey()}')" style="border:none; background:white; color:var(--text-info); padding:5px 10px; border-radius:999px; font-size:10px; font-weight:500; cursor:pointer; font-family:inherit;">상세</button>` : ''}
         </div>
-        <div style="display:flex; gap:8px;">
-          <button onclick="setTodayWorkout(true)" style="flex:1; padding:14px; border-radius:10px; border:none; background:${isDone ? 'var(--text-success)' : 'white'}; color:${isDone ? 'white' : 'var(--text-secondary)'}; font-size:16px; font-weight:700; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px; ${!isDone ? 'box-shadow:0 1px 3px rgba(0,0,0,0.08);' : ''}">
-            <i class="ti ti-check" style="font-size:18px;"></i> 했어요
+        <div style="display:flex; background:rgba(0,0,0,0.05); border-radius:10px; padding:3px; position:relative;">
+          <button onclick="setTodayWorkout(true)" style="flex:1; padding:10px; border-radius:8px; border:none; background:${isDone ? 'var(--text-success)' : 'transparent'}; color:${isDone ? 'white' : 'var(--text-secondary)'}; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; transition: all 0.2s; ${isDone ? 'box-shadow: 0 1px 3px rgba(0,0,0,0.12);' : ''}">
+            💪 했음
           </button>
-          <button onclick="setTodayWorkout(false)" style="flex:1; padding:14px; border-radius:10px; border:none; background:${isMarkedX ? 'var(--text-danger)' : 'white'}; color:${isMarkedX ? 'white' : 'var(--text-secondary)'}; font-size:16px; font-weight:700; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px; ${!isMarkedX ? 'box-shadow:0 1px 3px rgba(0,0,0,0.08);' : ''}">
-            <i class="ti ti-x" style="font-size:18px;"></i> 안했어요
+          <button onclick="setTodayWorkout(false)" style="flex:1; padding:10px; border-radius:8px; border:none; background:${isMarkedX ? 'var(--text-danger)' : 'transparent'}; color:${isMarkedX ? 'white' : 'var(--text-secondary)'}; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; transition: all 0.2s; ${isMarkedX ? 'box-shadow: 0 1px 3px rgba(0,0,0,0.12);' : ''}">
+            😴 쉼
           </button>
         </div>
         ${isDone && todayLog ? `<div style="margin-top:8px; font-size:11px; color:var(--text-success); opacity:0.85;">${todayLog.minutes || 0}분 · ${todayLog.kcal || 0} kcal${todayLog.note ? ' · ' + todayLog.note : ''}</div>` : ''}
@@ -2565,9 +2589,15 @@ function toggleWorkoutDay(d) {
   const k = woKey(d);
   if (!workoutLog[k]) workoutLog[k] = { done: false };
   workoutLog[k].done = !workoutLog[k].done;
-  if (workoutLog[k].done && !workoutLog[k].kcal) {
-    workoutLog[k].kcal = 300;
-    workoutLog[k].minutes = 30;
+  if (workoutLog[k].done) {
+    workoutLog[k].marked = true; // 했음 표시
+    if (!workoutLog[k].kcal) {
+      workoutLog[k].kcal = 300;
+      workoutLog[k].minutes = 30;
+    }
+  } else {
+    // 해제 = marked도 제거 (하얗게 표시)
+    workoutLog[k].marked = false;
   }
   saveData();
   showToast(workoutLog[k].done ? `${d}일 운동 ✓` : `${d}일 해제`);
@@ -6229,7 +6259,8 @@ function openAssetAddModal() {
         <div class="field-label">자산 종류</div>
         <div class="cat-grid" id="atype-grid">
           <button class="cat-btn active" data-t="주식"><i class="ti ti-chart-line"></i><span>주식</span></button>
-          <button class="cat-btn" data-t="펀드"><i class="ti ti-chart-pie"></i><span>ETF/펀드</span></button>
+          <button class="cat-btn" data-t="ETF"><i class="ti ti-chart-area-line"></i><span>ETF</span></button>
+          <button class="cat-btn" data-t="펀드"><i class="ti ti-chart-pie"></i><span>펀드</span></button>
           <button class="cat-btn" data-t="채권"><i class="ti ti-certificate"></i><span>채권</span></button>
           <button class="cat-btn" data-t="금"><i class="ti ti-coin"></i><span>금</span></button>
           <button class="cat-btn" data-t="예적금"><i class="ti ti-pig-money"></i><span>예적금</span></button>
@@ -6239,83 +6270,272 @@ function openAssetAddModal() {
         </div>
       </div>
 
+      <!-- 타입별 동적 필드 영역 -->
+      <div id="asset-form-fields"></div>
+    </div>
+  `;
+  modal.classList.add('show');
+
+  // 타입 버튼 클릭 시 폼 갱신
+  setTimeout(() => {
+    document.querySelectorAll('#atype-grid .cat-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('#atype-grid .cat-btn').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        renderAssetFormFields(b.dataset.t);
+      });
+    });
+    renderAssetFormFields('주식'); // 기본
+  }, 50);
+}
+
+// 자산 타입에 맞는 입력 필드 렌더링
+function renderAssetFormFields(type) {
+  const container = document.getElementById('asset-form-fields');
+  if (!container) return;
+
+  // 공통 - 자산명
+  let html = `
+    <div class="field">
+      <div class="field-label">자산명</div>
+      <input type="text" id="a-name" placeholder="${getNamePlaceholder(type)}" />
+    </div>
+  `;
+
+  // 타입별 분기
+  if (type === '주식' || type === 'ETF' || type === '펀드' || type === '채권') {
+    // 지역 (주식/ETF/펀드/채권)
+    html += `
       <div class="field">
-        <div class="field-label">지역 구분 (주식/펀드/채권일 때)</div>
+        <div class="field-label">지역 구분</div>
         <div style="display:flex; gap:6px;" id="aregion-grid">
           <button class="chip active" data-r="국내">🇰🇷 국내</button>
           <button class="chip" data-r="해외">🇺🇸 해외 (미국 등)</button>
         </div>
       </div>
+    `;
 
-      <div class="field">
-        <div class="field-label">자산명</div>
-        <input type="text" id="a-name" placeholder="예: 삼성전자, 테슬라, ACE KRX금현물" />
-      </div>
-
+    // 티커 + 수량/가격
+    html += `
       <div class="field">
         <div class="field-label">티커 심볼 (실시간 시세 자동 갱신)</div>
-        <input type="text" id="a-ticker" placeholder="비워두면 수동 입력 가격 사용" />
-        <div style="font-size:10px; color:var(--text-tertiary); margin-top:6px; line-height:1.6;">
-          <b style="color:var(--text-secondary);">예시</b><br>
-          국내주식: <code style="background:var(--bg-secondary); padding:1px 4px; border-radius:3px;">005930.KS</code> (삼성전자)<br>
-          미국주식: <code style="background:var(--bg-secondary); padding:1px 4px; border-radius:3px;">TSLA</code>, <code style="background:var(--bg-secondary); padding:1px 4px; border-radius:3px;">AAPL</code><br>
-          코인: <code style="background:var(--bg-secondary); padding:1px 4px; border-radius:3px;">BTC-USD</code>, <code style="background:var(--bg-secondary); padding:1px 4px; border-radius:3px;">ETH-USD</code>
+        <input type="text" id="a-ticker" placeholder="${type === 'ETF' ? '예: SPY, 360750.KS' : type === '펀드' ? '비워두면 수동 입력' : '예: 005930.KS, AAPL'}" />
+      </div>
+      <div class="field" style="display:flex; gap:8px;">
+        <div style="flex:1;">
+          <div class="field-label">${type === '채권' ? '액면가' : '수량'}</div>
+          <input type="number" id="a-qty" placeholder="1" value="1" step="0.0001" />
+        </div>
+        <div style="flex:1;">
+          <div class="field-label">${type === '채권' ? '매입가' : '평균 매입가'}</div>
+          <input type="number" id="a-price" placeholder="0" />
         </div>
       </div>
+    `;
 
+    if (type === '채권') {
+      html += `
+        <div class="field">
+          <div class="field-label">만기일 (선택)</div>
+          <input type="date" id="a-maturity" />
+        </div>
+        <div class="field">
+          <div class="field-label">표면이자율 % (선택)</div>
+          <input type="number" id="a-rate" placeholder="예: 4.5" step="0.01" />
+        </div>
+      `;
+    }
+
+  } else if (type === '금') {
+    html += `
+      <div class="field">
+        <div class="field-label">티커 심볼 (선택, KRX 금 시세)</div>
+        <input type="text" id="a-ticker" placeholder="예: 411060.KS (ACE KRX금현물)" />
+      </div>
+      <div class="field" style="display:flex; gap:8px;">
+        <div style="flex:1;">
+          <div class="field-label">중량 (g)</div>
+          <input type="number" id="a-qty" placeholder="3.75" value="3.75" step="0.01" />
+        </div>
+        <div style="flex:1;">
+          <div class="field-label">매입가 (원/g)</div>
+          <input type="number" id="a-price" placeholder="0" />
+        </div>
+      </div>
+      <div style="padding:10px 12px; background:var(--bg-info); border-radius:var(--radius-md); font-size:11px; color:var(--text-info); line-height:1.6;">
+        💡 1돈 = 3.75g, 1냥 = 37.5g<br>
+        실물 금이면 티커 비워두고 매입가 직접 입력
+      </div>
+    `;
+
+  } else if (type === '예적금') {
+    html += `
+      <div class="field">
+        <div class="field-label">은행/상품명</div>
+        <input type="text" id="a-bank" placeholder="예: 토스뱅크, 카카오뱅크 26주적금" />
+      </div>
+      <div class="field" style="display:flex; gap:8px;">
+        <div style="flex:1;">
+          <div class="field-label">예치 금액 (원)</div>
+          <input type="number" id="a-price" placeholder="0" />
+        </div>
+        <div style="flex:1;">
+          <div class="field-label">금리 % (선택)</div>
+          <input type="number" id="a-rate" placeholder="예: 3.5" step="0.01" />
+        </div>
+      </div>
+      <div class="field">
+        <div class="field-label">만기일 (선택)</div>
+        <input type="date" id="a-maturity" />
+      </div>
+      <input type="hidden" id="a-qty" value="1" />
+      <input type="hidden" id="a-ticker" value="" />
+    `;
+
+  } else if (type === '현금') {
+    html += `
+      <div class="field">
+        <div class="field-label">위치 (선택)</div>
+        <input type="text" id="a-location" placeholder="예: 토스, 신한은행, 통장" />
+      </div>
+      <div class="field">
+        <div class="field-label">금액 (원)</div>
+        <input type="number" id="a-price" placeholder="0" />
+      </div>
+      <input type="hidden" id="a-qty" value="1" />
+      <input type="hidden" id="a-ticker" value="" />
+    `;
+
+  } else if (type === '부동산') {
+    html += `
+      <div class="field">
+        <div class="field-label">유형</div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap;" id="aproptype-grid">
+          <button class="chip active" data-p="아파트">아파트</button>
+          <button class="chip" data-p="오피스텔">오피스텔</button>
+          <button class="chip" data-p="빌라">빌라</button>
+          <button class="chip" data-p="단독주택">단독주택</button>
+          <button class="chip" data-p="상가">상가</button>
+          <button class="chip" data-p="토지">토지</button>
+        </div>
+      </div>
+      <div class="field">
+        <div class="field-label">현재 시세 (원)</div>
+        <input type="number" id="a-price" placeholder="예: 500000000" />
+      </div>
+      <div class="field">
+        <div class="field-label">매입가 (선택, 손익 계산용)</div>
+        <input type="number" id="a-buyprice" placeholder="0" />
+      </div>
+      <input type="hidden" id="a-qty" value="1" />
+      <input type="hidden" id="a-ticker" value="" />
+    `;
+
+  } else { // 기타
+    html += `
       <div class="field" style="display:flex; gap:8px;">
         <div style="flex:1;">
           <div class="field-label">수량/단위</div>
           <input type="number" id="a-qty" placeholder="1" value="1" step="0.0001" />
         </div>
         <div style="flex:1;">
-          <div class="field-label">평균 매입가</div>
+          <div class="field-label">평가 금액</div>
           <input type="number" id="a-price" placeholder="0" />
         </div>
       </div>
+      <input type="hidden" id="a-ticker" value="" />
+    `;
+  }
 
-      <div class="field">
-        <div class="field-label">메모 (선택)</div>
-        <input type="text" id="a-note" placeholder="예: 토스증권, 만기 2027.01" />
-      </div>
-
-      <div style="padding:10px 12px; background:var(--bg-info); border-radius:var(--radius-md); font-size:11px; color:var(--text-info); line-height:1.6;">
-        <b style="font-weight:600;">💡 티커 입력 팁</b><br>
-        국내주식 → 종목코드 뒤에 .KS 또는 .KQ<br>
-        예) 카카오 035720.KS, 셀트리온 068270.KQ<br>
-        모르겠으면 Yahoo Finance에서 검색해보세요
-      </div>
+  // 공통 - 메모
+  html += `
+    <div class="field">
+      <div class="field-label">메모 (선택)</div>
+      <input type="text" id="a-note" placeholder="${getNotePlaceholder(type)}" />
     </div>
   `;
-  modal.classList.add('show');
-  setTimeout(() => {
-    document.querySelectorAll('#atype-grid .cat-btn').forEach(b => {
-      b.addEventListener('click', () => {
-        document.querySelectorAll('#atype-grid .cat-btn').forEach(x => x.classList.remove('active'));
-        b.classList.add('active');
-      });
+
+  container.innerHTML = html;
+
+  // 동적 필드 안 버튼들 이벤트
+  document.querySelectorAll('#aregion-grid .chip').forEach(b => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('#aregion-grid .chip').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
     });
-    document.querySelectorAll('#aregion-grid .chip').forEach(b => {
-      b.addEventListener('click', () => {
-        document.querySelectorAll('#aregion-grid .chip').forEach(x => x.classList.remove('active'));
-        b.classList.add('active');
-      });
+  });
+  document.querySelectorAll('#aproptype-grid .chip').forEach(b => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('#aproptype-grid .chip').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
     });
-  }, 50);
+  });
+}
+
+function getNamePlaceholder(type) {
+  const map = {
+    '주식': '예: 삼성전자, 테슬라',
+    'ETF': '예: TIGER 200, SPY',
+    '펀드': '예: KB증권 차이나포커스펀드',
+    '채권': '예: 국고채 3년물',
+    '금': '예: 한국조폐공사 골드바',
+    '예적금': '예: 토스 정기예금',
+    '현금': '예: 통장 잔액',
+    '부동산': '예: 서울 강남 아파트',
+    '기타': '예: 미술품, 시계',
+  };
+  return map[type] || '';
+}
+
+function getNotePlaceholder(type) {
+  const map = {
+    '주식': '예: 토스증권',
+    'ETF': '예: 미래에셋',
+    '펀드': '예: 운용보수 0.5%',
+    '채권': '예: 만기 2027.01',
+    '금': '예: 신한은행 골드뱅킹',
+    '예적금': '예: 월 50만 자동이체',
+    '현금': '예: 비상금',
+    '부동산': '예: 25평, 2018년 매입',
+    '기타': '',
+  };
+  return map[type] || '';
 }
 
 function saveAsset() {
-  const name = document.getElementById('a-name').value.trim();
-  const ticker = document.getElementById('a-ticker').value.trim();
-  const qty = Number(document.getElementById('a-qty').value) || 1;
-  const price = Number(document.getElementById('a-price').value);
-  const note = document.getElementById('a-note').value.trim();
-  const type = document.querySelector('#atype-grid .cat-btn.active').dataset.t;
+  const type = document.querySelector('#atype-grid .cat-btn.active')?.dataset.t || '주식';
+  const nameEl = document.getElementById('a-name');
+  const bankEl = document.getElementById('a-bank');
+  const locEl = document.getElementById('a-location');
+
+  // 자산명은 타입에 따라 다른 필드에서 가져옴
+  const name = nameEl?.value?.trim() || bankEl?.value?.trim() || locEl?.value?.trim();
+
+  const ticker = document.getElementById('a-ticker')?.value?.trim() || '';
+  const qty = Number(document.getElementById('a-qty')?.value) || 1;
+  const price = Number(document.getElementById('a-price')?.value);
+  const note = document.getElementById('a-note')?.value?.trim() || '';
   const region = document.querySelector('#aregion-grid .chip.active')?.dataset.r || '국내';
 
-  if (!name || !price) { showToast('자산명과 매입가를 입력해주세요'); return; }
+  // 부동산, 채권, 예적금 등 추가 필드
+  const propType = document.querySelector('#aproptype-grid .chip.active')?.dataset.p || '';
+  const maturity = document.getElementById('a-maturity')?.value || '';
+  const rate = Number(document.getElementById('a-rate')?.value) || 0;
+  const buyprice = Number(document.getElementById('a-buyprice')?.value) || 0;
 
-  assets.push({ id: Date.now(), name, ticker, type, region, qty, price, note });
+  if (!name || !price) {
+    showToast('자산명과 금액을 입력해주세요');
+    return;
+  }
+
+  const asset = { id: Date.now(), name, ticker, type, region, qty, price, note };
+  // 타입별 추가 정보
+  if (propType) asset.propType = propType;
+  if (maturity) asset.maturity = maturity;
+  if (rate) asset.rate = rate;
+  if (buyprice) asset.buyprice = buyprice;
+
+  assets.push(asset);
   saveData();
   showToast(`${name} 추가됨${ticker ? ' (시세 자동 갱신)' : ''}`);
   closeModal();
