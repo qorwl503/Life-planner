@@ -1890,22 +1890,19 @@ function renderChallengeCard(c) {
       ? 'linear-gradient(135deg, #6B3F08 0%, #854F0B 100%)'
       : 'linear-gradient(135deg, #185FA5 0%, #2D7BC9 100%)';
 
-  // 최근 7일 표시 (이미 지난 날짜도 클릭해서 토글 가능)
-  let last7Days = '';
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(todayD);
-    d.setDate(d.getDate() - i);
+  // 전체 기간 그리드 (시작일 ~ 오늘) - 모든 날짜 클릭 가능
+  let daysGrid = '';
+  const totalDaysShow = Math.min(daysPassed, totalDays);
+  for (let i = 0; i < totalDaysShow; i++) {
+    const d = new Date(startDate);
+    d.setDate(d.getDate() + i);
     const k = dateKey(d.getFullYear(), d.getMonth(), d.getDate());
-    if (d < startDate) {
-      last7Days += `<div style="flex:1; aspect-ratio:1; border-radius:50%; background:rgba(255,255,255,0.1);"></div>`;
-    } else {
-      const check = c.checks?.[k];
-      let bg = 'rgba(255,255,255,0.2)';
-      let icon = '';
-      if (check === true) { bg = 'rgba(255,255,255,0.95)'; icon = `<i class="ti ti-check" style="font-size:10px; color:#2A4D1B;"></i>`; }
-      else if (check === 'fail') { bg = 'rgba(255,100,100,0.6)'; icon = `<i class="ti ti-x" style="font-size:10px; color:white;"></i>`; }
-      last7Days += `<button onclick="toggleChallengeDate(${c.id}, '${k}')" style="flex:1; aspect-ratio:1; border-radius:50%; background:${bg}; display:flex; align-items:center; justify-content:center; border:none; cursor:pointer; padding:0;" title="${k} 토글">${icon}</button>`;
-    }
+    const check = c.checks?.[k];
+    let bg = 'rgba(255,255,255,0.2)';
+    let icon = '';
+    if (check === true) { bg = 'rgba(255,255,255,0.95)'; icon = `<i class="ti ti-check" style="font-size:9px; color:#2A4D1B;"></i>`; }
+    else if (check === 'fail') { bg = 'rgba(255,100,100,0.6)'; icon = `<i class="ti ti-x" style="font-size:9px; color:white;"></i>`; }
+    daysGrid += `<button onclick="toggleChallengeDate(${c.id}, '${k}')" style="aspect-ratio:1; border-radius:4px; background:${bg}; display:flex; align-items:center; justify-content:center; border:none; cursor:pointer; padding:0; font-size:8px; color:rgba(255,255,255,0.7);" title="${k}">${icon || (i+1)}</button>`;
   }
 
   const todayBtnText = c.type === 'forbidden'
@@ -1921,10 +1918,10 @@ function renderChallengeCard(c) {
       <button onclick="event.stopPropagation(); editChallenge(${c.id})" style="border:none; background:rgba(255,255,255,0.15); color:white; padding:4px 8px; border-radius:6px; font-size:10px; cursor:pointer; font-family:inherit;">⋮</button>
     </div>
 
-    <div style="display:flex; gap:4px; margin: 10px 0 6px;">${last7Days}</div>
+    <div style="display:grid; grid-template-columns: repeat(${Math.min(14, totalDays)}, 1fr); gap:3px; margin: 10px 0 6px;">${daysGrid}</div>
 
     <div style="display:flex; justify-content:space-between; align-items:baseline; font-size:11px; margin-bottom:8px;">
-      <span style="opacity:0.85;">최근 7일</span>
+      <span style="opacity:0.85;">전체 ${totalDaysShow}일</span>
       <span style="font-weight:600;">${progressText}</span>
     </div>
 
@@ -2343,9 +2340,9 @@ function renderWorkout() {
     const isDone = todayLog?.done;
     const isMarkedX = todayLog && todayLog.done === false && todayLog.marked === true;
     html += `
-      <div style="margin-bottom:14px; padding:14px; border-radius:12px; background:${isDone ? 'var(--bg-success)' : isMarkedX ? 'var(--bg-danger)' : 'var(--bg-secondary)'}; border:0.5px solid ${isDone ? 'var(--text-success)' : isMarkedX ? 'var(--text-danger)' : 'var(--border-tertiary)'};">
+      <div style="margin-bottom:14px; padding:14px; border-radius:12px; background:${isDone ? 'var(--bg-success)' : 'var(--bg-secondary)'}; border:0.5px solid ${isDone ? 'var(--text-success)' : 'var(--border-tertiary)'};">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
-          <div style="font-size:14px; font-weight:600; color:${isDone ? 'var(--text-success)' : isMarkedX ? 'var(--text-danger)' : 'var(--text-primary)'};">
+          <div style="font-size:14px; font-weight:600; color:${isDone ? 'var(--text-success)' : 'var(--text-primary)'};">
             오늘 운동했어요?
           </div>
           ${isDone || isMarkedX ? `<button onclick="openWorkoutModal('${todayKey()}')" style="border:none; background:white; color:var(--text-info); padding:5px 10px; border-radius:999px; font-size:10px; font-weight:500; cursor:pointer; font-family:inherit;">상세</button>` : ''}
@@ -2354,7 +2351,7 @@ function renderWorkout() {
           <button onclick="setTodayWorkout(true)" style="flex:1; padding:10px; border-radius:8px; border:none; background:${isDone ? 'var(--text-success)' : 'transparent'}; color:${isDone ? 'white' : 'var(--text-secondary)'}; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; transition: all 0.2s; ${isDone ? 'box-shadow: 0 1px 3px rgba(0,0,0,0.12);' : ''}">
             💪 했음
           </button>
-          <button onclick="setTodayWorkout(false)" style="flex:1; padding:10px; border-radius:8px; border:none; background:${isMarkedX ? 'var(--text-danger)' : 'transparent'}; color:${isMarkedX ? 'white' : 'var(--text-secondary)'}; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; transition: all 0.2s; ${isMarkedX ? 'box-shadow: 0 1px 3px rgba(0,0,0,0.12);' : ''}">
+          <button onclick="setTodayWorkout(false)" style="flex:1; padding:10px; border-radius:8px; border:none; background:${isMarkedX ? 'white' : 'transparent'}; color:${isMarkedX ? 'var(--text-secondary)' : 'var(--text-secondary)'}; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; transition: all 0.2s; ${isMarkedX ? 'box-shadow: 0 1px 3px rgba(0,0,0,0.12);' : ''}">
             😴 쉼
           </button>
         </div>
@@ -2395,10 +2392,8 @@ function renderWorkout() {
       const isToday = dayNum === today && isWorkoutCurrentMonth();
       const isFuture = isWorkoutCurrentMonth() && dayNum > today;
       const done = log?.done;
-      const missed = log && log.done === false && log.marked === true;
       let cellClass = 'wcell';
       if (done) cellClass += ' done';
-      else if (missed) cellClass += ' missed';
       if (isToday) cellClass += ' today';
       if (isFuture) cellClass += ' future';
       html += `<button class="${cellClass}" onclick="toggleWorkoutDay(${dayNum})">${dayNum}</button>`;
