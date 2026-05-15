@@ -4586,19 +4586,52 @@ async function askGemini(prompt, options = {}) {
 // AI 응답을 마크다운 → HTML로 간단 변환
 function renderAIText(text) {
   if (!text) return '';
-  return text
+  let result = text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    // 안전한 HTML 태그 복원 (br, small)
-    .replace(/&lt;br\s*\/?&gt;/gi, '<br>')
-    .replace(/&lt;small&gt;/gi, '<small style="font-size:0.85em; opacity:0.7;">')
-    .replace(/&lt;\/small&gt;/gi, '</small>')
-    .replace(/\*\*(.+?)\*\*/g, '<b style="font-weight:600;">$1</b>')
-    .replace(/\*(.+?)\*/g, '<i style="font-style:italic;">$1</i>')
-    .replace(/`(.+?)`/g, '<code style="background:rgba(0,0,0,0.05); padding:1px 4px; border-radius:3px; font-size:11px;">$1</code>')
-    .replace(/\n\n/g, '</p><p style="margin: 8px 0;">')
-    .replace(/\n/g, '<br>');
+    .replace(/>/g, '&gt;');
+
+  // 안전한 HTML 태그 복원
+  // 자기 닫는 태그
+  result = result.replace(/&lt;br\s*\/?&gt;/gi, '<br>');
+  result = result.replace(/&lt;hr\s*\/?&gt;/gi, '<hr style="border:none; border-top:0.5px solid var(--border-tertiary); margin:8px 0;">');
+
+  // 닫는 태그 먼저 (열기 태그가 닫기 태그 패턴이랑 충돌 안 나게)
+  result = result.replace(/&lt;\/small&gt;/gi, '</small>');
+  result = result.replace(/&lt;\/font&gt;/gi, '</font>');
+  result = result.replace(/&lt;\/b&gt;/gi, '</b>');
+  result = result.replace(/&lt;\/strong&gt;/gi, '</strong>');
+  result = result.replace(/&lt;\/i&gt;/gi, '</i>');
+  result = result.replace(/&lt;\/em&gt;/gi, '</em>');
+  result = result.replace(/&lt;\/span&gt;/gi, '</span>');
+  result = result.replace(/&lt;\/h3&gt;/gi, '</h3>');
+  result = result.replace(/&lt;\/h4&gt;/gi, '</h4>');
+  result = result.replace(/&lt;\/ul&gt;/gi, '</ul>');
+  result = result.replace(/&lt;\/ol&gt;/gi, '</ol>');
+  result = result.replace(/&lt;\/li&gt;/gi, '</li>');
+
+  // 여는 태그 (속성 포함된 거 처리)
+  result = result.replace(/&lt;small[^&]*?&gt;/gi, '<small style="font-size:0.85em; opacity:0.7;">');
+  result = result.replace(/&lt;font[^&]*?&gt;/gi, '<small style="font-size:0.85em; opacity:0.7;">');
+  result = result.replace(/&lt;b&gt;/gi, '<b style="font-weight:600;">');
+  result = result.replace(/&lt;strong&gt;/gi, '<strong style="font-weight:600;">');
+  result = result.replace(/&lt;i&gt;/gi, '<i>');
+  result = result.replace(/&lt;em&gt;/gi, '<em>');
+  result = result.replace(/&lt;h3[^&]*?&gt;/gi, '<h3 style="font-size:14px; font-weight:600; margin:10px 0 6px;">');
+  result = result.replace(/&lt;h4[^&]*?&gt;/gi, '<h4 style="font-size:13px; font-weight:600; margin:8px 0 4px;">');
+  result = result.replace(/&lt;ul[^&]*?&gt;/gi, '<ul style="margin:6px 0; padding-left:18px;">');
+  result = result.replace(/&lt;ol[^&]*?&gt;/gi, '<ol style="margin:6px 0; padding-left:18px;">');
+  result = result.replace(/&lt;li[^&]*?&gt;/gi, '<li style="margin:2px 0;">');
+  result = result.replace(/&lt;span[^&]*?&gt;/gi, '<span>');
+
+  // 마크다운 변환
+  result = result.replace(/\*\*(.+?)\*\*/g, '<b style="font-weight:600;">$1</b>');
+  result = result.replace(/\*(.+?)\*/g, '<i>$1</i>');
+  result = result.replace(/`(.+?)`/g, '<code style="background:rgba(0,0,0,0.05); padding:1px 4px; border-radius:3px; font-size:11px;">$1</code>');
+  result = result.replace(/\n\n/g, '</p><p style="margin: 8px 0;">');
+  result = result.replace(/\n/g, '<br>');
+
+  return result;
 }
 
 // ====== AI 시장 브리핑 ======
