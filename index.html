@@ -1157,10 +1157,27 @@ let assets = [
   { id:2, name:'정기예금', type:'예적금', qty:1, price:5000000, note:'토스뱅크' },
 ];
 let settings = {
-  monthlyIncome: 3000000,
+  monthlyIncome: 3000000,        // 기본값 (월별 미설정시 사용)
+  monthlyIncomes: {},            // 월별 수입: { '2026-04': 3000000, '2026-05': 3500000 }
   savingsGoal: 500000,
   riskProfile: 'balanced',
 };
+
+// 특정 월의 수입 가져오기 (월별 설정 우선, 없으면 기본값)
+function getMonthlyIncome(year, monthIdx) {
+  const key = `${year}-${String(monthIdx+1).padStart(2,'0')}`;
+  if (settings.monthlyIncomes && settings.monthlyIncomes[key] !== undefined) {
+    return Number(settings.monthlyIncomes[key]) || 0;
+  }
+  return Number(settings.monthlyIncome) || 0;
+}
+
+// 특정 월의 수입 저장
+function setMonthlyIncome(year, monthIdx, amount) {
+  if (!settings.monthlyIncomes) settings.monthlyIncomes = {};
+  const key = `${year}-${String(monthIdx+1).padStart(2,'0')}`;
+  settings.monthlyIncomes[key] = Number(amount) || 0;
+}
 // 사용자가 추가한 채널 (자산 / 운동)
 let userChannels = {
   asset: [
@@ -2917,6 +2934,7 @@ function deleteWorkout(key) {
 
 // ====== 가계부 ======
 function renderMoney() {
+  runAllAutoBuys(); // 자동매수 점검
   // 가계부에서 보고 있는 월 (기본: 현재 월)
   if (typeof budgetViewYear === 'undefined') budgetViewYear = currentYear;
   if (typeof budgetViewMonth === 'undefined') budgetViewMonth = currentMonth;
@@ -2932,8 +2950,22 @@ function renderMoney() {
     </div>
   `;
 
-  const fixedTotal = budget.fixed.reduce((s, f) => s + Number(f.amt), 0);
-  const fixedPaid = budget.fixed.filter(f => f.paid).reduce((s, f) => s + Number(f.amt), 0);
+  // 고정지출 합계 - 주기별 (월/주/격주) 횟수 반영
+  function countOccurrences(f, year, monthIdx) {
+    if (!f.cycle || f.cycle === 'monthly') return 1;
+    // 해당 월의 그 요일이 몇 번 있는지
+    const daysInMonth = new Date(year, monthIdx + 1, 0).getDate();
+    let count = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dt = new Date(year, monthIdx, d);
+      if (dt.getDay() === Number(f.dow)) count++;
+    }
+    if (f.cycle === 'biweekly') count = Math.ceil(count / 2);
+    return count;
+  }
+
+  const fixedTotal = budget.fixed.reduce((s, f) => s + Number(f.amt) * countOccurrences(f, budgetViewYear, budgetViewMonth), 0);
+  const fixedPaid = budget.fixed.filter(f => f.paid).reduce((s, f) => s + Number(f.amt) * countOccurrences(f, budgetViewYear, budgetViewMonth), 0);
   const fixedRemaining = fixedTotal - fixedPaid;
 
   // 보고 있는 월의 지출 합산
@@ -2952,9 +2984,8 @@ function renderMoney() {
     .filter(e => !investCategories.includes(e.cat))
     .reduce((s, e) => s + Number(e.amt), 0);
 
-  // 변동 생활비 예산 = 월 수입 - 고정지출 - 자산 투자
-  // 단, settings.monthlyIncome 가 0이면 기존 budget.total 사용
-  const monthlyIncomeNum = Number(settings.monthlyIncome) || 0;
+  // 변동 생활비 예산 = (보고 있는 월의) 수입 - 고정지출 - 자산 투자
+  const monthlyIncomeNum = getMonthlyIncome(budgetViewYear, budgetViewMonth);
   const variableBudget = monthlyIncomeNum > 0
     ? Math.max(0, monthlyIncomeNum - fixedTotal - investSpent)
     : Math.max(0, budget.total - fixedTotal);
@@ -3188,34 +3219,58 @@ function renderMoney() {
 }
 
 function renderFixedRows() {
-  const order = ['주거', '공과금', '보험', '구독', '기타'];
+  const order = ['주거', '공과금', '보험', '구독', '투자', '기타'];
   const sorted = [...budget.fixed].sort((a, b) => {
     const oa = order.indexOf(a.cat);
     const ob = order.indexOf(b.cat);
     if (oa !== ob) return oa - ob;
-    return a.day - b.day;
+    return (a.day || 0) - (b.day || 0);
   });
 
-  return sorted.map(f => `
+  const dowNames = ['일','월','화','수','목','금','토'];
+
+  return sorted.map(f => {
+    const cycle = f.cycle || 'monthly';
+    // 이번 달 발생 횟수
+    let occurCount = 1;
+    if (cycle !== 'monthly') {
+      const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+      let count = 0;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dt = new Date(currentYear, currentMonth, d);
+        if (dt.getDay() === Number(f.dow)) count++;
+      }
+      if (cycle === 'biweekly') count = Math.ceil(count / 2);
+      occurCount = count;
+    }
+    const totalAmt = Number(f.amt) * occurCount;
+    const cycleLabel = cycle === 'monthly'
+      ? `매월 ${f.day}일`
+      : cycle === 'weekly'
+        ? `매주 ${dowNames[f.dow]} (월 ${occurCount}회)`
+        : `격주 ${dowNames[f.dow]} (월 ${occurCount}회)`;
+
+    return `
     <div class="fixed-row">
       <div class="ic" style="background:${f.paid?'var(--bg-success)':'var(--bg-secondary)'}; color:${f.paid?'var(--text-success)':'var(--text-secondary)'}; cursor:pointer;" onclick="toggleFixedPaid(${f.id})">
         <i class="ti ${f.icon}"></i>
       </div>
       <div style="flex:1; min-width:0; cursor:pointer;" onclick="toggleFixedPaid(${f.id})">
         <div class="nm">${f.name}</div>
-        <div class="meta">${f.cat} · 매월 ${f.day}일</div>
+        <div class="meta">${f.cat} · ${cycleLabel}</div>
       </div>
       <div style="text-align:right; cursor:pointer;" onclick="toggleFixedPaid(${f.id})">
-        <div class="amt ${f.paid?'paid':'upcoming'}">${Number(f.amt).toLocaleString()}원</div>
-        <div class="meta" style="color:${f.paid?'var(--text-success)':f.day < today?'var(--text-danger)':'var(--text-tertiary)'};">
-          ${f.paid ? '✓ 완료' : f.day < today ? '⚠ 연체' : `${f.day - today}일 후`}
+        <div class="amt ${f.paid?'paid':'upcoming'}">${totalAmt.toLocaleString()}원</div>
+        <div class="meta" style="color:${f.paid?'var(--text-success)':'var(--text-tertiary)'};">
+          ${f.paid ? '✓ 완료' : occurCount > 1 ? `${f.amt.toLocaleString()}원 × ${occurCount}` : (f.day && f.day < today ? '⚠ 연체' : (f.day ? `${f.day - today}일 후` : ''))}
         </div>
       </div>
       <button onclick="editFixed(${f.id})" style="border:none; background:transparent; cursor:pointer; padding:6px 4px 6px 8px; color:var(--text-tertiary); font-family:inherit; flex-shrink:0;" aria-label="수정">
         <i class="ti ti-dots-vertical" style="font-size:16px;"></i>
       </button>
     </div>
-  `).join('');
+  `;
+  }).join('');
 }
 
 function editFixed(id) {
@@ -3589,17 +3644,44 @@ function openFixedAddModal() {
 
       <div class="field">
         <div class="field-label">이름</div>
-        <input type="text" id="fx-name" placeholder="예: 월세, 인터넷, 넷플릭스" />
+        <input type="text" id="fx-name" placeholder="예: 월세, 주식 자동매수, 적금" />
       </div>
 
       <div class="field">
-        <div class="field-label">금액 (월)</div>
+        <div class="field-label">1회 금액</div>
         <input type="number" id="fx-amt" placeholder="0" />
       </div>
 
       <div class="field">
+        <div class="field-label">결제 주기</div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap;" id="fx-cycle">
+          <button class="chip active" data-cycle="monthly">📅 매월</button>
+          <button class="chip" data-cycle="weekly">📆 매주</button>
+          <button class="chip" data-cycle="biweekly">🗓️ 격주</button>
+        </div>
+      </div>
+
+      <!-- 매월용 -->
+      <div class="field" id="fx-monthly-field">
         <div class="field-label">매월 결제일</div>
         <input type="number" id="fx-day" placeholder="1-31" min="1" max="31" />
+      </div>
+
+      <!-- 매주/격주용 -->
+      <div class="field" id="fx-weekly-field" style="display:none;">
+        <div class="field-label">요일</div>
+        <div style="display:flex; gap:4px; justify-content:space-between;" id="fx-dow">
+          <button class="chip" data-dow="0" style="flex:1; color:#FF6B6B;">일</button>
+          <button class="chip active" data-dow="1" style="flex:1;">월</button>
+          <button class="chip" data-dow="2" style="flex:1;">화</button>
+          <button class="chip" data-dow="3" style="flex:1;">수</button>
+          <button class="chip" data-dow="4" style="flex:1;">목</button>
+          <button class="chip" data-dow="5" style="flex:1;">금</button>
+          <button class="chip" data-dow="6" style="flex:1; color:#6B9FD9;">토</button>
+        </div>
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:6px;" id="fx-cycle-info">
+          매주 월요일 → 한 달에 4~5회 자동 합산
+        </div>
       </div>
 
       <div class="field">
@@ -3609,7 +3691,45 @@ function openFixedAddModal() {
           <button class="chip" data-c="공과금" data-icon="ti-bolt">공과금</button>
           <button class="chip" data-c="보험" data-icon="ti-shield">보험</button>
           <button class="chip" data-c="구독" data-icon="ti-device-tv">구독</button>
+          <button class="chip" data-c="투자" data-icon="ti-trending-up">💎 투자</button>
           <button class="chip" data-c="기타" data-icon="ti-dots">기타</button>
+        </div>
+      </div>
+
+      <!-- 투자 카테고리 선택 시 자동매수 옵션 -->
+      <div id="fx-invest-fields" style="display:none; padding:12px; background:rgba(94,92,230,0.08); border-radius:var(--radius-md); margin-bottom:14px;">
+        <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; margin-bottom:12px;">
+          <input type="checkbox" id="fx-autobuy" checked style="width:18px; height:18px; cursor:pointer; flex-shrink:0; margin-top:2px;" />
+          <div style="flex:1;">
+            <div style="font-size:12px; font-weight:600; color:#5E5CE6;">🤖 자동매수 (자산에 자동 합산)</div>
+            <div style="font-size:10px; color:var(--text-tertiary); margin-top:3px; line-height:1.4;">
+              매주/매월 자동으로 자산에 매수 처리됩니다.<br>
+              정확한 금액/수량은 나중에 *수동 수정* 가능해요.
+            </div>
+          </div>
+        </label>
+
+        <div class="field">
+          <div class="field-label">자산 종류</div>
+          <div style="display:flex; gap:4px; flex-wrap:wrap;" id="fx-asset-type">
+            <button class="chip active" data-t="주식">주식</button>
+            <button class="chip" data-t="ETF">ETF</button>
+            <button class="chip" data-t="펀드">펀드</button>
+            <button class="chip" data-t="채권">채권</button>
+            <button class="chip" data-t="금">금</button>
+            <button class="chip" data-t="달러">달러</button>
+            <button class="chip" data-t="예적금">예적금</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="field-label">자산명</div>
+          <input type="text" id="fx-asset-name" placeholder="예: 삼성전자, SPY (없으면 자동 생성)" />
+        </div>
+
+        <div class="field">
+          <div class="field-label">티커 (선택 - 시세 자동 갱신)</div>
+          <input type="text" id="fx-asset-ticker" placeholder="예: 005930.KS, SPY" />
         </div>
       </div>
     </div>
@@ -3620,49 +3740,263 @@ function openFixedAddModal() {
       b.addEventListener('click', () => {
         document.querySelectorAll('#fx-cat .chip').forEach(x => x.classList.remove('active'));
         b.classList.add('active');
+        // 투자 선택 시 자산 필드 표시
+        const isInvest = b.dataset.c === '투자';
+        document.getElementById('fx-invest-fields').style.display = isInvest ? 'block' : 'none';
       });
     });
+
+    // 자산 종류 선택
+    document.querySelectorAll('#fx-asset-type .chip').forEach(b => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('#fx-asset-type .chip').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+      });
+    });
+
+    // 주기 전환
+    document.querySelectorAll('#fx-cycle .chip').forEach(b => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('#fx-cycle .chip').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        const cycle = b.dataset.cycle;
+        document.getElementById('fx-monthly-field').style.display = cycle === 'monthly' ? 'block' : 'none';
+        document.getElementById('fx-weekly-field').style.display = cycle !== 'monthly' ? 'block' : 'none';
+        updateCycleInfo();
+      });
+    });
+
+    // 요일 선택
+    document.querySelectorAll('#fx-dow .chip').forEach(b => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('#fx-dow .chip').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        updateCycleInfo();
+      });
+    });
+
+    function updateCycleInfo() {
+      const cycle = document.querySelector('#fx-cycle .chip.active')?.dataset.cycle;
+      const dowBtn = document.querySelector('#fx-dow .chip.active');
+      const dow = dowBtn?.textContent || '월';
+      const infoEl = document.getElementById('fx-cycle-info');
+      if (!infoEl) return;
+      if (cycle === 'weekly') {
+        infoEl.textContent = `매주 ${dow}요일 → 한 달 4~5회 자동 합산`;
+      } else if (cycle === 'biweekly') {
+        infoEl.textContent = `격주 ${dow}요일 → 한 달 2~3회 자동 합산`;
+      }
+    }
   }, 50);
 }
 
 function saveFixed() {
   const name = document.getElementById('fx-name').value.trim();
   const amt = Number(document.getElementById('fx-amt').value);
-  const day = Number(document.getElementById('fx-day').value);
   const catBtn = document.querySelector('#fx-cat .chip.active');
   const cat = catBtn.dataset.c;
   const icon = catBtn.dataset.icon;
+  const cycle = document.querySelector('#fx-cycle .chip.active')?.dataset.cycle || 'monthly';
 
-  if (!name || !amt || !day) {
-    showToast('모든 항목을 입력해주세요');
+  let day = 0, dow = 0;
+  if (cycle === 'monthly') {
+    day = Number(document.getElementById('fx-day').value);
+    if (!day) { showToast('결제일을 입력해주세요'); return; }
+  } else {
+    dow = Number(document.querySelector('#fx-dow .chip.active')?.dataset.dow ?? 1);
+  }
+
+  if (!name || !amt) {
+    showToast('이름과 금액을 입력해주세요');
     return;
   }
-  budget.fixed.push({ id: Date.now(), name, amt, day, cat, icon, paid: false });
+
+  // 투자 카테고리 + 자동매수 체크 → 자산 정보 추가
+  const isInvest = cat === '투자';
+  const autoBuy = isInvest && document.getElementById('fx-autobuy')?.checked;
+  let assetInfo = null;
+  if (autoBuy) {
+    const assetType = document.querySelector('#fx-asset-type .chip.active')?.dataset.t || '주식';
+    const assetName = document.getElementById('fx-asset-name')?.value?.trim() || name; // 비워두면 이름 사용
+    const assetTicker = document.getElementById('fx-asset-ticker')?.value?.trim() || '';
+    assetInfo = { type: assetType, name: assetName, ticker: assetTicker };
+  }
+
+  const newFixed = {
+    id: Date.now(),
+    name, amt, cat, icon,
+    cycle,
+    day, dow,
+    paid: false,
+    autoBuy: !!autoBuy,
+    assetInfo,
+    lastBuyDate: null, // 마지막 자동매수 처리 날짜
+  };
+  budget.fixed.push(newFixed);
+
+  // 자동매수 활성화 시 → 즉시 자산 등록 (없으면)
+  if (autoBuy && assetInfo) {
+    const existing = assets.find(a => a.name === assetInfo.name && a.type === assetInfo.type);
+    if (!existing) {
+      assets.push({
+        id: Date.now() + 1,
+        name: assetInfo.name,
+        ticker: assetInfo.ticker,
+        type: assetInfo.type,
+        region: '국내',
+        qty: 0,
+        price: 0,
+        note: `🤖 자동매수: ${cycle === 'monthly' ? '매월' : cycle === 'weekly' ? '매주' : '격주'} ${amt.toLocaleString()}원`,
+      });
+    }
+  }
+
+  // 자동매수 실행 (지금까지 누락된 회차 자동 처리)
+  if (autoBuy) {
+    processAutoBuy(newFixed);
+  }
+
   saveData();
-  showToast(`${name} 추가됨`);
+  showToast(`${name} 추가됨${autoBuy ? ' (자동매수 활성)' : ''}`);
   closeModal();
   renderMoney();
 }
 
+// 자동매수 처리 - 이번 달 발생한 회차만큼 가계부 + 자산 자동 합산
+function processAutoBuy(fixed) {
+  if (!fixed.autoBuy || !fixed.assetInfo) return;
+  const now = new Date();
+  const cycle = fixed.cycle || 'monthly';
+
+  // 이번 달의 발생일 계산
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const occurDates = [];
+
+  if (cycle === 'monthly') {
+    const targetDay = Math.min(fixed.day, daysInMonth);
+    const d = new Date(year, month, targetDay);
+    if (d <= now) occurDates.push(d);
+  } else {
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dt = new Date(year, month, d);
+      if (dt.getDay() === Number(fixed.dow) && dt <= now) {
+        occurDates.push(dt);
+      }
+    }
+    if (cycle === 'biweekly') {
+      // 격주 - 첫째, 셋째 주만
+      const filtered = [];
+      occurDates.forEach((d, i) => {
+        if (i % 2 === 0) filtered.push(d);
+      });
+      occurDates.length = 0;
+      occurDates.push(...filtered);
+    }
+  }
+
+  // 마지막 처리 날짜 이후의 회차만 처리
+  const lastBuyDate = fixed.lastBuyDate ? new Date(fixed.lastBuyDate) : null;
+  const newDates = lastBuyDate
+    ? occurDates.filter(d => d > lastBuyDate)
+    : occurDates;
+
+  if (newDates.length === 0) return;
+
+  // 자산 찾기
+  const asset = assets.find(a => a.name === fixed.assetInfo.name && a.type === fixed.assetInfo.type);
+  if (!asset) return;
+
+  // 현재 시세 (있으면) 또는 기존 평단가
+  const live = liveAssetData[asset.id];
+  const currPrice = live?.priceKRW || asset.price || 0;
+
+  newDates.forEach(d => {
+    const dKey = dateKey(d.getFullYear(), d.getMonth(), d.getDate());
+
+    // 가계부에 자동 기록
+    budget.expenses.push({
+      id: Date.now() + Math.random() * 1000,
+      amt: fixed.amt,
+      cat: fixed.assetInfo.type,
+      memo: `🤖 ${fixed.name} (자동매수)`,
+      dateKey: dKey,
+      date: d.getDate(),
+      autoBuy: true,
+    });
+
+    // 자산 수량/평단가 업데이트
+    if (currPrice > 0) {
+      // 시세 알면 정확한 수량 계산
+      const newQty = fixed.amt / currPrice;
+      const oldQty = Number(asset.qty) || 0;
+      const oldPrice = Number(asset.price) || 0;
+      const totalQty = oldQty + newQty;
+      asset.qty = parseFloat(totalQty.toFixed(4));
+      asset.price = totalQty > 0 ? Math.round(((oldQty * oldPrice) + fixed.amt) / totalQty) : currPrice;
+    } else {
+      // 시세 모르면 금액만 누적 (수동 수정 안내)
+      const oldQty = Number(asset.qty) || 0;
+      const oldPrice = Number(asset.price) || 0;
+      // 수량 1단위 + 금액만 누적 (사용자가 수동 조정)
+      asset.qty = oldQty + 1;
+      asset.price = (oldPrice * oldQty + fixed.amt) / (oldQty + 1);
+      asset.price = Math.round(asset.price);
+    }
+  });
+
+  fixed.lastBuyDate = newDates[newDates.length - 1].toISOString();
+  saveData();
+
+  if (newDates.length > 0) {
+    showToast(`🤖 ${fixed.name} ${newDates.length}회 자동매수 처리됨`);
+  }
+}
+
+// 앱 시작 시 모든 자동매수 항목 점검
+function runAllAutoBuys() {
+  if (!budget.fixed) return;
+  budget.fixed.forEach(f => {
+    if (f.autoBuy) processAutoBuy(f);
+  });
+}
+
 // 월 수입 빠른 편집
 function editMonthlyIncome() {
-  const current = settings.monthlyIncome || 0;
+  const monthLabel = `${budgetViewYear}년 ${budgetViewMonth + 1}월`;
+  const current = getMonthlyIncome(budgetViewYear, budgetViewMonth);
+  const baseline = settings.monthlyIncome || 0;
   modal.innerHTML = `
     <div class="modal">
       <div class="modal-handle"></div>
       <div class="modal-header">
         <button class="modal-cancel" onclick="closeModal()">취소</button>
-        <h2>월 수입 설정</h2>
+        <h2>${monthLabel} 수입</h2>
         <button class="modal-save" onclick="saveMonthlyIncomeQuick()">저장</button>
       </div>
 
       <div style="padding:10px 12px; background:var(--bg-info); border-radius:var(--radius-md); margin-bottom:14px; font-size:11px; color:var(--text-info); line-height:1.5;">
-        💡 매월 받는 수입 (월급, 사업 수익 등)을 입력하세요. 이 금액 기준으로 변동 생활비가 자동 계산됩니다.
+        💡 <b>${monthLabel}</b>의 수입을 입력하세요.<br>
+        매월 수입은 *독립적*으로 저장됩니다 (월별 다른 금액 가능).
       </div>
 
       <div class="field">
-        <div class="field-label">월 수입 (원)</div>
+        <div class="field-label">${monthLabel} 수입 (원)</div>
         <input type="number" id="quick-income" value="${current}" placeholder="3000000" autofocus />
+      </div>
+
+      <div class="field" style="margin-top:14px;">
+        <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; padding:10px 12px; background:var(--bg-secondary); border-radius:var(--radius-md);">
+          <input type="checkbox" id="apply-default" style="width:18px; height:18px; cursor:pointer; flex-shrink:0; margin-top:2px;" />
+          <div>
+            <div style="font-size:12px; font-weight:500;">기본 수입으로도 저장</div>
+            <div style="font-size:10px; color:var(--text-tertiary); margin-top:3px; line-height:1.4;">
+              체크하면 *수입을 설정하지 않은 다른 달*에도 이 금액이 자동 사용됩니다.<br>
+              <span style="opacity:0.7;">현재 기본값: ${baseline.toLocaleString()}원</span>
+            </div>
+          </div>
+        </label>
       </div>
     </div>
   `;
@@ -3672,9 +4006,18 @@ function editMonthlyIncome() {
 
 function saveMonthlyIncomeQuick() {
   const val = Number(document.getElementById('quick-income').value) || 0;
-  settings.monthlyIncome = val;
+  const applyDefault = document.getElementById('apply-default')?.checked;
+
+  // 보고 있는 월에만 저장
+  setMonthlyIncome(budgetViewYear, budgetViewMonth, val);
+
+  // 기본값으로도 저장 옵션
+  if (applyDefault) {
+    settings.monthlyIncome = val;
+  }
+
   saveData();
-  showToast('월 수입 저장됨');
+  showToast(`${budgetViewYear}년 ${budgetViewMonth+1}월 수입 저장됨`);
   closeModal();
   renderMoney();
 }
@@ -4053,6 +4396,7 @@ function saveTodo(editId) {
 
 // ====== 자산 ======
 function renderAsset() {
+  runAllAutoBuys(); // 자동매수 점검 (시세 알면 정확히 처리)
   header.innerHTML = `
     <h1>자산</h1>
     <div class="header-actions">
@@ -4082,6 +4426,9 @@ function renderAsset() {
     byType[a.type] = (byType[a.type] || 0) + v;
   });
 
+  // 이번 달 자산 스냅샷 자동 저장
+  saveAssetSnapshot(total, byType);
+
   const typeColors = {
     '주식':'var(--text-info)', '예적금':'var(--text-success)',
     '현금':'var(--text-secondary)', '코인':'var(--text-warning)',
@@ -4093,6 +4440,9 @@ function renderAsset() {
 
   // 시장 지수 카드 (라이브)
   html += `<div id="market-indices" style="margin-bottom:14px;"></div>`;
+
+  // 자산 변화 추이 (월별 스냅샷)
+  html += renderAssetTrendCard();
 
   // 자산 비중 도넛 차트
   if (total > 0) {
@@ -4376,6 +4726,138 @@ async function loadMarketIndices() {
   }
   h += `<div style="font-size:9px; color:var(--text-tertiary); text-align:right; margin-top:4px;">← 좌우로 스크롤</div>`;
   container.innerHTML = h;
+}
+
+// 자산 스냅샷 - 매달 첫 자산 페이지 방문시 저장
+function saveAssetSnapshot(total, byType) {
+  if (!total || total <= 0) return;
+  if (!settings.assetSnapshots) settings.assetSnapshots = {};
+
+  const now = new Date();
+  const key = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+
+  // 이번 달 스냅샷 - 항상 최신 값으로 덮어쓰기 (오늘 본 시세)
+  settings.assetSnapshots[key] = {
+    total: Math.round(total),
+    byType: Object.fromEntries(Object.entries(byType).map(([k,v]) => [k, Math.round(v)])),
+    date: now.toISOString(),
+  };
+  saveData();
+}
+
+// 자산 변화 그래프 - SVG 라인 그래프
+function renderAssetTrendCard() {
+  const snaps = settings.assetSnapshots || {};
+  const keys = Object.keys(snaps).sort();
+  if (keys.length < 2) {
+    return `<div style="background:white; border:0.5px solid var(--border-tertiary); border-radius:14px; padding:16px; margin-bottom:14px; text-align:center; color:var(--text-tertiary); font-size:12px;">
+      📈 자산 변화 추이는 <b>2개월 이상</b> 데이터가 모이면 표시됩니다.<br>
+      <span style="font-size:10px;">매달 자동 저장됨</span>
+    </div>`;
+  }
+
+  // 최근 12개월만
+  const recent = keys.slice(-12);
+  const totals = recent.map(k => snaps[k].total);
+  const max = Math.max(...totals);
+  const min = Math.min(...totals);
+  const range = max - min || 1;
+
+  // SVG 좌표 계산
+  const w = 280, h = 110, padL = 40, padR = 10, padT = 10, padB = 24;
+  const innerW = w - padL - padR;
+  const innerH = h - padT - padB;
+
+  const points = recent.map((k, i) => {
+    const x = padL + (recent.length > 1 ? (i / (recent.length - 1)) * innerW : innerW / 2);
+    const y = padT + innerH - ((snaps[k].total - min) / range) * innerH;
+    return { x, y, k, v: snaps[k].total };
+  });
+
+  const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+  const areaPath = `M ${points[0].x.toFixed(1)} ${(padT+innerH).toFixed(1)} ${points.map(p => `L ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ')} L ${points[points.length-1].x.toFixed(1)} ${(padT+innerH).toFixed(1)} Z`;
+
+  const lastTotal = totals[totals.length - 1];
+  const firstTotal = totals[0];
+  const change = lastTotal - firstTotal;
+  const changePct = firstTotal > 0 ? (change / firstTotal * 100) : 0;
+  const isUp = change >= 0;
+
+  return `
+    <div style="background:white; border:0.5px solid var(--border-tertiary); border-radius:14px; padding:16px; margin-bottom:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;">
+        <div style="font-size:13px; font-weight:600;">📈 자산 변화 추이</div>
+        <div style="font-size:11px; color:${isUp ? 'var(--text-success)' : 'var(--text-danger)'}; font-weight:600;">
+          ${isUp ? '+' : ''}${(change/10000).toFixed(0)}만 (${isUp ? '+' : ''}${changePct.toFixed(1)}%)
+        </div>
+      </div>
+
+      <svg width="100%" viewBox="0 0 ${w} ${h}" style="display:block;">
+        <!-- Y축 라벨 -->
+        <text x="${padL-4}" y="${padT+4}" font-size="9" fill="#999" text-anchor="end">${(max/10000).toFixed(0)}만</text>
+        <text x="${padL-4}" y="${padT+innerH+3}" font-size="9" fill="#999" text-anchor="end">${(min/10000).toFixed(0)}만</text>
+
+        <!-- 영역 -->
+        <path d="${areaPath}" fill="rgba(94,92,230,0.15)" />
+
+        <!-- 라인 -->
+        <path d="${linePath}" stroke="#5E5CE6" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+
+        <!-- 점 -->
+        ${points.map(p => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3" fill="#5E5CE6" stroke="white" stroke-width="1.5" />`).join('')}
+
+        <!-- X축 라벨 -->
+        ${points.map((p, i) => {
+          if (recent.length > 6 && i % 2 !== 0 && i !== points.length - 1) return '';
+          const monthLabel = p.k.split('-')[1] + '월';
+          return `<text x="${p.x.toFixed(1)}" y="${(h-6).toFixed(1)}" font-size="9" fill="#999" text-anchor="middle">${monthLabel}</text>`;
+        }).join('')}
+      </svg>
+
+      <!-- 종류별 비율 변화 (최신 vs 이전달) -->
+      ${recent.length >= 2 ? renderAssetTypeChange(snaps[recent[recent.length-2]].byType, snaps[recent[recent.length-1]].byType) : ''}
+    </div>
+  `;
+}
+
+// 종류별 비율 변화
+function renderAssetTypeChange(prevByType, currByType) {
+  const allTypes = new Set([...Object.keys(prevByType||{}), ...Object.keys(currByType||{})]);
+  const currTotal = Object.values(currByType||{}).reduce((s,v) => s+Number(v), 0);
+  const prevTotal = Object.values(prevByType||{}).reduce((s,v) => s+Number(v), 0);
+  if (currTotal === 0) return '';
+
+  const items = [];
+  allTypes.forEach(t => {
+    const curr = Number(currByType?.[t]) || 0;
+    const prev = Number(prevByType?.[t]) || 0;
+    if (curr === 0 && prev === 0) return;
+    const currPct = currTotal > 0 ? (curr / currTotal * 100) : 0;
+    const prevPct = prevTotal > 0 ? (prev / prevTotal * 100) : 0;
+    const diff = currPct - prevPct;
+    items.push({ type: t, currPct, diff, curr });
+  });
+  items.sort((a, b) => b.curr - a.curr);
+
+  return `
+    <div style="margin-top:14px; padding-top:12px; border-top:0.5px solid var(--border-tertiary);">
+      <div style="font-size:11px; color:var(--text-tertiary); margin-bottom:8px;">지난달 대비 비율 변화</div>
+      ${items.slice(0, 6).map(it => {
+        const diffStr = it.diff >= 0.1 ? `+${it.diff.toFixed(1)}%p` : it.diff <= -0.1 ? `${it.diff.toFixed(1)}%p` : '';
+        const diffColor = it.diff > 0.1 ? 'var(--text-success)' : it.diff < -0.1 ? 'var(--text-danger)' : 'var(--text-tertiary)';
+        return `
+          <div style="display:flex; align-items:center; gap:8px; padding:4px 0; font-size:11px;">
+            <span style="width:50px;">${it.type}</span>
+            <div style="flex:1; height:5px; background:rgba(0,0,0,0.05); border-radius:3px; overflow:hidden;">
+              <div style="height:100%; width:${it.currPct}%; background:#5E5CE6;"></div>
+            </div>
+            <span style="width:42px; text-align:right; font-weight:500;">${it.currPct.toFixed(0)}%</span>
+            <span style="width:48px; text-align:right; color:${diffColor}; font-size:10px;">${diffStr}</span>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
 }
 
 async function manualRefreshPrices() {
