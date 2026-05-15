@@ -551,6 +551,12 @@
     border: none;
     font-weight: 600;
   }
+  .wcell.missed {
+    background: var(--bg-danger);
+    color: var(--text-danger);
+    border: 0.5px solid var(--text-danger);
+    font-weight: 600;
+  }
   .wcell.today { border: 1.5px solid var(--text-primary); }
   .wcell.future { opacity: 0.3; }
   .wcell.empty { background: transparent; border: none; pointer-events: none; }
@@ -2307,93 +2313,84 @@ function renderWorkout() {
   }
   html += `</div>`;
 
-  // 오늘 빠른 체크 (현재 월일 때만)
+  // 오늘 빠른 체크 (현재 월일 때만) - O/X 두 버튼
   if (isWorkoutCurrentMonth()) {
     const todayLog = workoutLog[todayKey()];
+    const isDone = todayLog?.done;
+    const isMarkedX = todayLog && todayLog.done === false && todayLog.marked === true;
     html += `
-      <div style="margin-bottom:14px; padding:14px; border-radius:12px; background:${todayLog?.done ? 'var(--bg-success)' : 'var(--bg-secondary)'}; border:0.5px solid ${todayLog?.done ? 'var(--text-success)' : 'var(--border-tertiary)'};">
-        <div style="display:flex; align-items:center; gap:12px;">
-          <div style="width:42px; height:42px; border-radius:50%; background:white; display:flex; align-items:center; justify-content:center; color:${todayLog?.done ? 'var(--text-success)' : 'var(--text-tertiary)'}; cursor:pointer;" onclick="quickToggleToday()">
-            <i class="ti ${todayLog?.done ? 'ti-check' : 'ti-plus'}" style="font-size:22px;"></i>
+      <div style="margin-bottom:14px; padding:14px; border-radius:12px; background:${isDone ? 'var(--bg-success)' : isMarkedX ? 'var(--bg-danger)' : 'var(--bg-secondary)'}; border:0.5px solid ${isDone ? 'var(--text-success)' : isMarkedX ? 'var(--text-danger)' : 'var(--border-tertiary)'};">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+          <div style="font-size:14px; font-weight:600; color:${isDone ? 'var(--text-success)' : isMarkedX ? 'var(--text-danger)' : 'var(--text-primary)'};">
+            오늘 운동했어요?
           </div>
-          <div style="flex:1;">
-            <div style="font-size:14px; font-weight:600; color:${todayLog?.done ? 'var(--text-success)' : 'var(--text-primary)'};">
-              ${todayLog?.done ? '오늘 운동 완료!' : '오늘 운동했어요?'}
-            </div>
-            <div style="font-size:11px; color:${todayLog?.done ? 'var(--text-success)' : 'var(--text-tertiary)'}; margin-top:2px; opacity:0.8;">
-              ${todayLog?.done ? `${todayLog.minutes || 0}분 · ${todayLog.kcal || 0} kcal${todayLog.note ? ' · ' + todayLog.note : ''}` : '동그라미를 탭하면 바로 체크'}
-            </div>
-          </div>
-          ${todayLog?.done ? `<button onclick="openWorkoutModal('${todayKey()}')" style="border:none; background:white; color:var(--text-success); padding:6px 12px; border-radius:999px; font-size:11px; font-weight:500; cursor:pointer; font-family:inherit;">수정</button>` : `<button onclick="openWorkoutModal('${todayKey()}')" style="border:none; background:var(--text-info); color:white; padding:6px 12px; border-radius:999px; font-size:11px; font-weight:500; cursor:pointer; font-family:inherit;">상세</button>`}
+          ${isDone || isMarkedX ? `<button onclick="openWorkoutModal('${todayKey()}')" style="border:none; background:white; color:var(--text-info); padding:5px 10px; border-radius:999px; font-size:10px; font-weight:500; cursor:pointer; font-family:inherit;">상세</button>` : ''}
         </div>
+        <div style="display:flex; gap:8px;">
+          <button onclick="setTodayWorkout(true)" style="flex:1; padding:14px; border-radius:10px; border:none; background:${isDone ? 'var(--text-success)' : 'white'}; color:${isDone ? 'white' : 'var(--text-secondary)'}; font-size:16px; font-weight:700; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px; ${!isDone ? 'box-shadow:0 1px 3px rgba(0,0,0,0.08);' : ''}">
+            <i class="ti ti-check" style="font-size:18px;"></i> 했어요
+          </button>
+          <button onclick="setTodayWorkout(false)" style="flex:1; padding:14px; border-radius:10px; border:none; background:${isMarkedX ? 'var(--text-danger)' : 'white'}; color:${isMarkedX ? 'white' : 'var(--text-secondary)'}; font-size:16px; font-weight:700; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px; ${!isMarkedX ? 'box-shadow:0 1px 3px rgba(0,0,0,0.08);' : ''}">
+            <i class="ti ti-x" style="font-size:18px;"></i> 안했어요
+          </button>
+        </div>
+        ${isDone && todayLog ? `<div style="margin-top:8px; font-size:11px; color:var(--text-success); opacity:0.85;">${todayLog.minutes || 0}분 · ${todayLog.kcal || 0} kcal${todayLog.note ? ' · ' + todayLog.note : ''}</div>` : ''}
       </div>
     `;
   }
 
-  // 월간 체크 그리드
-  html += `<div style="font-size:14px; font-weight:600; margin-bottom:8px;">${monthLabels[workoutViewMonth]} O/X 체크</div>`;
+  // 월간 체크 그리드 — 가로 요일 / 세로 주차 (일반 달력 모양)
+  html += `<div style="font-size:14px; font-weight:600; margin-bottom:8px;">${monthLabels[workoutViewMonth]} 운동 달력</div>`;
   html += `<div class="workout-month">
     <div style="display:flex; gap:6px; margin-bottom:8px;">
       <div style="width:18px;"></div>
-      <div style="flex:1; display:grid; grid-template-columns: repeat(6, 1fr); gap:4px; font-size:9px; color:var(--text-tertiary); text-align:center;">
-        <span>1주</span><span>2주</span><span>3주</span><span>4주</span><span>5주</span><span>6주</span>
+      <div style="flex:1; display:grid; grid-template-columns: repeat(7, 1fr); gap:4px; font-size:9px; text-align:center;">
+        <span style="color:var(--text-danger);">${dayLabels[0]}</span>
+        <span style="color:var(--text-tertiary);">${dayLabels[1]}</span>
+        <span style="color:var(--text-tertiary);">${dayLabels[2]}</span>
+        <span style="color:var(--text-tertiary);">${dayLabels[3]}</span>
+        <span style="color:var(--text-tertiary);">${dayLabels[4]}</span>
+        <span style="color:var(--text-tertiary);">${dayLabels[5]}</span>
+        <span style="color:var(--text-info);">${dayLabels[6]}</span>
       </div>
     </div>`;
 
-  for (let dow = 0; dow < 7; dow++) {
-    html += `<div class="workout-row"><div class="wlb">${dayLabels[dow]}</div><div class="wcells" style="grid-template-columns: repeat(6, 1fr);">`;
-    for (let week = 0; week < 6; week++) {
+  // 6주 (세로) × 7요일 (가로)
+  for (let week = 0; week < 6; week++) {
+    html += `<div class="workout-row"><div class="wlb">${week+1}주</div><div class="wcells" style="grid-template-columns: repeat(7, 1fr);">`;
+    let hasAny = false;
+    for (let dow = 0; dow < 7; dow++) {
       const cellIdx = week * 7 + dow;
       const dayNum = cellIdx - woStartOffset + 1;
       if (cellIdx < woStartOffset || dayNum > woDaysInMonth) {
         html += `<div class="wcell empty"></div>`;
         continue;
       }
+      hasAny = true;
       const log = workoutLog[woKey(dayNum)];
       const isToday = dayNum === today && isWorkoutCurrentMonth();
       const isFuture = isWorkoutCurrentMonth() && dayNum > today;
       const done = log?.done;
-      html += `<button class="wcell ${done?'done':''} ${isToday?'today':''} ${isFuture?'future':''}" onclick="toggleWorkoutDay(${dayNum})">${dayNum}</button>`;
+      const missed = log && log.done === false && log.marked === true;
+      let cellClass = 'wcell';
+      if (done) cellClass += ' done';
+      else if (missed) cellClass += ' missed';
+      if (isToday) cellClass += ' today';
+      if (isFuture) cellClass += ' future';
+      html += `<button class="${cellClass}" onclick="toggleWorkoutDay(${dayNum})">${dayNum}</button>`;
     }
     html += `</div></div>`;
+    if (!hasAny && week > 0) break; // 빈 주가 나오면 중단
   }
   html += `</div>`;
 
   html += `<div style="font-size:10px; color:var(--text-tertiary); text-align:center; margin-bottom:14px;">
-    셀을 탭하면 운동 O/X 토글 · 자세한 입력은 + 버튼
+    셀 탭 = 운동 O/X 토글 · 자세한 입력은 + 버튼
   </div>`;
 
-  // 이번 주 일별 (현재 월일 때만)
-  if (isWorkoutCurrentMonth()) {
-    const todayDow = new Date(currentYear, currentMonth, today).getDay();
-    const weekStart = today - todayDow;
-    const weekDays = [];
-    for (let i = 0; i < 7; i++) weekDays.push(weekStart + i);
-
-    html += `<div style="font-size:14px; font-weight:600; margin: 18px 0 8px;">이번 주 상세</div>`;
-    html += `<div class="card" style="padding:0 14px;">`;
-    weekDays.forEach((d, i) => {
-      if (d < 1 || d > woDaysInMonth) return;
-      const log = workoutLog[woKey(d)];
-      const isToday = d === today;
-      html += `<div style="display:flex; align-items:center; gap:12px; padding:12px 0; ${i < 6 ? 'border-bottom:0.5px solid var(--border-tertiary);' : ''} cursor:pointer;" onclick="openWorkoutModal('${woKey(d)}')">
-        <div style="width:30px; text-align:center;">
-          <div style="font-size:10px; color:${i===0?'var(--text-danger)':i===6?'var(--text-info)':'var(--text-tertiary)'};">${dayLabels[i]}</div>
-          <div style="font-size:14px; font-weight:600; ${isToday?'color:var(--text-info);':''}">${d}</div>
-        </div>
-        <div style="width:24px; height:24px; border-radius:50%; background:${log?.done?'var(--text-success)':'var(--bg-secondary)'}; display:flex; align-items:center; justify-content:center; color:${log?.done?'white':'var(--text-tertiary)'};">
-          <i class="ti ${log?.done?'ti-check':'ti-x'}" style="font-size:12px;"></i>
-        </div>
-        <div style="flex:1;">
-          <div style="font-size:13px; font-weight:500;">${log?.done ? (log.note || '운동 완료') : (d > today ? '예정' : '쉼')}</div>
-          ${log?.done ? `<div style="font-size:10px; color:var(--text-tertiary);">${log.minutes || 0}분 · ${log.kcal || 0} kcal</div>` : ''}
-        </div>
-        <i class="ti ti-chevron-right" style="font-size:14px; color:var(--text-tertiary);"></i>
-      </div>`;
-    });
-    html += `</div>`;
-  } else {
-    // 과거 월 - 운동한 날 목록만 보여주기
+  // 이번 주 상세 제거됨 - 위 달력에 통합
+  // 과거 월일 때만 운동 기록 목록 표시
+  if (!isWorkoutCurrentMonth()) {
     html += `<div style="font-size:14px; font-weight:600; margin: 18px 0 8px;">${monthLabels[workoutViewMonth]} 운동 기록</div>`;
     if (monthDone.length === 0) {
       html += `<div class="empty-state"><i class="ti ti-barbell-off"></i>이 달 운동 기록이 없어요</div>`;
@@ -2574,6 +2571,21 @@ function toggleWorkoutDay(d) {
   }
   saveData();
   showToast(workoutLog[k].done ? `${d}일 운동 ✓` : `${d}일 해제`);
+  renderWorkout();
+}
+
+// 오늘 운동 명시적 O/X 설정
+function setTodayWorkout(done) {
+  const k = todayKey();
+  if (!workoutLog[k]) workoutLog[k] = {};
+  workoutLog[k].done = done;
+  workoutLog[k].marked = true; // 명시적으로 선택했음
+  if (done && !workoutLog[k].kcal) {
+    workoutLog[k].kcal = 300;
+    workoutLog[k].minutes = 30;
+  }
+  saveData();
+  showToast(done ? '오늘 운동 ✓' : '오늘 안 함 ✗');
   renderWorkout();
 }
 
@@ -3988,6 +4000,10 @@ function renderAIText(text) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
+    // 안전한 HTML 태그 복원 (br, small)
+    .replace(/&lt;br\s*\/?&gt;/gi, '<br>')
+    .replace(/&lt;small&gt;/gi, '<small style="font-size:0.85em; opacity:0.7;">')
+    .replace(/&lt;\/small&gt;/gi, '</small>')
     .replace(/\*\*(.+?)\*\*/g, '<b style="font-weight:600;">$1</b>')
     .replace(/\*(.+?)\*/g, '<i style="font-style:italic;">$1</i>')
     .replace(/`(.+?)`/g, '<code style="background:rgba(0,0,0,0.05); padding:1px 4px; border-radius:3px; font-size:11px;">$1</code>')
