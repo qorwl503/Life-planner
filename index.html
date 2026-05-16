@@ -5023,6 +5023,10 @@ function openVideo(videoId) {
 const aiCache = {};
 const AI_CACHE_TIME = 60 * 60 * 1000; // 1시간
 
+// AI 호출 진행 상태 - 탭 이동에도 결과 유지
+window._aiInFlight = window._aiInFlight || {}; // {cacheKey: Promise}
+window._aiInFlightStatus = window._aiInFlightStatus || {}; // {cacheKey: 'loading'}
+
 async function askGemini(prompt, options = {}) {
   const { useCache = true, cacheKey = null, maxRetries = 1, autoRetryOnNetwork = true } = options;
 
@@ -5316,6 +5320,24 @@ async function loadAIBriefing(forceRefresh, retryCount = 0) {
     return;
   }
 
+  const briefingCacheKey = 'market-briefing-' + new Date().toDateString();
+
+  // 진행 중인 호출이 있으면 → 로딩 상태 그대로
+  if (window._aiInFlightStatus[briefingCacheKey] === 'loading') {
+    container.innerHTML = `<div style="display:flex; align-items:center; gap:8px; padding:14px 0;">
+      <div class="spinner" style="border-color:rgba(255,255,255,0.3); border-top-color:white;"></div>
+      <span style="font-size:11px; opacity:0.8;">시장 분석 진행 중... (계속 진행)</span>
+    </div>`;
+    if (window._aiInFlight[briefingCacheKey]) {
+      window._aiInFlight[briefingCacheKey].then(() => {
+        if (currentTab === 'asset' && assetTab === 'briefing') {
+          loadAIBriefing(false);
+        }
+      });
+    }
+    return;
+  }
+
   // 자동 호출 차단 - forceRefresh가 false인 경우 (앱 시작 시 자동 호출)
   // 캐시가 없으면 안내만 표시, 새로고침 버튼 직접 눌러야 호출
   if (!forceRefresh) {
@@ -5340,13 +5362,24 @@ async function loadAIBriefing(forceRefresh, retryCount = 0) {
     <span style="font-size:11px; opacity:0.8;">AI가 시장 상황 분석 중...</span>
   </div>`;
 
-  const result = await generateMarketBriefing(forceRefresh);
+  // 진행 상태 마킹 + Promise 등록
+  window._aiInFlightStatus[briefingCacheKey] = 'loading';
+  const callPromise = generateMarketBriefing(forceRefresh);
+  window._aiInFlight[briefingCacheKey] = callPromise;
+  const result = await callPromise;
+  // 끝나면 상태 클리어
+  delete window._aiInFlightStatus[briefingCacheKey];
+  delete window._aiInFlight[briefingCacheKey];
+
+  // 결과 받은 후 컨테이너 사라졌을 수 있음 (탭 이동)
+  const stillContainer = document.getElementById('ai-briefing-content');
+  if (!stillContainer) return; // 캐시는 이미 저장됨
 
   if (result.error) {
     // 네트워크 에러면 8초 후 자동 재시도 (최대 1회만)
     const isNetworkErr = result.error.includes('네트워크') || result.error.includes('시간 초과') || result.error.includes('모든 모델 실패');
     if (isNetworkErr && !forceRefresh && retryCount < 1) {
-      container.innerHTML = `<div style="padding:12px; background:rgba(255,200,100,0.15); border-radius:8px; font-size:11px; color:#FFD;">
+      stillContainer.innerHTML = `<div style="padding:12px; background:rgba(255,200,100,0.15); border-radius:8px; font-size:11px; color:#FFD;">
         <i class="ti ti-refresh"></i> ${result.error}
         <div style="margin-top:6px; opacity:0.7; font-size:10px;">8초 후 자동 재시도... (마지막 시도)</div>
       </div>`;
@@ -5355,7 +5388,7 @@ async function loadAIBriefing(forceRefresh, retryCount = 0) {
     }
 
     // 그래도 실패하면 - 재시도 버튼 함께 보여주기
-    container.innerHTML = `<div style="padding:14px; background:rgba(255,100,100,0.15); border-radius:8px;">
+    stillContainer.innerHTML = `<div style="padding:14px; background:rgba(255,100,100,0.15); border-radius:8px;">
       <div style="display:flex; align-items:center; justify-content:space-between;">
         <div style="display:flex; align-items:center; gap:6px; font-size:11px; color:#FFD;">
           <i class="ti ti-alert-circle"></i> ${result.error.includes('429') ? '한도 도달 (잠시 후 재시도)' : '일시 실패'}
@@ -5372,7 +5405,7 @@ async function loadAIBriefing(forceRefresh, retryCount = 0) {
   // 캐시 저장
   localStorage.setItem('ai_cache_today', JSON.stringify(aiCache));
 
-  container.innerHTML = `<p style="margin:0;">${renderAIText(result.text)}</p>
+  stillContainer.innerHTML = `<p style="margin:0;">${renderAIText(result.text)}</p>
     ${result.cached ? `<div style="margin-top:10px; font-size:9px; opacity:0.5;">⚡ 캐시됨 · 새로고침으로 최신 분석 받기</div>` : `<div style="margin-top:10px; font-size:9px; opacity:0.5;">✨ ${new Date().toLocaleTimeString('ko-KR')} 분석</div>`}`;
 }
 
@@ -5638,7 +5671,7 @@ async function loadAINewsSummary(forceRefresh = false) {
         </button>
       </div>
       <div style="font-size:10px; color:var(--text-tertiary); margin-top:6px;">
-        ${result.error.includes('429') ? 'AI 호출 한도 초과 (1분 후 재시도)' : result.error.includes('rss') || result.error.includes('뉴스') ? '뉴스를 가져올 수 없어요' : '잠시 후 다시 시도해주세요'}
+        ${result.error.includes('429') ? 'AI 호출 한도 초과 (잠시 후 재시도)' : result.error.includes('rss') || result.error.includes('뉴스') ? '뉴스를 가져올 수 없어요' : '잠시 후 다시 시도해주세요'}
       </div>
     </div>`;
     return;
@@ -6816,6 +6849,27 @@ async function loadAIAssetCoach(total, byType, expected1Y, expected3Y, expected1
     return;
   }
 
+  // 진행 중인 호출이 있으면 → 로딩 상태 그대로 표시하고 결과 대기
+  if (window._aiInFlightStatus[cacheKey] === 'loading') {
+    container.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
+      <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 분석 중</div>
+      <div style="display:flex; align-items:center; gap:8px; padding:8px 0;">
+        <div class="spinner" style="border-color:rgba(255,255,255,0.3); border-top-color:white;"></div>
+        <span style="font-size:11px; opacity:0.8;">자산 포트폴리오 분석 중... (계속 진행 중)</span>
+      </div>
+    </div>`;
+    // 기존 호출의 결과 기다림
+    if (window._aiInFlight[cacheKey]) {
+      window._aiInFlight[cacheKey].then(() => {
+        // 결과 받으면 다시 렌더 (현재 탭이 자산이면)
+        if (currentTab === 'asset' && assetTab === 'briefing') {
+          loadAIAssetCoach(total, byType, expected1Y, expected3Y, expected10Y, false);
+        }
+      });
+    }
+    return;
+  }
+
   // 자동 호출 차단 - forceRefresh 없으면 안내만
   if (!forceRefresh) {
     container.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
@@ -6837,6 +6891,9 @@ async function loadAIAssetCoach(total, byType, expected1Y, expected3Y, expected1
       <span style="font-size:11px; opacity:0.8;">자산 포트폴리오 분석 중...</span>
     </div>
   </div>`;
+
+  // 진행 상태 마킹
+  window._aiInFlightStatus[cacheKey] = 'loading';
 
   const typeSummary = Object.entries(byType).map(([type, v]) => {
     const pct = total > 0 ? ((v / total) * 100).toFixed(1) : '0';
@@ -6877,10 +6934,20 @@ ${typeSummary || '(미등록)'}
 
 ⚠️ 일반론 X, 본인 데이터에 맞춰서. 구체적 종목명 추천 금지 (자산군만). 친근한 톤. 끝에 작은 글씨로 "투자 책임은 본인" 표기.`;
 
-  const result = await askGemini(prompt, { useCache: true, cacheKey });
+  // askGemini 호출을 _aiInFlight에 등록 (탭 이동에도 결과 추적)
+  const callPromise = askGemini(prompt, { useCache: true, cacheKey });
+  window._aiInFlight[cacheKey] = callPromise;
+  const result = await callPromise;
+  // 끝나면 진행 상태 클리어
+  delete window._aiInFlightStatus[cacheKey];
+  delete window._aiInFlight[cacheKey];
+
+  // 결과 받은 후 컨테이너가 사라졌을 수도 있음 (탭 이동)
+  const stillContainer = document.getElementById('ai-asset-coach-card');
+  if (!stillContainer) return; // 다른 탭이면 그냥 종료 (캐시는 이미 저장됨)
 
   if (result.error) {
-    container.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
+    stillContainer.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
       <div class="ai-badge"><i class="ti ti-alert-circle" style="font-size:11px;"></i> AI 분석 실패</div>
       <div class="ai-text">${result.error}</div>
       ${result.needsKey ? `<button onclick="openAIKeyModal()" style="margin-top:8px; padding:6px 12px; border:none; border-radius:6px; background:#FFD700; color:black; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">AI 키 입력하기</button>` : ''}
@@ -6890,10 +6957,10 @@ ${typeSummary || '(미등록)'}
 
   localStorage.setItem('ai_cache_today', JSON.stringify(aiCache));
 
-  container.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
+  stillContainer.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
       <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 자산 코치</div>
-      <button onclick="delete aiCache['${cacheKey}']; loadAIAssetCoach(${total}, ${JSON.stringify(byType).replace(/"/g, '&quot;')}, ${expected1Y}, ${expected3Y}, ${expected10Y});" style="border:none; background:transparent; color:white; opacity:0.7; padding:2px 6px; font-size:10px; cursor:pointer; font-family:inherit;">
+      <button onclick="delete aiCache['${cacheKey}']; loadAIAssetCoach(${total}, ${JSON.stringify(byType).replace(/"/g, '&quot;')}, ${expected1Y}, ${expected3Y}, ${expected10Y}, true);" style="border:none; background:transparent; color:white; opacity:0.7; padding:2px 6px; font-size:10px; cursor:pointer; font-family:inherit;">
         <i class="ti ti-refresh" style="font-size:11px;"></i>
       </button>
     </div>
