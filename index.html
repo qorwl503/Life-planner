@@ -1832,11 +1832,14 @@ function renderTodo() {
   // 본인이 선택한 주 (todoWeekOffset 기준)
   const baseDate = new Date();
   baseDate.setDate(baseDate.getDate() + window.todoWeekOffset * 7);
-  const dayOfWeek = baseDate.getDay() === 0 ? 7 : baseDate.getDay();
-  const monday = new Date(baseDate);
-  monday.setDate(baseDate.getDate() - (dayOfWeek - 1));
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
+  // 일요일 시작 (일=0, 월=1, 토=6)
+  const dayOfWeek = baseDate.getDay(); // 일=0
+  const weekStart = new Date(baseDate);
+  weekStart.setDate(baseDate.getDate() - dayOfWeek); // 이번 주 일요일
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 6); // 이번 주 토요일
+  const monday = weekStart; // 변수명 유지 (실제는 일요일)
+  const sunday = weekEnd; // 변수명 유지 (실제는 토요일)
   const mondayK = dateKey(monday.getFullYear(), monday.getMonth(), monday.getDate());
   const sundayK = dateKey(sunday.getFullYear(), sunday.getMonth(), sunday.getDate());
   const weekTodos = todos.filter(t => t.dateKey && t.dateKey >= mondayK && t.dateKey <= sundayK);
@@ -1933,8 +1936,8 @@ function renderTodo() {
     ${window.todoWeekOffset !== 0 ? `<div style="text-align:center; margin-bottom:8px;"><button onclick="window.todoWeekOffset=0; renderTodo();" style="padding:3px 10px; border:none; border-radius:999px; background:var(--bg-info); color:var(--text-info); font-size:10px; cursor:pointer; font-family:inherit;">📍 오늘로</button></div>` : ''}
   `;
 
-  // 주간 뷰: 월~일 각 날짜별 섹션
-  const dayLabels = ['월', '화', '수', '목', '금', '토', '일'];
+  // 주간 뷰: 일~토 각 날짜별 섹션
+  const dayLabels = ['일', '월', '화', '수', '목', '금', '토'];
   let hasWeekItems = false;
   for (let i = 0; i < 7; i++) {
     const d = new Date(monday);
@@ -1943,14 +1946,14 @@ function renderTodo() {
     const dayTodos = todos.filter(t => t.dateKey === dK && !t.done);
     const dayDone = todos.filter(t => t.dateKey === dK && t.done);
     const isToday = dK === todayK;
-    const isWeekend = i >= 5;
+    const isWeekend = i === 0 || i === 6; // 일 또는 토
     const isPast = dK < todayK;
 
     // 항목 없는 평일은 표시 안 함 (오늘 제외)
     if (dayTodos.length === 0 && dayDone.length === 0 && !isToday) continue;
     hasWeekItems = true;
 
-    const dayColor = isToday ? 'var(--text-info)' : isWeekend ? (i === 6 ? 'var(--text-danger)' : 'var(--text-info)') : 'var(--text-primary)';
+    const dayColor = isToday ? 'var(--text-info)' : i === 0 ? 'var(--text-danger)' : i === 6 ? 'var(--text-info)' : 'var(--text-primary)';
     const dayLabel = isToday ? '오늘' : `${d.getMonth()+1}/${d.getDate()} (${dayLabels[i]})`;
 
     html += `
@@ -2140,12 +2143,17 @@ function renderChallengeSection() {
 }
 
 function renderChallengeCard(c) {
-  const startDate = new Date(c.startDate);
-  const todayD = new Date(currentYear, currentMonth, today);
-  const daysPassed = Math.floor((todayD - startDate) / (24*60*60*1000)) + 1;
+  // 날짜 정규화 (시간 무시, 날짜만)
+  const startDate = new Date(c.startDate + 'T00:00:00');
+  const todayD = new Date(currentYear, currentMonth, today, 0, 0, 0, 0);
+
+  // 일수 계산 - 오늘 포함, 최소 1일
+  const msPerDay = 24 * 60 * 60 * 1000;
+  let daysPassed = Math.floor((todayD - startDate) / msPerDay) + 1;
+  if (daysPassed < 1) daysPassed = 1; // 시작일이 미래라도 최소 1일로 표시
   const totalDays = c.totalDays;
 
-  const checkedDays = Object.keys(c.checks || {}).filter(k => c.checks[k]).length;
+  const checkedDays = Object.keys(c.checks || {}).filter(k => c.checks[k] === true).length;
 
   const tKey = dateKey(currentYear, currentMonth, today);
   const todayChecked = c.checks?.[tKey];
@@ -2158,17 +2166,15 @@ function renderChallengeCard(c) {
     progressPct = Math.min(100, (checkedDays / totalDays) * 100);
     progressText = `${checkedDays} / ${totalDays}일`;
   } else if (c.type === 'forbidden') {
-    // 금지형: 위반 안 한 일수
     const violations = Object.values(c.checks || {}).filter(v => v === 'fail').length;
-    const cleanDays = daysPassed - violations;
-    progressPct = Math.min(100, (cleanDays / totalDays) * 100);
-    progressText = `${cleanDays} / ${totalDays}일 성공`;
+    const successes = Object.values(c.checks || {}).filter(v => v === true).length;
+    progressPct = Math.min(100, (successes / totalDays) * 100);
+    progressText = `${successes} / ${totalDays}일 성공`;
   } else if (c.type === 'count') {
     progressPct = Math.min(100, (checkedDays / c.targetCount) * 100);
     progressText = `${checkedDays} / ${c.targetCount}회`;
   }
 
-  // 색상
   const isCompleted = progressPct >= 100;
   const gradient = isCompleted
     ? 'linear-gradient(135deg, #2A4D1B 0%, #3B6D11 100%)'
@@ -2176,7 +2182,7 @@ function renderChallengeCard(c) {
       ? 'linear-gradient(135deg, #6B3F08 0%, #854F0B 100%)'
       : 'linear-gradient(135deg, #185FA5 0%, #2D7BC9 100%)';
 
-  // 전체 기간 그리드 (시작일 ~ 오늘) - 모든 날짜 클릭 가능
+  // 전체 기간 그리드 (시작일 ~ 오늘)
   let daysGrid = '';
   const totalDaysShow = Math.min(daysPassed, totalDays);
   for (let i = 0; i < totalDaysShow; i++) {
@@ -2191,46 +2197,46 @@ function renderChallengeCard(c) {
     daysGrid += `<button onclick="toggleChallengeDate(${c.id}, '${k}')" style="aspect-ratio:1; border-radius:4px; background:${bg}; display:flex; align-items:center; justify-content:center; border:none; cursor:pointer; padding:0; font-size:8px; color:rgba(255,255,255,0.7);" title="${k}">${icon || (i+1)}</button>`;
   }
 
-  const todayBtnText = c.type === 'forbidden'
-    ? (todayChecked === true ? '✓ 오늘도 성공' : todayChecked === 'fail' ? '✗ 오늘 위반' : '오늘 체크')
-    : (todayChecked === true ? '✓ 오늘 완료' : '오늘 체크');
-
   return `<div style="margin-bottom:12px; padding:14px; border-radius:12px; background:${gradient}; color:white;">
-    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;">
+    <!-- 헤더 -->
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px;">
       <div style="flex:1; min-width:0;">
         <div style="font-size:14px; font-weight:600; margin-bottom:2px;">${c.title}</div>
-        <div style="font-size:10px; opacity:0.85;">${c.type === 'forbidden' ? '🚫 금지' : c.type === 'count' ? '🔢 횟수' : '✅ 매일'} · ${daysPassed}일차 / ${totalDays}일</div>
+        <div style="font-size:10px; opacity:0.7;">${c.type === 'forbidden' ? '🚫 안 하기' : c.type === 'count' ? '🔢 횟수' : '✅ 매일 하기'} · ${daysPassed}일째 / ${totalDays}일</div>
       </div>
       <button onclick="event.stopPropagation(); editChallenge(${c.id})" style="border:none; background:rgba(255,255,255,0.15); color:white; padding:4px 8px; border-radius:6px; font-size:10px; cursor:pointer; font-family:inherit;">⋮</button>
     </div>
 
-    <div style="display:grid; grid-template-columns: repeat(${Math.min(14, totalDays)}, 1fr); gap:3px; margin: 10px 0 6px;">${daysGrid}</div>
-
-    <div style="display:flex; justify-content:space-between; align-items:baseline; font-size:11px; margin-bottom:8px;">
-      <span style="opacity:0.85;">전체 ${totalDaysShow}일</span>
+    <!-- 진행 텍스트 + 그래프 한 줄 -->
+    <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; margin-bottom:4px;">
       <span style="font-weight:600;">${progressText}</span>
+      <span style="font-size:10px; opacity:0.7;">${Math.round(progressPct)}%</span>
     </div>
-
-    <div style="height:6px; background:rgba(255,255,255,0.2); border-radius:3px; overflow:hidden; margin-bottom:10px;">
+    <div style="height:5px; background:rgba(255,255,255,0.2); border-radius:3px; overflow:hidden; margin-bottom:12px;">
       <div style="height:100%; width:${progressPct}%; background:rgba(255,255,255,0.95); transition:width 0.4s;"></div>
     </div>
 
+    <!-- 날짜 그리드 -->
+    <div style="display:grid; grid-template-columns: repeat(${Math.min(14, totalDays)}, 1fr); gap:3px; margin-bottom:12px;">${daysGrid}</div>
+
     ${isCompleted ? `
-      <div style="text-align:center; padding:8px; background:rgba(255,255,255,0.15); border-radius:8px; font-size:12px; font-weight:600;">
+      <div style="text-align:center; padding:10px; background:rgba(255,255,255,0.18); border-radius:8px; font-size:13px; font-weight:600;">
         🎉 챌린지 완료!
       </div>
     ` : c.type === 'forbidden' ? `
+      <!-- 금지형 - 성공/실패 -->
       <div style="display:flex; gap:6px;">
-        <button onclick="checkChallenge(${c.id}, true)" style="flex:1; padding:8px; border:none; border-radius:6px; background:rgba(255,255,255,0.95); color:#2A4D1B; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
-          ✓ 오늘 성공
+        <button onclick="checkChallenge(${c.id}, true)" style="flex:1; padding:9px; border:none; border-radius:6px; background:${todayChecked===true?'rgba(255,255,255,0.95)':'rgba(255,255,255,0.2)'}; color:${todayChecked===true?'#2A4D1B':'white'}; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
+          ✓ 성공
         </button>
-        <button onclick="checkChallenge(${c.id}, 'fail')" style="flex:1; padding:8px; border:none; border-radius:6px; background:rgba(255,100,100,0.4); color:white; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
-          ✗ 위반
+        <button onclick="checkChallenge(${c.id}, 'fail')" style="flex:1; padding:9px; border:none; border-radius:6px; background:${todayChecked==='fail'?'rgba(255,100,100,0.7)':'rgba(255,255,255,0.2)'}; color:white; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
+          ✗ 실패
         </button>
       </div>
     ` : `
-      <button onclick="checkChallenge(${c.id}, ${!todayChecked})" style="width:100%; padding:10px; border:none; border-radius:6px; background:${todayChecked?'rgba(255,255,255,0.25)':'rgba(255,255,255,0.95)'}; color:${todayChecked?'white':'#185FA5'}; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">
-        ${todayBtnText}
+      <!-- 매일/횟수 - 성공만 -->
+      <button onclick="checkChallenge(${c.id}, ${!todayChecked})" style="width:100%; padding:10px; border:none; border-radius:6px; background:${todayChecked?'rgba(255,255,255,0.95)':'rgba(255,255,255,0.25)'}; color:${todayChecked?'#185FA5':'white'}; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">
+        ${todayChecked ? '✓ 오늘 성공' : '오늘 성공'}
       </button>
     `}
   </div>`;
@@ -2274,14 +2280,21 @@ function checkChallenge(id, value) {
   const k = dateKey(currentYear, currentMonth, today);
   if (!c.checks) c.checks = {};
 
-  if (value === false || value === undefined) {
+  const current = c.checks[k];
+
+  // 같은 값 다시 누르면 해제 (토글)
+  if (current === value) {
     delete c.checks[k];
+    showToast('체크 해제');
+  } else if (value === false || value === undefined) {
+    delete c.checks[k];
+    showToast('체크 해제');
   } else {
     c.checks[k] = value;
+    showToast(value === true ? '성공! 💪' : value === 'fail' ? '실패 ㅠ' : '체크됨');
   }
 
   saveData();
-  showToast(value === true ? '체크 완료! 💪' : value === 'fail' ? '괜찮아요, 내일 다시!' : '체크 해제');
   renderTodo();
 }
 
@@ -2294,7 +2307,7 @@ function toggleChallengeDate(id, dateKeyStr) {
   const current = c.checks[dateKeyStr];
 
   if (c.type === 'forbidden') {
-    // 금지형: 빈상태 → 성공 → 위반 → 빈상태 순환
+    // 금지형: 빈상태 → 성공 → 실패 → 빈상태 순환
     if (current === undefined) c.checks[dateKeyStr] = true;
     else if (current === true) c.checks[dateKeyStr] = 'fail';
     else delete c.checks[dateKeyStr];
