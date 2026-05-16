@@ -5023,11 +5023,6 @@ function openVideo(videoId) {
 const aiCache = {};
 const AI_CACHE_TIME = 60 * 60 * 1000; // 1시간
 
-// 분당 호출 카운터 (429 방지)
-let aiCallsThisMinute = 0;
-let aiMinuteResetTime = Date.now() + 60000;
-const MAX_CALLS_PER_MINUTE = 10; // 안전하게 10회로 제한 (Gemini 한도는 15)
-
 async function askGemini(prompt, options = {}) {
   const { useCache = true, cacheKey = null, maxRetries = 1, autoRetryOnNetwork = true } = options;
 
@@ -5035,16 +5030,6 @@ async function askGemini(prompt, options = {}) {
   const cKey = cacheKey || prompt;
   if (useCache && aiCache[cKey] && Date.now() - aiCache[cKey].time < AI_CACHE_TIME) {
     return { text: aiCache[cKey].text, cached: true };
-  }
-
-  // 분당 호출 제한 체크
-  if (Date.now() > aiMinuteResetTime) {
-    aiCallsThisMinute = 0;
-    aiMinuteResetTime = Date.now() + 60000;
-  }
-  if (aiCallsThisMinute >= MAX_CALLS_PER_MINUTE) {
-    const waitSec = Math.ceil((aiMinuteResetTime - Date.now()) / 1000);
-    return { error: `잠시 후 다시 시도해주세요 (${waitSec}초 대기)` };
   }
 
   const apiKey = window.GEMINI_API_KEY;
@@ -5067,9 +5052,7 @@ async function askGemini(prompt, options = {}) {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 12000); // 12초 (이전 25초 → 단축)
-
-        aiCallsThisMinute++;
+        const timeoutId = setTimeout(() => controller.abort(), 12000); // 12초
 
         const res = await fetch(url, {
           method: 'POST',
@@ -6789,7 +6772,7 @@ function renderAICoaching(total, byType) {
 }
 
 // AI 자산 코치 - 진짜 Gemini 분석
-async function loadAIAssetCoach(total, byType, expected1Y, expected3Y, expected10Y) {
+async function loadAIAssetCoach(total, byType, expected1Y, expected3Y, expected10Y, forceRefresh = false) {
   const container = document.getElementById('ai-asset-coach-card');
   if (!container) return;
 
@@ -6807,17 +6790,32 @@ async function loadAIAssetCoach(total, byType, expected1Y, expected3Y, expected1
   }
 
   const cacheKey = 'asset-coach-' + new Date().toDateString();
+  const byTypeStr = JSON.stringify(byType).replace(/"/g, '&quot;');
 
-  if (aiCache[cacheKey] && Date.now() - aiCache[cacheKey].time < AI_CACHE_TIME) {
+  if (!forceRefresh && aiCache[cacheKey] && Date.now() - aiCache[cacheKey].time < AI_CACHE_TIME) {
     const text = aiCache[cacheKey].text;
     container.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
         <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 자산 코치</div>
-        <button onclick="delete aiCache['${cacheKey}']; loadAIAssetCoach(${total}, ${JSON.stringify(byType).replace(/"/g, '&quot;')}, ${expected1Y}, ${expected3Y}, ${expected10Y});" style="border:none; background:transparent; color:white; opacity:0.7; padding:2px 6px; font-size:10px; cursor:pointer; font-family:inherit;">
+        <button onclick="delete aiCache['${cacheKey}']; loadAIAssetCoach(${total}, ${byTypeStr}, ${expected1Y}, ${expected3Y}, ${expected10Y}, true);" style="border:none; background:transparent; color:white; opacity:0.7; padding:2px 6px; font-size:10px; cursor:pointer; font-family:inherit;">
           <i class="ti ti-refresh" style="font-size:11px;"></i>
         </button>
       </div>
       <div class="ai-text"><p style="margin:0;">${renderAIText(text)}</p></div>
+    </div>`;
+    return;
+  }
+
+  // 자동 호출 차단 - forceRefresh 없으면 안내만
+  if (!forceRefresh) {
+    container.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
+      <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 자산 코치</div>
+      <div class="ai-text" style="margin: 10px 0 12px; line-height:1.6;">
+        💎 본인 포트폴리오 분석을 받으려면 버튼을 눌러주세요.
+      </div>
+      <button onclick="loadAIAssetCoach(${total}, ${byTypeStr}, ${expected1Y}, ${expected3Y}, ${expected10Y}, true)" style="padding:8px 14px; border:none; border-radius:6px; background:white; color:#5E5CE6; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
+        🔄 AI 분석 받기
+      </button>
     </div>`;
     return;
   }
