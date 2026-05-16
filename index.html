@@ -5067,6 +5067,7 @@ const AI_CACHE_TIME = 60 * 60 * 1000; // 1시간
 // AI 호출 진행 상태 - 탭 이동에도 결과 유지
 window._aiInFlight = window._aiInFlight || {}; // {cacheKey: Promise}
 window._aiInFlightStatus = window._aiInFlightStatus || {}; // {cacheKey: 'loading'}
+window._aiLastError = window._aiLastError || {}; // {cacheKey: { error: '...', time: ... }} - 최근 에러 (10분 유지)
 
 async function askGemini(prompt, options = {}) {
   const { useCache = true, cacheKey = null, maxRetries = 1 } = options;
@@ -5312,6 +5313,24 @@ async function loadAIBriefing(forceRefresh, retryCount = 0) {
 
   const briefingCacheKey = 'market-briefing-' + new Date().toDateString();
 
+  // 최근 에러 있으면 → 그 에러 화면 그대로 표시 (탭 이동에도 유지)
+  if (!forceRefresh && window._aiLastError[briefingCacheKey] && Date.now() - window._aiLastError[briefingCacheKey].time < 10 * 60 * 1000) {
+    const errInfo = window._aiLastError[briefingCacheKey];
+    container.innerHTML = `<div style="padding:14px; background:rgba(255,100,100,0.15); border-radius:8px;">
+      <div style="display:flex; align-items:center; justify-content:space-between;">
+        <div style="display:flex; align-items:center; gap:6px; font-size:11px; color:#FFD;">
+          <i class="ti ti-alert-circle"></i> ${errInfo.error.includes('429') ? '한도 도달 (잠시 후 재시도)' : '일시 실패'}
+        </div>
+        <button onclick="loadAIBriefing(true)" style="border:none; background:rgba(255,255,255,0.2); color:white; padding:5px 12px; border-radius:6px; font-size:10px; cursor:pointer; font-family:inherit;">
+          🔄 재시도
+        </button>
+      </div>
+      <div style="margin-top:8px; font-size:10px; opacity:0.7; color:#FFD;">${errInfo.error}</div>
+      <div style="margin-top:6px; font-size:9px; opacity:0.5; color:#FFD;">⚠️ ${new Date(errInfo.time).toLocaleTimeString('ko-KR')} 에러 (탭 이동해도 유지됨)</div>
+    </div>`;
+    return;
+  }
+
   // 진행 중인 호출이 있으면 → 로딩 상태 그대로
   if (window._aiInFlightStatus[briefingCacheKey] === 'loading') {
     container.innerHTML = `<div style="display:flex; align-items:center; gap:8px; padding:14px 0;">
@@ -5377,7 +5396,8 @@ async function loadAIBriefing(forceRefresh, retryCount = 0) {
       return;
     }
 
-    // 그래도 실패하면 - 재시도 버튼 함께 보여주기
+    // 그래도 실패하면 - 재시도 버튼 함께 보여주기 + 에러 저장 (탭 이동에도 유지)
+    window._aiLastError[briefingCacheKey] = { error: result.error, time: Date.now() };
     stillContainer.innerHTML = `<div style="padding:14px; background:rgba(255,100,100,0.15); border-radius:8px;">
       <div style="display:flex; align-items:center; justify-content:space-between;">
         <div style="display:flex; align-items:center; gap:6px; font-size:11px; color:#FFD;">
@@ -5391,6 +5411,9 @@ async function loadAIBriefing(forceRefresh, retryCount = 0) {
     </div>`;
     return;
   }
+
+  // 성공시 에러 캐시 클리어
+  delete window._aiLastError[briefingCacheKey];
 
   // 캐시 저장
   localStorage.setItem('ai_cache_today', JSON.stringify(aiCache));
@@ -6570,8 +6593,17 @@ async function loadNewsRSS() {
 
 function refreshNews() {
   newsCache = null;
+  // AI 뉴스 요약 캐시도 같이 무효화 (새 기사 기반 새 요약)
+  const aiNewsKey = 'news-summary-' + new Date().toDateString();
+  delete aiCache[aiNewsKey];
   loadNewsRSS();
-  showToast('뉴스 새로고침');
+  // AI 뉴스 요약도 다시 안내 표시 (분석 받기 버튼)
+  const aiContainer = document.getElementById('ai-news-summary');
+  if (aiContainer) {
+    aiContainer.innerHTML = '';
+    loadAINewsSummary(false); // 안내만 표시
+  }
+  showToast('뉴스 새로고침 ✨');
 }
 
 // ====== 자산 - 유튜브 ======
