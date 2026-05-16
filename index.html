@@ -3429,7 +3429,7 @@ function renderMoneyAI(spent, projected) {
 }
 
 // AI 가계부 코치 - 진짜 Gemini 분석
-async function loadAIBudgetCoach(spent, projected, byCategory, lastMonth) {
+async function loadAIBudgetCoach(spent, projected, byCategory, lastMonth, forceRefresh = false) {
   const container = document.getElementById('ai-budget-coach');
   if (!container) return;
 
@@ -3448,14 +3448,16 @@ async function loadAIBudgetCoach(spent, projected, byCategory, lastMonth) {
   }
 
   const cacheKey = 'budget-coach-' + new Date().toDateString();
+  const byCategoryStr = JSON.stringify(byCategory).replace(/"/g, '&quot;');
+  const lastMonthStr = lastMonth ? JSON.stringify(lastMonth).replace(/"/g, '&quot;') : 'null';
 
   // 캐시 있으면 즉시 표시
-  if (aiCache[cacheKey] && Date.now() - aiCache[cacheKey].time < AI_CACHE_TIME) {
+  if (!forceRefresh && aiCache[cacheKey] && Date.now() - aiCache[cacheKey].time < AI_CACHE_TIME) {
     const text = aiCache[cacheKey].text;
     container.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
         <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 가계부 코치</div>
-        <button onclick="delete aiCache['${cacheKey}']; loadAIBudgetCoach(${spent}, ${projected}, ${JSON.stringify(byCategory).replace(/"/g, '&quot;')}, ${lastMonth ? JSON.stringify(lastMonth).replace(/"/g, '&quot;') : 'null'});" style="border:none; background:transparent; color:white; opacity:0.7; padding:2px 6px; font-size:10px; cursor:pointer; font-family:inherit;">
+        <button onclick="delete aiCache['${cacheKey}']; loadAIBudgetCoach(${spent}, ${projected}, ${byCategoryStr}, ${lastMonthStr}, true);" style="border:none; background:transparent; color:white; opacity:0.7; padding:2px 6px; font-size:10px; cursor:pointer; font-family:inherit;">
           <i class="ti ti-refresh" style="font-size:11px;"></i>
         </button>
       </div>
@@ -3469,6 +3471,20 @@ async function loadAIBudgetCoach(spent, projected, byCategory, lastMonth) {
       <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 가계부 코치</div>
       <h3 style="margin: 8px 0 4px;">아직 지출 기록이 없어요</h3>
       <div class="ai-text">지출을 입력하면 AI가 카테고리 분석, 지난달 비교, 절약 조언을 해드릴게요.</div>
+    </div>`;
+    return;
+  }
+
+  // 자동 호출 차단 - forceRefresh 없으면 안내만
+  if (!forceRefresh) {
+    container.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
+      <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 가계부 코치</div>
+      <div class="ai-text" style="margin: 10px 0 12px; line-height:1.6;">
+        💡 본인 가계부 패턴 분석을 받으려면 버튼을 눌러주세요.
+      </div>
+      <button onclick="loadAIBudgetCoach(${spent}, ${projected}, ${byCategoryStr}, ${lastMonthStr}, true)" style="padding:8px 14px; border:none; border-radius:6px; background:white; color:#5E5CE6; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
+        🔄 AI 분석 받기
+      </button>
     </div>`;
     return;
   }
@@ -5165,9 +5181,12 @@ function renderAIText(text) {
   result = result.replace(/&lt;\/span&gt;/gi, '</span>');
   result = result.replace(/&lt;\/h3&gt;/gi, '</h3>');
   result = result.replace(/&lt;\/h4&gt;/gi, '</h4>');
+  result = result.replace(/&lt;\/h5&gt;/gi, '</h5>');
   result = result.replace(/&lt;\/ul&gt;/gi, '</ul>');
   result = result.replace(/&lt;\/ol&gt;/gi, '</ol>');
   result = result.replace(/&lt;\/li&gt;/gi, '</li>');
+  result = result.replace(/&lt;\/p&gt;/gi, '</p>');
+  result = result.replace(/&lt;\/div&gt;/gi, '</div>');
 
   // 여는 태그 (속성 포함된 거 처리)
   result = result.replace(/&lt;small[^&]*?&gt;/gi, '<small style="font-size:0.85em; opacity:0.7;">');
@@ -5178,10 +5197,13 @@ function renderAIText(text) {
   result = result.replace(/&lt;em&gt;/gi, '<em>');
   result = result.replace(/&lt;h3[^&]*?&gt;/gi, '<h3 style="font-size:14px; font-weight:600; margin:10px 0 6px;">');
   result = result.replace(/&lt;h4[^&]*?&gt;/gi, '<h4 style="font-size:13px; font-weight:600; margin:8px 0 4px;">');
+  result = result.replace(/&lt;h5[^&]*?&gt;/gi, '<h5 style="font-size:12px; font-weight:600; margin:6px 0 3px;">');
   result = result.replace(/&lt;ul[^&]*?&gt;/gi, '<ul style="margin:6px 0; padding-left:18px;">');
   result = result.replace(/&lt;ol[^&]*?&gt;/gi, '<ol style="margin:6px 0; padding-left:18px;">');
   result = result.replace(/&lt;li[^&]*?&gt;/gi, '<li style="margin:2px 0;">');
   result = result.replace(/&lt;span[^&]*?&gt;/gi, '<span>');
+  result = result.replace(/&lt;p[^&]*?&gt;/gi, '<p style="margin:6px 0;">');
+  result = result.replace(/&lt;div[^&]*?&gt;/gi, '<div>');
 
   // 마크다운 변환
   result = result.replace(/\*\*(.+?)\*\*/g, '<b style="font-weight:600;">$1</b>');
@@ -5298,6 +5320,24 @@ async function loadAIBriefing(forceRefresh, retryCount = 0) {
     const text = aiCache[cacheKey].text;
     container.innerHTML = `<p style="margin:0;">${renderAIText(text)}</p>
       <div style="margin-top:10px; font-size:9px; opacity:0.5;">⚡ ${new Date(aiCache[cacheKey].time).toLocaleTimeString('ko-KR')} 분석 · 새로고침으로 최신 분석 받기</div>`;
+    return;
+  }
+
+  // 자동 호출 차단 - forceRefresh가 false인 경우 (앱 시작 시 자동 호출)
+  // 캐시가 없으면 안내만 표시, 새로고침 버튼 직접 눌러야 호출
+  if (!forceRefresh) {
+    container.innerHTML = `<div style="padding:14px; text-align:center;">
+      <div style="font-size:13px; opacity:0.85; line-height:1.6; margin-bottom:10px;">
+        🔍 AI 시장 분석 대기 중
+      </div>
+      <div style="font-size:11px; opacity:0.6; margin-bottom:14px; line-height:1.5;">
+        새 분석을 받으려면 아래 버튼을 눌러주세요.<br>
+        <span style="opacity:0.8;">한도 절약을 위해 자동 호출은 비활성화됨</span>
+      </div>
+      <button onclick="loadAIBriefing(true)" style="padding:10px 20px; border:none; border-radius:8px; background:white; color:#5E5CE6; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">
+        🔄 분석 받기
+      </button>
+    </div>`;
     return;
   }
 
@@ -5419,19 +5459,19 @@ ${typeSummary || '(미등록)'}
   return await askGemini(prompt, { useCache: !forceRefresh, cacheKey });
 }
 
-async function loadAIActionAdvice() {
+async function loadAIActionAdvice(forceRefresh = false) {
   const container = document.getElementById('ai-action-advice');
   if (!container) return;
 
   const cacheKey = 'action-advice-' + new Date().toDateString();
 
   // 캐시 있으면 즉시 표시 (대기 없음!)
-  if (aiCache[cacheKey] && Date.now() - aiCache[cacheKey].time < AI_CACHE_TIME) {
+  if (!forceRefresh && aiCache[cacheKey] && Date.now() - aiCache[cacheKey].time < AI_CACHE_TIME) {
     const text = aiCache[cacheKey].text;
     container.innerHTML = `<div class="ai-card">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
         <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px; color:#FFD700;"></i> AI 맞춤 분석</div>
-        <button onclick="delete aiCache['${cacheKey}']; loadAIActionAdvice();" style="border:none; background:rgba(255,255,255,0.15); color:white; padding:5px 10px; border-radius:6px; font-size:10px; cursor:pointer; font-family:inherit;">
+        <button onclick="delete aiCache['${cacheKey}']; loadAIActionAdvice(true);" style="border:none; background:rgba(255,255,255,0.15); color:white; padding:5px 10px; border-radius:6px; font-size:10px; cursor:pointer; font-family:inherit;">
           <i class="ti ti-refresh" style="font-size:11px;"></i> 새로
         </button>
       </div>
@@ -5447,6 +5487,20 @@ async function loadAIActionAdvice() {
       <div class="ai-text" style="font-size:12px;">
         자산을 먼저 등록해주세요. 보유 탭에서 자산을 추가하면 AI가 맞춤 분석을 시작합니다.
       </div>
+    </div>`;
+    return;
+  }
+
+  // 자동 호출 차단 - forceRefresh가 false면 안내만
+  if (!forceRefresh) {
+    container.innerHTML = `<div class="ai-card">
+      <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px; color:#FFD700;"></i> AI 맞춤 분석</div>
+      <div style="font-size:12px; opacity:0.85; line-height:1.6; margin-bottom:12px; margin-top:8px;">
+        💡 본인 자산에 대한 AI 맞춤 분석을 받으려면 아래 버튼을 눌러주세요.
+      </div>
+      <button onclick="loadAIActionAdvice(true)" style="padding:8px 16px; border:none; border-radius:6px; background:white; color:#5E5CE6; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
+        🔄 AI 분석 받기
+      </button>
     </div>`;
     return;
   }
@@ -5533,14 +5587,14 @@ ${usHeadlines || '(데이터 없음)'}
   return await askGemini(prompt, { useCache: !forceRefresh, cacheKey });
 }
 
-async function loadAINewsSummary() {
+async function loadAINewsSummary(forceRefresh = false) {
   const container = document.getElementById('ai-news-summary');
   if (!container) return;
 
   const cacheKey = 'news-summary-' + new Date().toDateString();
 
   // 캐시 있으면 즉시 표시
-  if (aiCache[cacheKey] && Date.now() - aiCache[cacheKey].time < AI_CACHE_TIME) {
+  if (!forceRefresh && aiCache[cacheKey] && Date.now() - aiCache[cacheKey].time < AI_CACHE_TIME) {
     const text = aiCache[cacheKey].text;
     container.innerHTML = `<div style="padding:16px; background:linear-gradient(135deg, #FFF7E6 0%, #FFEFD5 100%); border-radius:var(--radius-md); border:0.5px solid #F4A261; margin-bottom:14px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
@@ -5548,11 +5602,25 @@ async function loadAINewsSummary() {
           <i class="ti ti-sparkles" style="font-size:13px; color:#F4A261;"></i>
           <span style="font-size:11px; font-weight:600; color:#B45309;">AI 뉴스 요약</span>
         </div>
-        <button onclick="delete aiCache['${cacheKey}']; loadAINewsSummary();" style="border:none; background:transparent; color:#B45309; padding:2px 6px; font-size:10px; cursor:pointer; font-family:inherit;">
+        <button onclick="delete aiCache['${cacheKey}']; loadAINewsSummary(true);" style="border:none; background:transparent; color:#B45309; padding:2px 6px; font-size:10px; cursor:pointer; font-family:inherit;">
           <i class="ti ti-refresh" style="font-size:11px;"></i>
         </button>
       </div>
       <div style="font-size:12px; line-height:1.7; color:#5B3A0E;"><p style="margin:0;">${renderAIText(text)}</p></div>
+    </div>`;
+    return;
+  }
+
+  // 자동 호출 차단 - 캐시 없고 forceRefresh도 아니면 안내만
+  if (!forceRefresh) {
+    container.innerHTML = `<div style="padding:14px; background:linear-gradient(135deg, #FFF7E6 0%, #FFEFD5 100%); border-radius:var(--radius-md); border:0.5px solid #F4A261; margin-bottom:14px; text-align:center;">
+      <div style="font-size:12px; color:#B45309; margin-bottom:10px; line-height:1.5;">
+        📰 AI 뉴스 요약 대기 중<br>
+        <span style="font-size:10px; opacity:0.8;">새 분석을 받으려면 버튼을 눌러주세요</span>
+      </div>
+      <button onclick="loadAINewsSummary(true)" style="padding:8px 16px; border:none; border-radius:6px; background:#F4A261; color:white; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
+        🔄 뉴스 분석 받기
+      </button>
     </div>`;
     return;
   }
