@@ -26,7 +26,7 @@
   } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 const firebaseConfig = {
-    apiKey: "본인의_FIREBASE_API_키_입력",
+    apiKey: "AIzaSyA3FDgECTqtI7XDo1Isg02PmCgFv01Y3sI", // 원래 있던 진짜 키로 복구!
     authDomain: "life-planner-a03d2.firebaseapp.com",
     projectId: "life-planner-a03d2",
     storageBucket: "life-planner-a03d2.firebasestorage.app",
@@ -39,8 +39,7 @@ const firebaseConfig = {
   const db = getFirestore(app);
 
   window.GEMINI_API_KEY = localStorage.getItem('gemini_api_key') || null;
-  window.YOUTUBE_API_KEY = window.GEMINI_API_KEY;
-  
+  window.YOUTUBE_API_KEY = window.GEMINI_API_KEY;  
   // Gemini AI API 키 — 사용자가 직접 입력 (localStorage + Firebase)
   // GitHub에 키 노출 방지
 
