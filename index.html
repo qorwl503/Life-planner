@@ -1879,14 +1879,10 @@ function renderTodo() {
         </div>
       </div>
 
-      <!-- 주간 (이동 가능) -->
+      <!-- 주간 통계 -->
       <div style="padding:12px; border-radius:12px; background:var(--bg-secondary); border:0.5px solid var(--border-tertiary);">
         <div style="display:flex; align-items:center; justify-content:space-between;">
-          <div style="display:flex; align-items:center; gap:4px;">
-            <button onclick="event.stopPropagation(); window.todoWeekOffset--; renderTodo();" style="border:none; background:transparent; padding:0 2px; cursor:pointer; color:var(--text-secondary); font-size:11px; font-family:inherit;">◀</button>
-            <span style="font-size:10px; color:var(--text-secondary); font-weight:600;">📊 ${weekLabel}</span>
-            <button onclick="event.stopPropagation(); window.todoWeekOffset++; renderTodo();" style="border:none; background:transparent; padding:0 2px; cursor:pointer; color:var(--text-secondary); font-size:11px; font-family:inherit;">▶</button>
-          </div>
+          <span style="font-size:10px; color:var(--text-secondary); font-weight:600;">📊 ${weekLabel}</span>
           <span style="font-size:9px; color:var(--text-tertiary);">${weekPct}%</span>
         </div>
         <div style="font-size:20px; font-weight:700; margin-top:4px;">
@@ -1895,7 +1891,6 @@ function renderTodo() {
         <div style="height:4px; background:rgba(0,0,0,0.08); border-radius:2px; margin-top:6px; overflow:hidden;">
           <div style="height:100%; width:${weekPct}%; background:var(--text-success);"></div>
         </div>
-        ${window.todoWeekOffset !== 0 ? `<button onclick="window.todoWeekOffset=0; renderTodo();" style="margin-top:4px; padding:2px 6px; border:none; border-radius:4px; background:var(--bg-info); color:var(--text-info); font-size:9px; cursor:pointer; font-family:inherit;">오늘</button>` : ''}
       </div>
 
       <!-- 곧 마감 (3일 이내) -->
@@ -1926,52 +1921,129 @@ function renderTodo() {
     </div>
   `;
 
-  const groups = [
-    { key:'past', label:'⏰ 지난 일정', emoji:'⏰' },
-    { key:'today', label:'오늘' },
-    { key:'tomorrow', label:'내일' },
-    { key:'week', label:'이번 주' },
-    { key:'later', label:'예정' },
-  ];
+  // ===== 주간 뷰 (이번 주 자세히) =====
+  html += `
+    <div style="margin: 18px 0 8px; display:flex; justify-content:space-between; align-items:center;">
+      <button onclick="window.todoWeekOffset = (window.todoWeekOffset||0) - 1; renderTodo();" style="border:none; background:var(--bg-secondary); padding:6px 10px; border-radius:8px; cursor:pointer; font-size:11px; font-family:inherit;">◀</button>
+      <span style="font-size:13px; font-weight:600;">
+        ${window.todoWeekOffset === 0 ? '이번 주' : window.todoWeekOffset === 1 ? '다음 주' : window.todoWeekOffset === -1 ? '지난 주' : `${monday.getMonth()+1}/${monday.getDate()} ~ ${sunday.getMonth()+1}/${sunday.getDate()}`}
+      </span>
+      <button onclick="window.todoWeekOffset = (window.todoWeekOffset||0) + 1; renderTodo();" style="border:none; background:var(--bg-secondary); padding:6px 10px; border-radius:8px; cursor:pointer; font-size:11px; font-family:inherit;">▶</button>
+    </div>
+    ${window.todoWeekOffset !== 0 ? `<div style="text-align:center; margin-bottom:8px;"><button onclick="window.todoWeekOffset=0; renderTodo();" style="padding:3px 10px; border:none; border-radius:999px; background:var(--bg-info); color:var(--text-info); font-size:10px; cursor:pointer; font-family:inherit;">📍 오늘로</button></div>` : ''}
+  `;
 
-  let hasAny = false;
-  groups.forEach(g => {
-    // 날짜 기반 동적 분류 (group 필드 무시)
-    const items = todos.filter(t => todoGroup(t.dateKey) === g.key && !t.done);
-    if (items.length === 0 && g.key !== 'today') return;
-    hasAny = hasAny || items.length > 0;
-    const labelColor = g.key === 'past' ? 'var(--text-danger)' : (g.key === 'today' ? 'var(--text-info)' : 'var(--text-secondary)');
-    const bgColor = g.key === 'past' ? 'var(--bg-danger)' : (g.key === 'today' ? 'var(--bg-info)' : 'var(--bg-secondary)');
-    html += `<div style="display:flex; align-items:center; gap:6px; margin: 16px 0 8px;">
-      <span style="font-size:14px; font-weight:600; color:${g.key==='past'?'var(--text-danger)':'inherit'};">${g.label}</span>
-      <span style="font-size:10px; padding:2px 7px; border-radius:999px; background:${bgColor}; color:${labelColor};">${items.length}</span>
-    </div>`;
-    // 날짜 순 정렬 (과거는 최신부터, 미래는 가까운 순)
-    items.sort((a, b) => g.key === 'past' ? b.dateKey.localeCompare(a.dateKey) : a.dateKey.localeCompare(b.dateKey));
-    items.forEach(t => html += renderTodoRow(t));
-    if (g.key === 'today') {
-      todos.filter(t => todoGroup(t.dateKey) === 'today' && t.done).forEach(t => html += renderTodoRow(t));
+  // 주간 뷰: 월~일 각 날짜별 섹션
+  const dayLabels = ['월', '화', '수', '목', '금', '토', '일'];
+  let hasWeekItems = false;
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    const dK = dateKey(d.getFullYear(), d.getMonth(), d.getDate());
+    const dayTodos = todos.filter(t => t.dateKey === dK && !t.done);
+    const dayDone = todos.filter(t => t.dateKey === dK && t.done);
+    const isToday = dK === todayK;
+    const isWeekend = i >= 5;
+    const isPast = dK < todayK;
+
+    // 항목 없는 평일은 표시 안 함 (오늘 제외)
+    if (dayTodos.length === 0 && dayDone.length === 0 && !isToday) continue;
+    hasWeekItems = true;
+
+    const dayColor = isToday ? 'var(--text-info)' : isWeekend ? (i === 6 ? 'var(--text-danger)' : 'var(--text-info)') : 'var(--text-primary)';
+    const dayLabel = isToday ? '오늘' : `${d.getMonth()+1}/${d.getDate()} (${dayLabels[i]})`;
+
+    html += `
+      <div style="margin: 12px 0 6px; display:flex; align-items:center; gap:8px;">
+        <span style="font-size:13px; font-weight:${isToday ? '700' : '600'}; color:${dayColor};">${dayLabel}</span>
+        ${isToday ? `<span style="font-size:9px; padding:1px 6px; border-radius:999px; background:var(--bg-info); color:var(--text-info); font-weight:600;">TODAY</span>` : ''}
+        <span style="font-size:10px; color:var(--text-tertiary);">${dayTodos.length > 0 ? `${dayTodos.length}개` : isPast && dayDone.length > 0 ? `완료 ${dayDone.length}` : '없음'}</span>
+      </div>
+    `;
+    if (dayTodos.length === 0 && dayDone.length === 0) {
+      html += `<div style="padding:8px 12px; color:var(--text-tertiary); font-size:11px; opacity:0.6;">${isToday ? '오늘 할일 없음 ✨' : '없음'}</div>`;
+    } else {
+      dayTodos.forEach(t => html += renderTodoRow(t));
+      dayDone.forEach(t => html += renderTodoRow(t));
     }
-  });
+  }
 
-  if (!hasAny && todos.filter(t=>!t.done).length === 0) {
+  // ===== 더 멀리: 다음 주 / 이번 달 / 다음 달 / 그 이후 =====
+  // 다음 주 시작 = 일요일 + 1
+  const nextWeekStart = new Date(sunday);
+  nextWeekStart.setDate(sunday.getDate() + 1);
+  const nextWeekEnd = new Date(nextWeekStart);
+  nextWeekEnd.setDate(nextWeekStart.getDate() + 6);
+  const nextWeekStartK = dateKey(nextWeekStart.getFullYear(), nextWeekStart.getMonth(), nextWeekStart.getDate());
+  const nextWeekEndK = dateKey(nextWeekEnd.getFullYear(), nextWeekEnd.getMonth(), nextWeekEnd.getDate());
+
+  const nextWeekTodos = todos.filter(t => t.dateKey && t.dateKey >= nextWeekStartK && t.dateKey <= nextWeekEndK);
+
+  // 이번 달 (다음 주 이후~말일)
+  const today = new Date();
+  const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+  const monthEndK = dateKey(monthEnd.getFullYear(), monthEnd.getMonth(), monthEnd.getDate());
+  const monthRestStart = new Date(nextWeekEnd);
+  monthRestStart.setDate(nextWeekEnd.getDate() + 1);
+  const monthRestStartK = dateKey(monthRestStart.getFullYear(), monthRestStart.getMonth(), monthRestStart.getDate());
+  const monthRestTodos = todos.filter(t => t.dateKey && t.dateKey >= monthRestStartK && t.dateKey <= monthEndK);
+
+  // 다음 달
+  const nextMonthStart = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+  const nextMonthEnd = new Date(today.getFullYear(), today.getMonth() + 2, 0);
+  const nextMonthStartK = dateKey(nextMonthStart.getFullYear(), nextMonthStart.getMonth(), nextMonthStart.getDate());
+  const nextMonthEndK = dateKey(nextMonthEnd.getFullYear(), nextMonthEnd.getMonth(), nextMonthEnd.getDate());
+  const nextMonthTodos = todos.filter(t => t.dateKey && t.dateKey >= nextMonthStartK && t.dateKey <= nextMonthEndK);
+
+  // 더 미래
+  const farFutureTodos = todos.filter(t => t.dateKey && t.dateKey > nextMonthEndK);
+
+  // 날짜 미정 (dateKey 없음)
+  const noDateTodos = todos.filter(t => !t.dateKey);
+
+  // 본인이 이번 주만 보고 있을 때 (offset === 0) 미래 그룹 표시
+  if (window.todoWeekOffset === 0) {
+    const futureGroups = [
+      { label: '📅 다음 주', items: nextWeekTodos },
+      { label: '📆 이번 달', items: monthRestTodos },
+      { label: '🗓️ 다음 달', items: nextMonthTodos },
+      { label: '🌅 더 멀리', items: farFutureTodos },
+      { label: '❓ 날짜 미정', items: noDateTodos },
+    ];
+
+    let hasFuture = futureGroups.some(g => g.items.length > 0);
+    if (hasFuture) {
+      html += `<div style="margin-top:24px; padding-top:14px; border-top:0.5px solid var(--border-tertiary);">
+        <div style="font-size:11px; color:var(--text-tertiary); margin-bottom:6px;">📌 더 멀리</div>
+      </div>`;
+
+      futureGroups.forEach(g => {
+        if (g.items.length === 0) return;
+        html += `<div style="margin: 12px 0 6px; display:flex; align-items:center; gap:8px;">
+          <span style="font-size:12px; font-weight:600; color:var(--text-secondary);">${g.label}</span>
+          <span style="font-size:10px; color:var(--text-tertiary);">${g.items.length}개</span>
+        </div>`;
+        g.items.sort((a, b) => (a.dateKey || '').localeCompare(b.dateKey || ''));
+        g.items.forEach(t => html += renderTodoRow(t));
+      });
+    }
+  }
+
+  // 빈 상태
+  if (!hasWeekItems && window.todoWeekOffset === 0 && todos.filter(t => !t.done).length === 0) {
     html += `<div class="empty-state"><i class="ti ti-checks"></i>할일이 없어요<br><span style="font-size:11px; opacity:0.7;">+ 버튼으로 추가하세요</span></div>`;
   }
 
-  // 최근 7일 완료된 할일 (실수 복구용)
-  const recentDoneCutoff = new Date();
-  recentDoneCutoff.setDate(recentDoneCutoff.getDate() - 7);
-  const recentDoneCutoffKey = dateKey(recentDoneCutoff.getFullYear(), recentDoneCutoff.getMonth(), recentDoneCutoff.getDate());
-  const recentDone = todos.filter(t => t.done && (!t.dateKey || t.dateKey >= recentDoneCutoffKey));
-  if (recentDone.length > 0) {
-    html += `<div style="margin-top:24px; padding-top:16px; border-top:0.5px solid var(--border-tertiary);">
-      <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px; cursor:pointer;" onclick="window.showCompletedTodos = !window.showCompletedTodos; renderTodo();">
-        <span style="font-size:12px; color:var(--text-tertiary);">✅ 최근 완료 (${recentDone.length})</span>
-        <span style="font-size:10px; color:var(--text-tertiary);">${window.showCompletedTodos ? '▲' : '▼'}</span>
-        <span style="font-size:10px; color:var(--text-tertiary); opacity:0.7;">실수 시 다시 누르면 복구</span>
+  // ===== 밀린 할일 (별도 강조) =====
+  if (pastTodos.length > 0 && window.todoWeekOffset === 0) {
+    html += `<div style="margin-top:24px; padding-top:14px; border-top:0.5px solid var(--border-tertiary);">
+      <div style="margin: 0 0 8px; display:flex; align-items:center; gap:8px;">
+        <span style="font-size:13px; font-weight:600; color:var(--text-danger);">⏰ 밀린 일정</span>
+        <span style="font-size:10px; padding:2px 7px; border-radius:999px; background:var(--bg-danger); color:var(--text-danger);">${pastTodos.length}</span>
       </div>
-      ${window.showCompletedTodos ? recentDone.sort((a,b) => (b.completedAt||0) - (a.completedAt||0)).map(t => renderTodoRow(t)).join('') : ''}
     </div>`;
+    pastTodos.sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+    pastTodos.forEach(t => html += renderTodoRow(t));
   }
 
   screen.innerHTML = html;
@@ -2013,7 +2085,7 @@ function toggleTodo(id, e) {
       delete t.completedAt;
     }
     saveData();
-    showToast(t.done ? `"${t.title}" 완료! (실수면 최근 완료에서 복구 가능)` : `복구됨`);
+    showToast(t.done ? `"${t.title}" 완료!` : `미완료로 복구됨`);
   }
   renderTodo();
 }
