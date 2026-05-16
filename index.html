@@ -5086,9 +5086,13 @@ async function askGemini(prompt, options = {}) {
             break;
           }
           if (res.status === 429 && attempt < maxRetries) {
-            // 한도 초과 → 짧게만 대기 (이전 3,6,12초 → 1.5초만)
+            // 한도 초과 → 짧게만 대기 후 재시도
             await new Promise(r => setTimeout(r, 1500));
             continue;
+          }
+          if (res.status === 429) {
+            // 한도 도달 - 사용자가 직접 재시도하도록 안내
+            return { error: '429: AI 호출 한도 도달 (잠시 후 재시도)' };
           }
           if (res.status === 403) {
             return { error: `권한 거부 (도메인 제한 또는 API 비활성화)\n원인: ${errMsg.substring(0, 100)}` };
@@ -5120,6 +5124,12 @@ async function askGemini(prompt, options = {}) {
 
         console.log(`✅ Gemini ${model} 성공`);
         aiCache[cKey] = { text: finalText, time: Date.now() };
+        // localStorage에 즉시 저장 (탭 이동에도 유지)
+        try {
+          localStorage.setItem('ai_cache_today', JSON.stringify(aiCache));
+        } catch (e) {
+          console.warn('캐시 저장 실패:', e);
+        }
         return { text: finalText, cached: false };
 
       } catch (e) {
@@ -5348,7 +5358,7 @@ async function loadAIBriefing(forceRefresh, retryCount = 0) {
     container.innerHTML = `<div style="padding:14px; background:rgba(255,100,100,0.15); border-radius:8px;">
       <div style="display:flex; align-items:center; justify-content:space-between;">
         <div style="display:flex; align-items:center; gap:6px; font-size:11px; color:#FFD;">
-          <i class="ti ti-alert-circle"></i> ${result.error.includes('429') ? '한도 초과 (1분 후 시도)' : '일시 실패'}
+          <i class="ti ti-alert-circle"></i> ${result.error.includes('429') ? '한도 도달 (잠시 후 재시도)' : '일시 실패'}
         </div>
         <button onclick="loadAIBriefing(true)" style="border:none; background:rgba(255,255,255,0.2); color:white; padding:5px 12px; border-radius:6px; font-size:10px; cursor:pointer; font-family:inherit;">
           🔄 재시도
@@ -8122,15 +8132,19 @@ function initAuth() {
 
       startApp();
 
-      // localStorage에서 어제 AI 캐시 복원 (즉시 표시용)
+      // localStorage에서 AI 캐시 복원 (즉시 표시용)
       try {
-        const todayStr = new Date().toDateString();
-        const lastDate = localStorage.getItem('ai_prewarm_date');
         const savedCache = localStorage.getItem('ai_cache_today');
-        if (savedCache && lastDate === todayStr) {
+        if (savedCache) {
           const parsed = JSON.parse(savedCache);
-          Object.assign(aiCache, parsed);
-          console.log('✅ AI 캐시 복원');
+          // 1시간 이내 캐시만 복원
+          const now = Date.now();
+          for (const [k, v] of Object.entries(parsed)) {
+            if (v && v.time && (now - v.time) < AI_CACHE_TIME) {
+              aiCache[k] = v;
+            }
+          }
+          console.log('✅ AI 캐시 복원:', Object.keys(aiCache).length, '개');
         }
       } catch (e) {
         console.error('캐시 복원 실패:', e);
