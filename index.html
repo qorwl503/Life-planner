@@ -1801,6 +1801,9 @@ function quickAdd(d) {
 
 // ====== 할일 ======
 function renderTodo() {
+  // 주 이동 변수 초기화
+  if (typeof window.todoWeekOffset === 'undefined') window.todoWeekOffset = 0;
+
   header.innerHTML = `
     <h1>할일</h1>
     <div class="header-actions">
@@ -1826,11 +1829,12 @@ function renderTodo() {
   const pastTodos = todos.filter(t => todoGroup(t.dateKey) === 'past' && !t.done);
   const pastDoneAll = todos.filter(t => t.dateKey && t.dateKey < todayK && t.done);
 
-  // 이번주 (월~일)
-  const todayDate = new Date();
-  const dayOfWeek = todayDate.getDay() === 0 ? 7 : todayDate.getDay(); // 일=7
-  const monday = new Date(todayDate);
-  monday.setDate(todayDate.getDate() - (dayOfWeek - 1));
+  // 본인이 선택한 주 (todoWeekOffset 기준)
+  const baseDate = new Date();
+  baseDate.setDate(baseDate.getDate() + window.todoWeekOffset * 7);
+  const dayOfWeek = baseDate.getDay() === 0 ? 7 : baseDate.getDay();
+  const monday = new Date(baseDate);
+  monday.setDate(baseDate.getDate() - (dayOfWeek - 1));
   const sunday = new Date(monday);
   sunday.setDate(monday.getDate() + 6);
   const mondayK = dateKey(monday.getFullYear(), monday.getMonth(), monday.getDate());
@@ -1838,6 +1842,11 @@ function renderTodo() {
   const weekTodos = todos.filter(t => t.dateKey && t.dateKey >= mondayK && t.dateKey <= sundayK);
   const weekDone = weekTodos.filter(t => t.done).length;
   const weekPct = weekTodos.length > 0 ? Math.round((weekDone / weekTodos.length) * 100) : 0;
+
+  const weekLabel = window.todoWeekOffset === 0 ? '이번 주' :
+    window.todoWeekOffset === 1 ? '다음 주' :
+    window.todoWeekOffset === -1 ? '지난 주' :
+    `${monday.getMonth()+1}/${monday.getDate()} ~ ${sunday.getMonth()+1}/${sunday.getDate()}`;
 
   // 연속 달성일 (사용 안함 - 곧 마감으로 대체)
   // 곧 마감 = 3일 안에 마감인 미완료 할일
@@ -1870,10 +1879,14 @@ function renderTodo() {
         </div>
       </div>
 
-      <!-- 이번 주 -->
+      <!-- 주간 (이동 가능) -->
       <div style="padding:12px; border-radius:12px; background:var(--bg-secondary); border:0.5px solid var(--border-tertiary);">
         <div style="display:flex; align-items:center; justify-content:space-between;">
-          <span style="font-size:10px; color:var(--text-secondary); font-weight:600;">📊 이번 주</span>
+          <div style="display:flex; align-items:center; gap:4px;">
+            <button onclick="event.stopPropagation(); window.todoWeekOffset--; renderTodo();" style="border:none; background:transparent; padding:0 2px; cursor:pointer; color:var(--text-secondary); font-size:11px; font-family:inherit;">◀</button>
+            <span style="font-size:10px; color:var(--text-secondary); font-weight:600;">📊 ${weekLabel}</span>
+            <button onclick="event.stopPropagation(); window.todoWeekOffset++; renderTodo();" style="border:none; background:transparent; padding:0 2px; cursor:pointer; color:var(--text-secondary); font-size:11px; font-family:inherit;">▶</button>
+          </div>
           <span style="font-size:9px; color:var(--text-tertiary);">${weekPct}%</span>
         </div>
         <div style="font-size:20px; font-weight:700; margin-top:4px;">
@@ -1882,6 +1895,7 @@ function renderTodo() {
         <div style="height:4px; background:rgba(0,0,0,0.08); border-radius:2px; margin-top:6px; overflow:hidden;">
           <div style="height:100%; width:${weekPct}%; background:var(--text-success);"></div>
         </div>
+        ${window.todoWeekOffset !== 0 ? `<button onclick="window.todoWeekOffset=0; renderTodo();" style="margin-top:4px; padding:2px 6px; border:none; border-radius:4px; background:var(--bg-info); color:var(--text-info); font-size:9px; cursor:pointer; font-family:inherit;">오늘</button>` : ''}
       </div>
 
       <!-- 곧 마감 (3일 이내) -->
@@ -1944,6 +1958,22 @@ function renderTodo() {
     html += `<div class="empty-state"><i class="ti ti-checks"></i>할일이 없어요<br><span style="font-size:11px; opacity:0.7;">+ 버튼으로 추가하세요</span></div>`;
   }
 
+  // 최근 7일 완료된 할일 (실수 복구용)
+  const recentDoneCutoff = new Date();
+  recentDoneCutoff.setDate(recentDoneCutoff.getDate() - 7);
+  const recentDoneCutoffKey = dateKey(recentDoneCutoff.getFullYear(), recentDoneCutoff.getMonth(), recentDoneCutoff.getDate());
+  const recentDone = todos.filter(t => t.done && (!t.dateKey || t.dateKey >= recentDoneCutoffKey));
+  if (recentDone.length > 0) {
+    html += `<div style="margin-top:24px; padding-top:16px; border-top:0.5px solid var(--border-tertiary);">
+      <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px; cursor:pointer;" onclick="window.showCompletedTodos = !window.showCompletedTodos; renderTodo();">
+        <span style="font-size:12px; color:var(--text-tertiary);">✅ 최근 완료 (${recentDone.length})</span>
+        <span style="font-size:10px; color:var(--text-tertiary);">${window.showCompletedTodos ? '▲' : '▼'}</span>
+        <span style="font-size:10px; color:var(--text-tertiary); opacity:0.7;">실수 시 다시 누르면 복구</span>
+      </div>
+      ${window.showCompletedTodos ? recentDone.sort((a,b) => (b.completedAt||0) - (a.completedAt||0)).map(t => renderTodoRow(t)).join('') : ''}
+    </div>`;
+  }
+
   screen.innerHTML = html;
 }
 
@@ -1977,8 +2007,13 @@ function toggleTodo(id, e) {
   const t = todos.find(x => x.id === id);
   if (t) {
     t.done = !t.done;
+    if (t.done) {
+      t.completedAt = Date.now();
+    } else {
+      delete t.completedAt;
+    }
     saveData();
-    showToast(t.done ? `"${t.title}" 완료!` : `되돌렸어요`);
+    showToast(t.done ? `"${t.title}" 완료! (실수면 최근 완료에서 복구 가능)` : `복구됨`);
   }
   renderTodo();
 }
@@ -5082,7 +5117,7 @@ async function askGemini(prompt, options = {}) {
     return { error: 'AI 키가 설정되지 않았어요. 우측 상단 톱니바퀴에서 키를 입력하세요.', needsKey: true };
   }
 
-  const models = ['gemini-flash-latest', 'gemini-2.5-flash'];
+  const models = ['gemini-flash-latest', 'gemini-2.0-flash', 'gemini-2.5-flash'];
   let lastError = '알 수 없는 오류';
 
   try {
@@ -6593,16 +6628,7 @@ async function loadNewsRSS() {
 
 function refreshNews() {
   newsCache = null;
-  // AI 뉴스 요약 캐시도 같이 무효화 (새 기사 기반 새 요약)
-  const aiNewsKey = 'news-summary-' + new Date().toDateString();
-  delete aiCache[aiNewsKey];
   loadNewsRSS();
-  // AI 뉴스 요약도 다시 안내 표시 (분석 받기 버튼)
-  const aiContainer = document.getElementById('ai-news-summary');
-  if (aiContainer) {
-    aiContainer.innerHTML = '';
-    loadAINewsSummary(false); // 안내만 표시
-  }
   showToast('뉴스 새로고침 ✨');
 }
 
