@@ -5205,7 +5205,7 @@ async function loadMarketIndices() {
     },
     {
       label:'환율', data:data.usdkrw, prefix:'₩', suffix:'', decimals:2,
-      link: 'https://m.stock.naver.com/marketindex/exchange/FX_USDKRW/total'
+      link: 'https://finance.naver.com/marketindex/'
     },
     {
       label:'금 (KRX)',
@@ -5222,7 +5222,7 @@ async function loadMarketIndices() {
       prefix:'₩', suffix:'/g',
       decimals:0,
       sub: data.gold?.price ? `($${data.gold.price.toFixed(1)}/oz)` : '환산',
-      link: 'https://m.stock.naver.com/marketindex/metals/M04020000/total'
+      link: 'https://finance.naver.com/marketindex/worldGoldDetail.nhn?marketindexCd=CMDT_GC'
     },
     {
       label:'코스피', data:data.kospi, prefix:'', suffix:'',
