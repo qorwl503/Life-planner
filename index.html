@@ -457,6 +457,17 @@ const firebaseConfig = {
 
   /* 예산 */
   .budget-hero {
+    background: linear-gradient(135deg, #185FA5 0%, #2D7BC9 100%);
+    color: #fff;
+    padding: 14px 16px;
+    border-radius: 14px;
+    margin-bottom: 12px;
+  }
+  .budget-hero.warning { background: linear-gradient(135deg, #6B3F08 0%, #854F0B 100%); }
+  .budget-hero.danger { background: linear-gradient(135deg, #7A1F1F 0%, #A32D2D 100%); }
+  .budget-hero .label { font-size: 10px; opacity: 0.85; margin-bottom: 3px; }
+  .budget-hero .big-num { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; margin-bottom: 2px; }
+  .budget-hero .sub { font-size: 10px; opacity: 0.9; }
     background: linear-gradient(135deg, #2A4D1B 0%, #3B6D11 100%);
     border-radius: 16px;
     padding: 18px;
@@ -466,21 +477,21 @@ const firebaseConfig = {
   .budget-hero.warning { background: linear-gradient(135deg, #6B3F08 0%, #854F0B 100%); }
   .budget-hero.danger { background: linear-gradient(135deg, #7A1F1F 0%, #A32D2D 100%); }
   .budget-hero .label { font-size: 11px; opacity: 0.85; margin-bottom: 4px; }
-  .budget-hero .big-num { font-size: 28px; font-weight: 600; letter-spacing: -0.5px; margin-bottom: 2px; }
-  .budget-hero .sub { font-size: 11px; opacity: 0.9; }
+  .budget-hero .big-num { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; margin-bottom: 2px; }
+  .budget-hero .sub { font-size: 10px; opacity: 0.9; }
   .budget-bar {
-    height: 8px;
+    height: 6px;
     background: rgba(255,255,255,0.2);
-    border-radius: 4px;
+    border-radius: 3px;
     overflow: hidden;
-    margin-top: 14px;
+    margin-top: 10px;
   }
   .budget-bar > div { height: 100%; background: rgba(255,255,255,0.95); transition: width 0.4s; }
-  .budget-bar-labels { display: flex; justify-content: space-between; margin-top: 6px; font-size: 10px; opacity: 0.85; }
-  .day-pace { display: flex; gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 0.5px solid rgba(255,255,255,0.2); }
+  .budget-bar-labels { display: flex; justify-content: space-between; margin-top: 4px; font-size: 9px; opacity: 0.85; }
+  .day-pace { display: flex; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 0.5px solid rgba(255,255,255,0.2); }
   .day-pace .item { flex: 1; }
-  .day-pace .pn { font-size: 16px; font-weight: 600; }
-  .day-pace .pl { font-size: 10px; opacity: 0.85; margin-top: 1px; }
+  .day-pace .pn { font-size: 13px; font-weight: 600; }
+  .day-pace .pl { font-size: 9px; opacity: 0.85; margin-top: 1px; }
 
   .fixed-row {
     display: flex;
@@ -3717,15 +3728,8 @@ function renderMoney() {
 
   html += `<div class="card" style="padding:0 14px; margin-bottom:10px;">${renderFixedRows()}</div>`;
 
-  html += `<div style="display:flex; gap:8px; margin-bottom:14px;">
-    <div class="stat-card" style="flex:1;">
-      <div class="label">납부 완료</div>
-      <div class="value" style="color:var(--text-success); font-size:15px;">${fixedPaid.toLocaleString()}원</div>
-    </div>
-    <div class="stat-card" style="flex:1;">
-      <div class="label">미납</div>
-      <div class="value" style="color:var(--text-warning); font-size:15px;">${fixedRemaining.toLocaleString()}원</div>
-    </div>
+  html += `<div style="margin-bottom:14px; text-align:center; font-size:11px; color:var(--text-tertiary);">
+    납부 완료 <b style="color:var(--text-success);">${fixedPaid.toLocaleString()}원</b> · 남음 <b>${fixedRemaining.toLocaleString()}원</b>
   </div>`;
 
   // ===== 카테고리별 도넛 차트 (지출만) =====
@@ -3796,12 +3800,14 @@ function renderMoney() {
     `;
   }
 
-  // ===== 📅 월별 캘린더형 일별 합계 (이번 달만) =====
+  // ===== 📅 월별 캘린더형 일별 합계 =====
+  if (typeof window.moneyCalExpanded === 'undefined') window.moneyCalExpanded = true;
+
   if (isCurrentMonth || true) {
     const calY = budgetViewYear;
     const calM = budgetViewMonth;
     const daysInM = new Date(calY, calM + 1, 0).getDate();
-    const firstDay = new Date(calY, calM, 1).getDay(); // 일=0
+    const firstDay = new Date(calY, calM, 1).getDay();
 
     // 일별 합계
     const dailyTotals = {};
@@ -3814,44 +3820,47 @@ function renderMoney() {
     });
 
     html += `<div style="margin: 18px 0 12px;">
-      <div style="font-size:13px; font-weight:600; margin-bottom:8px;">📅 일별 지출 캘린더</div>
-      <div style="display:grid; grid-template-columns: repeat(7, 1fr); gap:3px;">`;
+      <div onclick="window.moneyCalExpanded = !window.moneyCalExpanded; renderMoney();" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; cursor:pointer;">
+        <div style="font-size:13px; font-weight:600;">📅 일별 지출 캘린더</div>
+        <span style="font-size:11px; color:var(--text-tertiary);">${window.moneyCalExpanded ? '▲ 접기' : '▼ 펼치기'}</span>
+      </div>`;
 
-    // 요일 헤더
-    ['일','월','화','수','목','금','토'].forEach((d, i) => {
-      const color = i === 0 ? 'var(--text-danger)' : i === 6 ? 'var(--text-info)' : 'var(--text-tertiary)';
-      html += `<div style="text-align:center; font-size:9px; color:${color}; padding:2px;">${d}</div>`;
-    });
+    if (window.moneyCalExpanded) {
+      html += `<div style="display:grid; grid-template-columns: repeat(7, 1fr); gap:3px;">`;
+      ['일','월','화','수','목','금','토'].forEach((d, i) => {
+        const color = i === 0 ? 'var(--text-danger)' : i === 6 ? 'var(--text-info)' : 'var(--text-tertiary)';
+        html += `<div style="text-align:center; font-size:9px; color:${color}; padding:2px;">${d}</div>`;
+      });
 
-    // 빈칸
-    for (let i = 0; i < firstDay; i++) {
-      html += `<div></div>`;
-    }
+      for (let i = 0; i < firstDay; i++) {
+        html += `<div></div>`;
+      }
 
-    // 날짜
-    const todayD = new Date();
-    const isCurrentMonthExact = calY === todayD.getFullYear() && calM === todayD.getMonth();
-    for (let d = 1; d <= daysInM; d++) {
-      const data = dailyTotals[d];
-      const hasData = data && (data.spent > 0 || data.deposit > 0);
-      const isToday = isCurrentMonthExact && d === todayD.getDate();
-      const dow = new Date(calY, calM, d).getDay();
-      const dowColor = dow === 0 ? 'var(--text-danger)' : dow === 6 ? 'var(--text-info)' : 'var(--text-primary)';
+      const todayD = new Date();
+      const isCurrentMonthExact = calY === todayD.getFullYear() && calM === todayD.getMonth();
+      for (let d = 1; d <= daysInM; d++) {
+        const data = dailyTotals[d];
+        const hasData = data && (data.spent > 0 || data.deposit > 0);
+        const isToday = isCurrentMonthExact && d === todayD.getDate();
+        const dow = new Date(calY, calM, d).getDay();
+        const dowColor = dow === 0 ? 'var(--text-danger)' : dow === 6 ? 'var(--text-info)' : 'var(--text-primary)';
+        const dateK = dateKey(calY, calM, d);
 
-      html += `<div style="min-height:42px; padding:3px; border-radius:5px; ${isToday ? 'background:rgba(70,140,255,0.12);' : 'background:var(--bg-secondary);'} display:flex; flex-direction:column; align-items:center; justify-content:flex-start; font-size:9px;">
-        <span style="font-weight:${isToday ? '700' : '500'}; color:${dowColor};">${d}</span>`;
-      if (data) {
-        if (data.spent > 0) {
-          html += `<span style="color:var(--text-primary); font-size:8px; line-height:1.1; margin-top:1px;">-${Math.round(data.spent / 1000)}k</span>`;
+        html += `<div onclick="${hasData ? `showDayExpenses('${dateK}')` : ''}" style="min-height:42px; padding:3px; border-radius:5px; ${isToday ? 'background:rgba(70,140,255,0.12);' : hasData ? 'background:var(--bg-info); cursor:pointer;' : 'background:var(--bg-secondary);'} display:flex; flex-direction:column; align-items:center; justify-content:flex-start; font-size:9px;">
+          <span style="font-weight:${isToday ? '700' : '500'}; color:${dowColor};">${d}</span>`;
+        if (data) {
+          if (data.spent > 0) {
+            html += `<span style="color:var(--text-primary); font-size:8px; line-height:1.1; margin-top:1px;">-${Math.round(data.spent / 1000)}k</span>`;
+          }
+          if (data.deposit > 0) {
+            html += `<span style="color:var(--text-success); font-size:8px; line-height:1.1;">+${Math.round(data.deposit / 1000)}k</span>`;
+          }
         }
-        if (data.deposit > 0) {
-          html += `<span style="color:var(--text-success); font-size:8px; line-height:1.1;">+${Math.round(data.deposit / 1000)}k</span>`;
-        }
+        html += `</div>`;
       }
       html += `</div>`;
     }
-
-    html += `</div></div>`;
+    html += `</div>`;
   }
 
   // ===== 날짜별 내역 그룹 (전체 보기 + 편집 모드) =====
@@ -3992,6 +4001,57 @@ function toggleAllExpenses(check) {
     window.selectedExpenseIds = new Set();
   }
   renderMoney();
+}
+
+function showDayExpenses(dateK) {
+  const dayItems = (budget.expenses || []).filter(e => e.dateKey === dateK);
+  if (dayItems.length === 0) return;
+
+  const [y, m, d] = dateK.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  const dow = ['일','월','화','수','목','금','토'][dt.getDay()];
+  const daySpent = dayItems.filter(e => e.type !== 'income').reduce((s, e) => s + Number(e.amt), 0);
+  const dayDeposit = dayItems.filter(e => e.type === 'income').reduce((s, e) => s + Number(e.amt), 0);
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+        <h2>${m}/${d} (${dow})</h2>
+        <button class="modal-save" onclick="closeModal(); openExpenseModal('${dateK}');" style="background:var(--bg-info); color:var(--text-info);">+ 추가</button>
+      </div>
+
+      <div style="display:flex; gap:8px; margin-bottom:14px;">
+        ${daySpent > 0 ? `<div style="flex:1; padding:10px; background:rgba(0,0,0,0.04); border-radius:8px;">
+          <div style="font-size:10px; color:var(--text-tertiary);">💸 지출</div>
+          <div style="font-size:14px; font-weight:700; margin-top:2px;">-${daySpent.toLocaleString()}원</div>
+        </div>` : ''}
+        ${dayDeposit > 0 ? `<div style="flex:1; padding:10px; background:rgba(52,199,89,0.08); border-radius:8px;">
+          <div style="font-size:10px; color:var(--text-tertiary);">💵 입금</div>
+          <div style="font-size:14px; font-weight:700; margin-top:2px; color:var(--text-success);">+${dayDeposit.toLocaleString()}원</div>
+        </div>` : ''}
+      </div>
+
+      <div style="max-height:55vh; overflow-y:auto;">
+        ${dayItems.map(e => {
+          const isDep = e.type === 'income';
+          const sign = isDep ? '+' : '-';
+          const color = isDep ? 'var(--text-success)' : 'var(--text-primary)';
+          return `<div onclick="closeModal(); setTimeout(()=>editExpense(${e.id}),100);" style="display:flex; justify-content:space-between; align-items:center; padding:11px 0; border-bottom:0.5px solid var(--border-tertiary); cursor:pointer;">
+            <div style="flex:1; min-width:0;">
+              <div style="font-size:13px; font-weight:500;">${isDep ? '💵 ' : ''}${e.memo || e.cat}</div>
+              <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">${e.cat}</div>
+            </div>
+            <span style="font-weight:600; color:${color}; font-size:13px;">${sign}${Number(e.amt).toLocaleString()}원</span>
+          </div>`;
+        }).join('')}
+      </div>
+
+      <div style="margin-top:10px; padding:6px; font-size:10px; color:var(--text-tertiary); text-align:center;">탭하면 수정/삭제</div>
+    </div>
+  `;
+  modal.classList.add('show');
 }
 
 function bulkDeleteExpenses() {
@@ -4187,32 +4247,6 @@ function renderMoneyAI(spent, projected) {
 
   // AI 코치 카드 (진짜 AI)
   let html = `<div id="ai-budget-coach"></div>`;
-
-  // 카테고리별 통계 (이건 데이터 분석이라 그대로 유지)
-  if (ranked.length >= 2) {
-    html += `<div class="ai-card" style="margin-bottom:14px;">
-      <div class="ai-badge" style="background:rgba(255,255,255,0.15); color:white;"><i class="ti ti-chart-bar" style="font-size:11px;"></i> 카테고리별 지출</div>
-      <div style="margin-top:10px;">`;
-
-    ranked.slice(0, 5).forEach(([cat, amt]) => {
-      const pct = Math.round((amt / spent) * 100);
-      let compare = '';
-      if (lastMonth?.byCategory?.[cat]) {
-        const lastAmt = lastMonth.byCategory[cat];
-        const diffPct = Math.round(((amt - lastAmt) / lastAmt) * 100);
-        if (diffPct > 10) compare = `<span style="color:#FFA0A0;">↑${diffPct}%</span>`;
-        else if (diffPct < -10) compare = `<span style="color:#90EE90;">↓${Math.abs(diffPct)}%</span>`;
-      }
-      html += `<div style="display:flex; align-items:center; gap:10px; padding:6px 0; font-size:12px;">
-        <div style="width:80px;">${cat}</div>
-        <div style="flex:1; height:6px; background:rgba(255,255,255,0.15); border-radius:3px; overflow:hidden;">
-          <div style="height:100%; width:${pct}%; background:#FFD66E;"></div>
-        </div>
-        <div style="font-size:11px; text-align:right; min-width:80px;">${amt.toLocaleString()}원 ${compare}</div>
-      </div>`;
-    });
-    html += `</div></div>`;
-  }
 
   // 비동기로 AI 코치 호출
   setTimeout(() => loadAIBudgetCoach(spent, projected, byCategory, lastMonth), 100);
@@ -4527,6 +4561,9 @@ function openFixedAddModal() {
             <button class="chip" data-t="금">금</button>
             <button class="chip" data-t="달러">달러</button>
             <button class="chip" data-t="예적금">예적금</button>
+            <button class="chip" data-t="청약">청약</button>
+            <button class="chip" data-t="현금">현금</button>
+            <button class="chip" data-t="부동산">부동산</button>
           </div>
         </div>
 
@@ -6070,7 +6107,7 @@ function renderAsset() {
     if (assets.length === 0) {
       html += `<div class="empty-state"><i class="ti ti-chart-pie"></i>등록된 자산이 없어요<br><span style="font-size:11px; opacity:0.7;">+ 버튼으로 자산을 추가하세요</span>
         <div style="margin-top:14px;">
-          <button onclick="openAddModal()" style="padding:10px 20px; border:none; border-radius:8px; background:var(--bg-info); color:var(--text-info); font-size:13px; font-weight:600; cursor:pointer; font-family:inherit;">+ 자산 추가</button>
+          <button onclick="openAssetAddModal()" style="padding:10px 20px; border:none; border-radius:8px; background:var(--bg-info); color:var(--text-info); font-size:13px; font-weight:600; cursor:pointer; font-family:inherit;">+ 자산 추가</button>
         </div>
       </div>`;
     } else {
@@ -6078,7 +6115,7 @@ function renderAsset() {
         <span style="font-size:12px; color:var(--text-secondary);">${assets.length}개 자산</span>
         <div style="display:flex; align-items:center; gap:6px;">
           <span style="font-size:10px; color:var(--text-tertiary);">탭하면 수정</span>
-          <button onclick="openAddModal()" style="border:none; background:var(--bg-info); color:var(--text-info); padding:5px 12px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">+ 추가</button>
+          <button onclick="openAssetAddModal()" style="border:none; background:var(--bg-info); color:var(--text-info); padding:5px 12px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">+ 추가</button>
         </div>
       </div>`;
       assets.forEach(a => {
