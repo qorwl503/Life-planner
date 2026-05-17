@@ -1637,16 +1637,8 @@ function renderCalendar() {
   const startOffset = monthStart.getDay();
 
   header.innerHTML = `
-    <div style="display:flex; align-items:center; gap:8px;">
-      <button onclick="prevMonth()" style="background:transparent; border:none; padding:6px; cursor:pointer; color:var(--text-secondary);"><i class="ti ti-chevron-left" style="font-size:20px;"></i></button>
-      <div style="cursor:pointer; padding:4px 8px;" onclick="openMonthPicker()">
-        <div class="subtitle">${viewYear}</div>
-        <h1 style="display:flex; align-items:center; gap:6px;">${monthLabels[viewMonth]} <i class="ti ti-chevron-down" style="font-size:14px; color:var(--text-tertiary);"></i></h1>
-      </div>
-      <button onclick="nextMonth()" style="background:transparent; border:none; padding:6px; cursor:pointer; color:var(--text-secondary);"><i class="ti ti-chevron-right" style="font-size:20px;"></i></button>
-    </div>
+    <h1>홈</h1>
     <div class="header-actions">
-      ${!isViewingCurrentMonth() ? `<button onclick="goToToday()" aria-label="오늘로" style="background:var(--bg-info); color:var(--text-info); padding:6px 12px; border-radius:999px; font-size:11px; font-weight:500;">오늘</button>` : ''}
       <button onclick="openAddModal()" aria-label="추가"><i class="ti ti-plus"></i></button>
     </div>
   `;
@@ -1687,8 +1679,25 @@ function renderCalendar() {
   // 월/주 토글
   const isWeekView = window.calendarMode === 'week';
 
-  // 📈 월간 리포트 + 🎂 D-day - 캘린더 위에
-  let html = renderMonthlyReportCard() + renderDdayCard();
+  // 🎂 D-day + 📈 월간 리포트 - 캘린더 위 (D-day 먼저)
+  let html = renderDdayCard() + renderMonthlyReportCard();
+
+  // 월 이동 컨트롤 (캘린더 위에 통합)
+  html += `
+    <div style="display:flex; justify-content:space-between; align-items:center; margin: 18px 0 12px;">
+      <div style="display:flex; align-items:center; gap:6px;">
+        <button onclick="prevMonth()" style="background:transparent; border:none; padding:6px; cursor:pointer; color:var(--text-secondary);"><i class="ti ti-chevron-left" style="font-size:20px;"></i></button>
+        <div style="cursor:pointer; padding:4px 8px;" onclick="openMonthPicker()">
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span style="font-size:16px; font-weight:700;">${viewYear}년 ${monthLabels[viewMonth]}</span>
+            <i class="ti ti-chevron-down" style="font-size:14px; color:var(--text-tertiary);"></i>
+          </div>
+        </div>
+        <button onclick="nextMonth()" style="background:transparent; border:none; padding:6px; cursor:pointer; color:var(--text-secondary);"><i class="ti ti-chevron-right" style="font-size:20px;"></i></button>
+      </div>
+      ${!isViewingCurrentMonth() ? `<button onclick="goToToday()" style="background:var(--bg-info); color:var(--text-info); padding:6px 12px; border-radius:999px; font-size:11px; font-weight:500; border:none; cursor:pointer; font-family:inherit;">📍 오늘</button>` : ''}
+    </div>
+  `;
 
   html += `
     <div style="display:flex; gap:4px; padding:3px; background:var(--bg-secondary); border-radius:8px; margin-bottom:12px;">
