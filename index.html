@@ -1215,6 +1215,7 @@ function applyData(data) {
     // 객체 필드 기본값 보충
     if (!settings.monthlyIncomes) settings.monthlyIncomes = {};
     if (!settings.assetSnapshots) settings.assetSnapshots = {};
+    if (!settings.livingGoals) settings.livingGoals = {};
   }
   if (data.userChannels) userChannels = data.userChannels;
   if (data.economySites) economySites = data.economySites;
@@ -1367,7 +1368,17 @@ function renderCalendar() {
     if (dayExpenses.length > 0) dots.push('m');
     const dayTodos = todos.filter(t => t.dateKey === k);
     if (dayTodos.length > 0) dots.push('t');
-    const activeChs = challenges.filter(c => !c.completed && c.startDate <= k);
+    // 챌린지 점 - 시작일 ~ 종료일 사이만 표시
+    const activeChs = challenges.filter(c => {
+      if (!c.startDate || !c.totalDays) return false;
+      if (k < c.startDate) return false; // 시작 전
+      // 종료일 계산 (시작일 + totalDays - 1)
+      const start = new Date(c.startDate + 'T00:00:00');
+      const end = new Date(start);
+      end.setDate(start.getDate() + c.totalDays - 1);
+      const endK = dateKey(end.getFullYear(), end.getMonth(), end.getDate());
+      return k <= endK;
+    });
     if (activeChs.length > 0) dots.push('c');
     return dots;
   }
@@ -1417,7 +1428,15 @@ function renderCalendar() {
       const dayWorkout = workoutLog[dKey]?.done;
       const dayTodos = todos.filter(t => t.dateKey === dKey);
       const dayExpenses = budget.expenses.filter(e => e.dateKey === dKey);
-      const dayChs = challenges.filter(c => !c.completed && c.startDate <= dKey);
+      const dayChs = challenges.filter(c => {
+        if (!c.startDate || !c.totalDays) return false;
+        if (dKey < c.startDate) return false;
+        const start = new Date(c.startDate + 'T00:00:00');
+        const end = new Date(start);
+        end.setDate(start.getDate() + c.totalDays - 1);
+        const endK = dateKey(end.getFullYear(), end.getMonth(), end.getDate());
+        return dKey <= endK;
+      });
 
       const colorCount = (dayWorkout ? 1 : 0) + (dayTodos.length > 0 ? 1 : 0) + (dayExpenses.length > 0 ? 1 : 0) + (dayChs.length > 0 ? 1 : 0);
 
@@ -1546,18 +1565,30 @@ function getEventsForDay(d) {
     });
   });
 
-  // 챌린지 (진행중인 챌린지의 그 날 상태)
-  challenges.filter(c => !c.completed && c.startDate <= k).forEach(c => {
-    const startDate = new Date(c.startDate);
-    const dayD = new Date(viewYear, viewMonth, d);
-    const dayDiff = Math.floor((dayD - startDate) / (24*60*60*1000)) + 1;
-    if (dayDiff > c.totalDays) return;
+  // 챌린지 (시작일 ~ 종료일 사이, 시간대 안전)
+  challenges.forEach(c => {
+    if (!c.startDate || !c.totalDays) return;
+    if (k < c.startDate) return; // 시작 전
+
+    // 종료일 계산
+    const start = new Date(c.startDate + 'T00:00:00');
+    const end = new Date(start);
+    end.setDate(start.getDate() + c.totalDays - 1);
+    const endK = dateKey(end.getFullYear(), end.getMonth(), end.getDate());
+    if (k > endK) return; // 종료 후
+
+    // 일차 계산 - 문자열 비교로 정확
+    const [sy, sm, sd] = c.startDate.split('-').map(Number);
+    const [ky, km, kd] = k.split('-').map(Number);
+    const startMs = new Date(sy, sm-1, sd).getTime();
+    const kMs = new Date(ky, km-1, kd).getTime();
+    const dayDiff = Math.round((kMs - startMs) / (24*60*60*1000)) + 1;
 
     const check = c.checks?.[k];
     let statusText = '';
-    if (check === true) statusText = '✓ 완료';
+    if (check === true) statusText = '✓ 성공';
     else if (check === 'fail') statusText = '✗ 실패';
-    else if (dayD <= new Date()) statusText = '미체크';
+    else if (k <= todayKey()) statusText = '미체크';
     else statusText = '예정';
 
     events.push({
@@ -3103,15 +3134,21 @@ function renderMoney() {
     e.dateKey && e.dateKey.startsWith(viewMonthPrefix)
   );
 
-  // 투자 카테고리 분류 (자산 종류)
+  // 입금과 지출 분리 (type === 'income' 이면 입금 - 받은 돈)
+  const monthDeposits = viewMonthExpenses.filter(e => e.type === 'income');
+  const monthSpending = viewMonthExpenses.filter(e => e.type !== 'income');
+  const monthDepositTotal = monthDeposits.reduce((s, e) => s + Number(e.amt), 0);
+
+  // 투자 카테고리 분류 (자산 종류) - 지출만 대상
   const investCategories = ['투자', '주식', 'ETF', '펀드', '채권', '금', '달러', '예적금', '현금', '부동산'];
-  const investSpent = viewMonthExpenses
+  const investSpent = monthSpending
     .filter(e => investCategories.includes(e.cat))
     .reduce((s, e) => s + Number(e.amt), 0);
-  // 변동 생활비 사용액 = 전체 지출 - 투자
-  const variableSpent = viewMonthExpenses
+  // 변동 생활비 사용액 = 일반 지출 - 입금(받은 돈)
+  const grossLivingSpent = monthSpending
     .filter(e => !investCategories.includes(e.cat))
     .reduce((s, e) => s + Number(e.amt), 0);
+  const variableSpent = Math.max(0, grossLivingSpent - monthDepositTotal); // 입금받은 만큼 차감, 음수면 0
 
   // 변동 생활비 예산 = (보고 있는 월의) 수입 - 고정지출 - 자산 투자
   const monthlyIncomeNum = getMonthlyIncome(budgetViewYear, budgetViewMonth);
@@ -3272,6 +3309,82 @@ function renderMoney() {
     </div>
   `;
 
+  // 🎯 목표 생활비 카드 (본인이 직접 설정)
+  const monthGoalKey = `${budgetViewYear}-${String(budgetViewMonth + 1).padStart(2, '0')}`;
+  const goalLiving = (settings.livingGoals && settings.livingGoals[monthGoalKey]) || settings.defaultLivingGoal || 0;
+
+  if (isCurrentMonth || goalLiving > 0) {
+    const goalSpent = variableSpent; // 변동 지출만 (투자, 고정 X)
+    const goalRemaining = goalLiving - goalSpent;
+    const goalUsedPct = goalLiving > 0 ? Math.round((goalSpent / goalLiving) * 100) : 0;
+    const goalOver = goalSpent > goalLiving;
+    const goalSavings = Math.max(0, variableBudget - goalLiving); // 비상금 가능 금액
+
+    html += `
+      <div style="background:white; border:0.5px solid var(--border-tertiary); border-radius:14px; padding:14px; margin-bottom:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+          <div style="font-size:13px; font-weight:600; color:var(--text-primary);">
+            🎯 목표 생활비
+          </div>
+          <button onclick="editLivingGoal()" style="border:none; background:var(--bg-secondary); color:var(--text-secondary); padding:4px 10px; border-radius:999px; font-size:10px; font-weight:500; cursor:pointer; font-family:inherit;">
+            ${goalLiving > 0 ? '⚙️ 수정' : '+ 목표 설정'}
+          </button>
+        </div>
+        ${goalLiving > 0 ? `
+          <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px;">
+            <div style="font-size:20px; font-weight:700; color:${goalOver ? 'var(--text-danger)' : 'var(--text-success)'};">
+              ${goalRemaining.toLocaleString()}원<span style="font-size:11px; opacity:0.6; font-weight:500;"> 남음</span>
+            </div>
+            <div style="font-size:11px; color:var(--text-tertiary);">${goalUsedPct}%</div>
+          </div>
+          <div style="font-size:11px; color:var(--text-tertiary); margin-bottom:8px;">
+            목표 ${goalLiving.toLocaleString()}원 중 ${goalSpent.toLocaleString()}원 사용
+          </div>
+          <div style="height:6px; background:rgba(0,0,0,0.08); border-radius:3px; overflow:hidden;">
+            <div style="height:100%; width:${Math.min(goalUsedPct, 100)}%; background:${goalOver ? 'var(--text-danger)' : goalUsedPct > 80 ? 'var(--text-warning)' : 'var(--text-success)'};"></div>
+          </div>
+          ${goalOver ? `
+            <div style="margin-top:8px; padding:8px 10px; background:var(--bg-danger); border-radius:8px; font-size:11px; color:var(--text-danger);">
+              ⚠️ 목표 초과! <b>${(goalSpent - goalLiving).toLocaleString()}원</b> 초과 사용
+            </div>
+          ` : isCurrentMonth ? `
+            <div style="margin-top:8px; font-size:10px; color:var(--text-tertiary);">
+              남은 ${daysLeft}일 · 하루 ${daysLeft > 0 ? Math.round(goalRemaining / daysLeft).toLocaleString() : 0}원 가능
+            </div>
+          ` : ''}
+        ` : `
+          <div style="font-size:11px; color:var(--text-tertiary); line-height:1.5; padding: 4px 0;">
+            본인이 자유롭게 쓸 금액 목표를 설정하면 절약한 만큼 비상금으로 모을 수 있어요.
+          </div>
+        `}
+      </div>
+    `;
+
+    // 💰 비상금 가능 금액 카드
+    if (goalLiving > 0 && goalSavings > 0) {
+      const actualSavingsIfGoalMet = Math.max(0, goalRemaining); // 목표 안 넘기면 추가로 절약되는 돈
+      const totalPotentialSavings = goalSavings + actualSavingsIfGoalMet;
+
+      html += `
+        <div style="background:linear-gradient(135deg, #FFF7E6 0%, #FFEFD5 100%); border:0.5px solid #F4A261; border-radius:14px; padding:14px; margin-bottom:12px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <div style="font-size:12px; font-weight:600; color:#B45309;">
+              💰 비상금 적립 가능
+            </div>
+            <div style="font-size:10px; color:#B45309; opacity:0.7;">목표 절약 시</div>
+          </div>
+          <div style="font-size:22px; font-weight:700; color:#B45309;">
+            ${totalPotentialSavings.toLocaleString()}원
+          </div>
+          <div style="font-size:10px; color:#8B5A1A; margin-top:6px; line-height:1.5;">
+            <div>📌 기본 여유 (변동 - 목표): <b>${goalSavings.toLocaleString()}원</b></div>
+            ${actualSavingsIfGoalMet > 0 && isCurrentMonth ? `<div>✨ 현재 페이스로 추가 절약: <b>${actualSavingsIfGoalMet.toLocaleString()}원</b></div>` : ''}
+          </div>
+        </div>
+      `;
+    }
+  }
+
   if (variableSpent > 0 && isCurrentMonth) {
     if (isOverPace) {
       html += `<div style="padding:12px 14px; background:var(--bg-warning); border-radius:var(--radius-md); margin-bottom:14px; display:flex; gap:8px; align-items:flex-start;">
@@ -3311,16 +3424,16 @@ function renderMoney() {
     </div>
   </div>`;
 
-  // 보고 있는 월의 지출
+  // 보고 있는 월의 내역 (지출 + 입금)
   const recentExp = isCurrentMonth
     ? viewMonthExpenses.slice(-10).reverse()
     : viewMonthExpenses.slice().reverse();
-  html += `<div style="font-size:14px; font-weight:600; margin: 18px 0 8px;">${isCurrentMonth ? '최근 변동 지출' : `${monthLabel} 전체 지출 (${viewMonthExpenses.length}건)`}</div>`;
+  html += `<div style="font-size:14px; font-weight:600; margin: 18px 0 8px;">${isCurrentMonth ? '최근 내역' : `${monthLabel} 전체 내역 (${viewMonthExpenses.length}건)`}</div>`;
   if (recentExp.length === 0) {
     html += `<div class="empty-state" style="padding:30px 20px;">
       <i class="ti ti-receipt"></i>
-      ${isCurrentMonth ? '아직 입력된 지출이 없어요' : '이 달엔 입력된 지출이 없어요'}<br>
-      ${isCurrentMonth ? '<span style="font-size:11px; opacity:0.7;">+ 버튼으로 지출을 추가하세요</span>' : ''}
+      ${isCurrentMonth ? '아직 입력된 내역이 없어요' : '이 달엔 입력된 내역이 없어요'}<br>
+      ${isCurrentMonth ? '<span style="font-size:11px; opacity:0.7;">+ 버튼으로 지출/입금을 추가하세요</span>' : ''}
     </div>`;
   } else {
     html += `<div class="card" style="padding:6px 14px;">`;
@@ -3333,12 +3446,16 @@ function renderMoney() {
       } else if (e.date) {
         dateStr = `${currentMonth+1}/${e.date}`;
       }
+      const isDeposit = e.type === 'income';
+      const sign = isDeposit ? '+' : '-';
+      const amtColor = isDeposit ? 'var(--text-success)' : 'var(--text-primary)';
+      const icon = isDeposit ? '💵' : '';
       html += `<div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:0.5px solid var(--border-tertiary); font-size:13px;">
         <div style="flex:1; min-width:0;">
-          <div style="font-weight:500;">${e.memo || e.cat}</div>
+          <div style="font-weight:500;">${icon} ${e.memo || e.cat}</div>
           <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">${e.cat} · ${dateStr}</div>
         </div>
-        <span style="font-weight:600;">-${Number(e.amt).toLocaleString()}원</span>
+        <span style="font-weight:600; color:${amtColor};">${sign}${Number(e.amt).toLocaleString()}원</span>
       </div>`;
     });
     html += `</div>`;
@@ -4219,6 +4336,87 @@ function runAllAutoBuys() {
 }
 
 // 월 수입 빠른 편집
+// 🎯 목표 생활비 편집
+function editLivingGoal() {
+  const monthLabel = `${budgetViewYear}년 ${budgetViewMonth + 1}월`;
+  const goalKey = `${budgetViewYear}-${String(budgetViewMonth + 1).padStart(2, '0')}`;
+  const current = (settings.livingGoals && settings.livingGoals[goalKey]) || settings.defaultLivingGoal || 0;
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">취소</button>
+        <h2>🎯 목표 생활비</h2>
+        <button class="modal-save" onclick="saveLivingGoal()">저장</button>
+      </div>
+
+      <div style="padding:12px 14px; background:var(--bg-info); border-radius:var(--radius-md); margin-bottom:14px; font-size:11px; color:var(--text-info); line-height:1.5;">
+        💡 본인이 한 달 동안 <b>자유롭게 쓸 수 있는 금액</b> 목표를 정해주세요.<br>
+        고정지출(월세 등)과 자산투자는 <b>제외</b>됩니다.<br>
+        목표 안 넘으면 → <b>비상금</b>으로 세이브!
+      </div>
+
+      <div class="amount-display">
+        <div class="label">${monthLabel} 목표 생활비</div>
+        <div class="num"><span id="goal-val">${current.toLocaleString()}</span><span>원</span></div>
+      </div>
+
+      <div class="field">
+        <input type="number" id="goal-input" placeholder="예: 500000" value="${current || ''}" autofocus
+          oninput="document.getElementById('goal-val').textContent = (Number(this.value) || 0).toLocaleString();" />
+      </div>
+
+      <div class="field">
+        <label style="display:flex; align-items:center; gap:10px; cursor:pointer; font-size:12px;">
+          <input type="checkbox" id="goal-default" ${current && current === settings.defaultLivingGoal ? 'checked' : ''} style="width:18px; height:18px; cursor:pointer;" />
+          매월 기본 목표로 저장
+        </label>
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px; padding-left:28px;">
+          체크하면 다음 달부터 자동으로 같은 목표 적용
+        </div>
+      </div>
+
+      <div style="display:flex; gap:6px; margin-top:14px;">
+        <button onclick="clearLivingGoal()" style="flex:1; padding:10px; border:0.5px solid var(--border-tertiary); background:var(--bg-secondary); border-radius:var(--radius-md); font-size:12px; cursor:pointer; font-family:inherit;">목표 삭제</button>
+      </div>
+    </div>
+  `;
+  modal.classList.add('show');
+}
+
+function saveLivingGoal() {
+  const val = Number(document.getElementById('goal-input').value) || 0;
+  if (val <= 0) {
+    showToast('금액을 입력해주세요');
+    return;
+  }
+  const setAsDefault = document.getElementById('goal-default').checked;
+
+  if (!settings.livingGoals) settings.livingGoals = {};
+  const goalKey = `${budgetViewYear}-${String(budgetViewMonth + 1).padStart(2, '0')}`;
+  settings.livingGoals[goalKey] = val;
+
+  if (setAsDefault) {
+    settings.defaultLivingGoal = val;
+  }
+
+  saveData();
+  showToast(`🎯 목표 생활비 ${val.toLocaleString()}원 저장됨`);
+  closeModal();
+  renderMoney();
+}
+
+function clearLivingGoal() {
+  if (!confirm('이번 달 목표 생활비를 삭제할까요?')) return;
+  const goalKey = `${budgetViewYear}-${String(budgetViewMonth + 1).padStart(2, '0')}`;
+  if (settings.livingGoals) delete settings.livingGoals[goalKey];
+  saveData();
+  showToast('목표 삭제됨');
+  closeModal();
+  renderMoney();
+}
+
 function editMonthlyIncome() {
   const monthLabel = `${budgetViewYear}년 ${budgetViewMonth + 1}월`;
   const current = getMonthlyIncome(budgetViewYear, budgetViewMonth);
@@ -4289,8 +4487,18 @@ function openExpenseModal(forDateKey) {
       <div class="modal-handle"></div>
       <div class="modal-header">
         <button class="modal-cancel" onclick="closeModal()">취소</button>
-        <h2>지출 입력</h2>
+        <h2>가계부 입력</h2>
         <button class="modal-save" onclick="saveExpense()">저장</button>
+      </div>
+
+      <!-- 지출/입금 토글 -->
+      <div style="display:flex; gap:6px; padding:3px; background:var(--bg-secondary); border-radius:10px; margin-bottom:14px;">
+        <button id="type-expense" class="active" onclick="setExpType('expense')" style="flex:1; padding:10px; border:none; background:white; color:var(--text-danger); font-size:13px; font-weight:600; border-radius:8px; cursor:pointer; font-family:inherit; box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+          💸 지출
+        </button>
+        <button id="type-income" onclick="setExpType('income')" style="flex:1; padding:10px; border:none; background:transparent; color:var(--text-secondary); font-size:13px; font-weight:600; border-radius:8px; cursor:pointer; font-family:inherit;">
+          💵 입금
+        </button>
       </div>
 
       <div class="amount-display">
@@ -4308,7 +4516,25 @@ function openExpenseModal(forDateKey) {
         <input type="date" id="exp-date" value="${defaultDate}" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit;" />
       </div>
 
-      <div class="field">
+      <!-- 입금용 카테고리 (기본 숨김) - 받은 돈 -->
+      <div class="field" id="cat-income-section" style="display:none;">
+        <div class="field-label">입금 항목</div>
+        <div class="cat-grid" id="cat-grid-income">
+          <button class="cat-btn active" data-c="더치페이"><i class="ti ti-users"></i><span>더치페이</span></button>
+          <button class="cat-btn" data-c="송금받음"><i class="ti ti-arrow-down-circle"></i><span>송금</span></button>
+          <button class="cat-btn" data-c="환급"><i class="ti ti-rotate"></i><span>환급</span></button>
+          <button class="cat-btn" data-c="용돈"><i class="ti ti-gift"></i><span>용돈</span></button>
+          <button class="cat-btn" data-c="중고판매"><i class="ti ti-tag"></i><span>중고판매</span></button>
+          <button class="cat-btn" data-c="기타입금"><i class="ti ti-dots"></i><span>기타</span></button>
+        </div>
+        <div style="margin-top:10px; padding:10px 12px; background:var(--bg-info); border-radius:8px; font-size:11px; color:var(--text-info); line-height:1.5;">
+          💡 더치페이로 미리 내고 받은 돈, 친구가 송금해준 돈 등.<br>
+          <span style="opacity:0.8;">월급 같은 정기 수입은 가계부 상단 <b>수입 카드</b>에서 입력하세요.</span>
+        </div>
+      </div>
+
+      <!-- 지출용 카테고리 -->
+      <div class="field" id="cat-expense-section">
         <div class="field-label">카테고리</div>
         <div style="margin-bottom:8px; font-size:10px; color:var(--text-tertiary); font-weight:500;">생활비</div>
         <div class="cat-grid" id="cat-grid">
@@ -4424,6 +4650,13 @@ function openExpenseModal(forDateKey) {
     document.querySelectorAll('#cat-grid-invest .cat-btn').forEach(b => {
       b.addEventListener('click', () => selectCat(b));
     });
+    // 수입 카테고리 핸들러
+    document.querySelectorAll('#cat-grid-income .cat-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('#cat-grid-income .cat-btn').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+      });
+    });
 
     // 금액 입력 시 → 수량과 함께 매입가 자동 계산
     function updateInvestPrice() {
@@ -4447,14 +4680,72 @@ function openExpenseModal(forDateKey) {
   }, 50);
 }
 
+// 수입/지출 토글
+function setExpType(type) {
+  const expBtn = document.getElementById('type-expense');
+  const incBtn = document.getElementById('type-income');
+  const expSection = document.getElementById('cat-expense-section');
+  const incSection = document.getElementById('cat-income-section');
+  const investExtra = document.getElementById('invest-extra-fields');
+
+  if (type === 'income') {
+    expBtn.style.background = 'transparent';
+    expBtn.style.color = 'var(--text-secondary)';
+    expBtn.style.boxShadow = 'none';
+    expBtn.classList.remove('active');
+    incBtn.style.background = 'white';
+    incBtn.style.color = 'var(--text-success)';
+    incBtn.style.boxShadow = '0 1px 3px rgba(0,0,0,0.08)';
+    incBtn.classList.add('active');
+    expSection.style.display = 'none';
+    incSection.style.display = 'block';
+    if (investExtra) investExtra.style.display = 'none';
+  } else {
+    incBtn.style.background = 'transparent';
+    incBtn.style.color = 'var(--text-secondary)';
+    incBtn.style.boxShadow = 'none';
+    incBtn.classList.remove('active');
+    expBtn.style.background = 'white';
+    expBtn.style.color = 'var(--text-danger)';
+    expBtn.style.boxShadow = '0 1px 3px rgba(0,0,0,0.08)';
+    expBtn.classList.add('active');
+    expSection.style.display = 'block';
+    incSection.style.display = 'none';
+  }
+}
+
 function saveExpense() {
   const amt = Number(document.getElementById('amt-input').value);
   const memo = document.getElementById('memo').value.trim();
+  const dateKeyVal = document.getElementById('exp-date').value || todayKey();
+  if (!amt) { showToast('금액을 입력해주세요'); return; }
+
+  // 수입/지출 구분
+  const isIncome = document.getElementById('type-income')?.classList.contains('active');
+
+  if (isIncome) {
+    // 수입 처리
+    const incomeBtn = document.querySelector('#cat-grid-income .cat-btn.active');
+    const cat = incomeBtn?.dataset.c || '기타수입';
+    const [y, m, d] = dateKeyVal.split('-').map(Number);
+    budget.expenses.push({
+      id: Date.now(),
+      amt, cat, memo,
+      dateKey: dateKeyVal,
+      date: d,
+      type: 'income', // ← 수입 표시
+    });
+    saveData();
+    showToast(`💵 입금 +${amt.toLocaleString()}원 저장됨`);
+    closeModal();
+    renderMoney();
+    return;
+  }
+
+  // 기존 지출 처리
   // 생활비 또는 투자 카테고리 중 활성화된 것
   const activeBtn = document.querySelector('#cat-grid .cat-btn.active, #cat-grid-invest .cat-btn.active');
   const cat = activeBtn?.dataset.c || '기타';
-  const dateKeyVal = document.getElementById('exp-date').value || todayKey();
-  if (!amt) { showToast('금액을 입력해주세요'); return; }
 
   // dateKey 기반으로 저장
   const [y, m, d] = dateKeyVal.split('-').map(Number);
@@ -4463,6 +4754,7 @@ function saveExpense() {
     amt, cat, memo,
     dateKey: dateKeyVal,
     date: d,
+    type: 'expense',
   });
 
   // 투자 카테고리면 → 자산 자동 추가/업데이트
