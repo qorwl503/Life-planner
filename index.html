@@ -3106,7 +3106,7 @@ function renderMoney() {
   header.innerHTML = `
     <h1>가계부</h1>
     <div class="header-actions">
-      <button onclick="openBudgetModal()" aria-label="예산"><i class="ti ti-target"></i></button>
+      <button onclick="editLivingGoal()" aria-label="목표 생활비"><i class="ti ti-target"></i></button>
       <button onclick="openExpenseModal()" aria-label="추가"><i class="ti ti-plus"></i></button>
     </div>
   `;
@@ -3497,7 +3497,10 @@ function renderMoney() {
   const allMonthExp = viewMonthExpenses.slice().sort((a, b) => (b.dateKey || '').localeCompare(a.dateKey || ''));
   html += `<div style="display:flex; justify-content:space-between; align-items:center; margin: 18px 0 8px;">
     <span style="font-size:14px; font-weight:600;">${isCurrentMonth ? '내역' : `${monthLabel} 내역`} (${allMonthExp.length}건)</span>
-    ${allMonthExp.length > 10 ? `<span style="font-size:10px; color:var(--text-tertiary);">최신순</span>` : ''}
+    <div style="display:flex; align-items:center; gap:8px;">
+      ${allMonthExp.length > 10 ? `<span style="font-size:10px; color:var(--text-tertiary);">최신순</span>` : ''}
+      <button onclick="openExpenseModal()" style="border:none; background:var(--bg-info); color:var(--text-info); padding:5px 12px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">+ 추가</button>
+    </div>
   </div>`;
 
   if (allMonthExp.length === 0) {
@@ -3978,38 +3981,8 @@ function archiveLastMonthIfNeeded() {
 archiveLastMonthIfNeeded();
 
 function openBudgetModal() {
-  modal.innerHTML = `
-    <div class="modal">
-      <div class="modal-handle"></div>
-      <div class="modal-header">
-        <button class="modal-cancel" onclick="closeModal()">취소</button>
-        <h2>한달 예산</h2>
-        <button class="modal-save" onclick="saveBudget()">저장</button>
-      </div>
-
-      <div class="amount-display">
-        <div class="label">한달 목표 생활비</div>
-        <div class="num"><span id="bg-val">${budget.total.toLocaleString()}</span><span>원</span></div>
-      </div>
-
-      <div class="field">
-        <input type="number" id="bg-input" value="${budget.total}" oninput="document.getElementById('bg-val').textContent = (Number(this.value) || 0).toLocaleString();" />
-      </div>
-
-      <div style="padding:12px; background:var(--bg-secondary); border-radius:var(--radius-md); font-size:11px; color:var(--text-secondary); line-height:1.6;">
-        한달 동안 총 얼마를 쓸지 정하는 금액이에요. 고정지출(월세, 공과금)을 빼면 자유롭게 쓸 수 있는 변동 생활비가 계산됩니다.
-      </div>
-
-      <div style="font-size:11px; color:var(--text-secondary); margin: 14px 0 8px;">참고 — 빠른 설정</div>
-      <div style="display:flex; gap:6px;">
-        <button onclick="setBg(1000000)" class="chip" style="flex:1; padding:10px; font-size:11px;">100만</button>
-        <button onclick="setBg(1500000)" class="chip" style="flex:1; padding:10px; font-size:11px;">150만</button>
-        <button onclick="setBg(2000000)" class="chip" style="flex:1; padding:10px; font-size:11px;">200만</button>
-        <button onclick="setBg(3000000)" class="chip" style="flex:1; padding:10px; font-size:11px;">300만</button>
-      </div>
-    </div>
-  `;
-  modal.classList.add('show');
+  // 통일: 목표 생활비 모달로 리다이렉트
+  editLivingGoal();
 }
 
 function setBg(v) {
