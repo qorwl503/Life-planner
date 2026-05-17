@@ -38,10 +38,11 @@ const firebaseConfig = {
   const auth = getAuth(app);
   const db = getFirestore(app);
 
+  // Firebase 키를 YouTube API 키로 직접 사용 (코드 박힌 공개 키, Firebase 프로젝트에 YouTube API 활성화 필요)
+  window.YOUTUBE_API_KEY = firebaseConfig.apiKey;
+
+  // Gemini AI API 키 — 사용자가 직접 입력 (localStorage)
   window.GEMINI_API_KEY = localStorage.getItem('gemini_api_key') || null;
-  window.YOUTUBE_API_KEY = window.GEMINI_API_KEY;  
-  // Gemini AI API 키 — 사용자가 직접 입력 (localStorage + Firebase)
-  // GitHub에 키 노출 방지
 
   // 오프라인 지원
   enableIndexedDbPersistence(db).catch(() => {});
@@ -52,9 +53,6 @@ const firebaseConfig = {
     signOut, onAuthStateChanged, sendPasswordResetEmail,
     doc, setDoc, getDoc
   };
-  window.YOUTUBE_API_KEY = YOUTUBE_API_KEY;
-  // GEMINI_API_KEY는 사용자가 설정에서 입력
-  window.GEMINI_API_KEY = localStorage.getItem('gemini_api_key') || null;
 
   // Firebase 준비 완료 알림
   window.dispatchEvent(new Event('firebase-ready'));
