@@ -3425,41 +3425,144 @@ function renderMoney() {
     </div>
   </div>`;
 
-  // 보고 있는 월의 내역 (지출 + 입금)
-  const recentExp = isCurrentMonth
-    ? viewMonthExpenses.slice(-10).reverse()
-    : viewMonthExpenses.slice().reverse();
-  html += `<div style="font-size:14px; font-weight:600; margin: 18px 0 8px;">${isCurrentMonth ? '최근 내역' : `${monthLabel} 전체 내역 (${viewMonthExpenses.length}건)`}</div>`;
-  if (recentExp.length === 0) {
+  // ===== 카테고리별 도넛 차트 (지출만) =====
+  const expensesOnly = viewMonthExpenses.filter(e => e.type !== 'income');
+  if (expensesOnly.length > 0) {
+    // 카테고리별 합계
+    const catTotals = {};
+    expensesOnly.forEach(e => {
+      catTotals[e.cat] = (catTotals[e.cat] || 0) + Number(e.amt);
+    });
+    const totalExp = Object.values(catTotals).reduce((s, v) => s + v, 0);
+    const catEntries = Object.entries(catTotals).sort((a, b) => b[1] - a[1]);
+
+    // 카테고리별 색상
+    const catColors = ['#FF6B6B', '#4ECDC4', '#FFD93D', '#6BCF7F', '#A78BFA', '#FF8E72', '#54A0FF', '#FB7185', '#34D399', '#FBBF24', '#A3A3A3'];
+
+    // SVG 도넛 차트
+    const size = 140;
+    const cx = size / 2;
+    const cy = size / 2;
+    const r = 50;
+    const innerR = 32;
+
+    let cumPct = 0;
+    let donutPaths = '';
+    catEntries.forEach(([cat, amt], i) => {
+      const pct = (amt / totalExp) * 100;
+      const startAngle = (cumPct / 100) * 2 * Math.PI - Math.PI / 2;
+      const endAngle = ((cumPct + pct) / 100) * 2 * Math.PI - Math.PI / 2;
+      cumPct += pct;
+
+      const x1 = cx + r * Math.cos(startAngle);
+      const y1 = cy + r * Math.sin(startAngle);
+      const x2 = cx + r * Math.cos(endAngle);
+      const y2 = cy + r * Math.sin(endAngle);
+      const ix2 = cx + innerR * Math.cos(endAngle);
+      const iy2 = cy + innerR * Math.sin(endAngle);
+      const ix1 = cx + innerR * Math.cos(startAngle);
+      const iy1 = cy + innerR * Math.sin(startAngle);
+      const largeArc = pct > 50 ? 1 : 0;
+
+      const color = catColors[i % catColors.length];
+      donutPaths += `<path d="M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2} L ${ix2} ${iy2} A ${innerR} ${innerR} 0 ${largeArc} 0 ${ix1} ${iy1} Z" fill="${color}" />`;
+    });
+
+    html += `
+      <div style="margin: 18px 0 14px; padding:14px; background:var(--bg-secondary); border-radius:14px;">
+        <div style="font-size:13px; font-weight:600; margin-bottom:10px;">📊 카테고리별 비율</div>
+        <div style="display:flex; align-items:center; gap:14px;">
+          <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="flex-shrink:0;">
+            ${donutPaths}
+            <text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="9" fill="var(--text-tertiary)">총 지출</text>
+            <text x="${cx}" y="${cy + 8}" text-anchor="middle" font-size="11" font-weight="600" fill="var(--text-primary)">${(totalExp / 10000).toFixed(0)}만</text>
+          </svg>
+          <div style="flex:1; min-width:0; max-height:140px; overflow-y:auto;">
+            ${catEntries.slice(0, 8).map(([cat, amt], i) => {
+              const pct = (amt / totalExp) * 100;
+              return `<div style="display:flex; align-items:center; gap:6px; margin-bottom:5px; font-size:11px;">
+                <div style="width:10px; height:10px; border-radius:2px; background:${catColors[i % catColors.length]}; flex-shrink:0;"></div>
+                <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${cat}</span>
+                <span style="font-weight:600;">${pct.toFixed(0)}%</span>
+                <span style="color:var(--text-tertiary); font-size:10px;">${(amt / 10000).toFixed(0)}만</span>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // ===== 날짜별 내역 그룹 (모든 내역 보기) =====
+  const allMonthExp = viewMonthExpenses.slice().sort((a, b) => (b.dateKey || '').localeCompare(a.dateKey || ''));
+  html += `<div style="display:flex; justify-content:space-between; align-items:center; margin: 18px 0 8px;">
+    <span style="font-size:14px; font-weight:600;">${isCurrentMonth ? '내역' : `${monthLabel} 내역`} (${allMonthExp.length}건)</span>
+    ${allMonthExp.length > 10 ? `<span style="font-size:10px; color:var(--text-tertiary);">최신순</span>` : ''}
+  </div>`;
+
+  if (allMonthExp.length === 0) {
     html += `<div class="empty-state" style="padding:30px 20px;">
       <i class="ti ti-receipt"></i>
       ${isCurrentMonth ? '아직 입력된 내역이 없어요' : '이 달엔 입력된 내역이 없어요'}<br>
       ${isCurrentMonth ? '<span style="font-size:11px; opacity:0.7;">+ 버튼으로 지출/입금을 추가하세요</span>' : ''}
     </div>`;
   } else {
-    html += `<div class="card" style="padding:6px 14px;">`;
-    recentExp.forEach(e => {
-      // dateKey 우선, 옛 date(일자만) 호환
-      let dateStr = '';
-      if (e.dateKey) {
-        const [, m, d] = e.dateKey.split('-');
-        dateStr = `${parseInt(m)}/${parseInt(d)}`;
-      } else if (e.date) {
-        dateStr = `${currentMonth+1}/${e.date}`;
-      }
-      const isDeposit = e.type === 'income';
-      const sign = isDeposit ? '+' : '-';
-      const amtColor = isDeposit ? 'var(--text-success)' : 'var(--text-primary)';
-      const icon = isDeposit ? '💵' : '';
-      html += `<div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:0.5px solid var(--border-tertiary); font-size:13px;">
-        <div style="flex:1; min-width:0;">
-          <div style="font-weight:500;">${icon} ${e.memo || e.cat}</div>
-          <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">${e.cat} · ${dateStr}</div>
-        </div>
-        <span style="font-weight:600; color:${amtColor};">${sign}${Number(e.amt).toLocaleString()}원</span>
-      </div>`;
+    // 날짜별 그룹화
+    const grouped = {};
+    allMonthExp.forEach(e => {
+      const k = e.dateKey || `unknown-${e.date}`;
+      if (!grouped[k]) grouped[k] = [];
+      grouped[k].push(e);
     });
-    html += `</div>`;
+    const sortedKeys = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
+
+    sortedKeys.forEach(k => {
+      const dayItems = grouped[k];
+      const daySpent = dayItems.filter(e => e.type !== 'income').reduce((s, e) => s + Number(e.amt), 0);
+      const dayDeposit = dayItems.filter(e => e.type === 'income').reduce((s, e) => s + Number(e.amt), 0);
+
+      // 날짜 라벨
+      let dateLabel = k;
+      if (k.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        const [y, m, d] = k.split('-').map(Number);
+        const dt = new Date(y, m - 1, d);
+        const dow = ['일', '월', '화', '수', '목', '금', '토'][dt.getDay()];
+        const todayK = todayKey();
+        if (k === todayK) dateLabel = `오늘 (${m}/${d} ${dow})`;
+        else {
+          const yest = new Date(); yest.setDate(yest.getDate() - 1);
+          const yestK = dateKey(yest.getFullYear(), yest.getMonth(), yest.getDate());
+          if (k === yestK) dateLabel = `어제 (${m}/${d} ${dow})`;
+          else dateLabel = `${m}/${d} (${dow})`;
+        }
+      }
+
+      html += `<div style="margin-bottom:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:baseline; padding:6px 4px; font-size:11px;">
+          <span style="font-weight:600; color:var(--text-secondary);">${dateLabel}</span>
+          <span style="color:var(--text-tertiary);">
+            ${daySpent > 0 ? `<span style="color:var(--text-primary); font-weight:600;">-${daySpent.toLocaleString()}원</span>` : ''}
+            ${dayDeposit > 0 ? ` <span style="color:var(--text-success); font-weight:600;">+${dayDeposit.toLocaleString()}원</span>` : ''}
+          </span>
+        </div>
+        <div class="card" style="padding:0 14px;">`;
+
+      dayItems.forEach((e, idx) => {
+        const isDeposit = e.type === 'income';
+        const sign = isDeposit ? '+' : '-';
+        const amtColor = isDeposit ? 'var(--text-success)' : 'var(--text-primary)';
+        const icon = isDeposit ? '💵' : '';
+        const isLast = idx === dayItems.length - 1;
+        html += `<div onclick="editExpense(${e.id})" style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; ${!isLast ? 'border-bottom:0.5px solid var(--border-tertiary);' : ''} font-size:13px; cursor:pointer;">
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:500;">${icon} ${e.memo || e.cat}</div>
+            <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">${e.cat}</div>
+          </div>
+          <span style="font-weight:600; color:${amtColor};">${sign}${Number(e.amt).toLocaleString()}원</span>
+        </div>`;
+      });
+      html += `</div></div>`;
+    });
   }
 
   screen.innerHTML = html;
@@ -4715,6 +4818,131 @@ function setExpType(type) {
   }
 }
 
+// 지출/입금 수정 모달
+function editExpense(id) {
+  const e = budget.expenses.find(x => x.id === id);
+  if (!e) return;
+
+  const isDeposit = e.type === 'income';
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">취소</button>
+        <h2>${isDeposit ? '💵 입금' : '💸 지출'} 수정</h2>
+        <button class="modal-save" onclick="saveExpenseEdit(${id})">저장</button>
+      </div>
+
+      <div class="amount-display">
+        <div class="label">${isDeposit ? '입금 금액' : '지출 금액'}</div>
+        <div class="num"><span id="edit-amt-val">${Number(e.amt).toLocaleString()}</span><span>원</span></div>
+      </div>
+
+      <div class="field">
+        <input type="number" id="edit-amt" value="${e.amt}" autofocus
+          oninput="document.getElementById('edit-amt-val').textContent = (Number(this.value) || 0).toLocaleString();" />
+      </div>
+
+      <div class="field">
+        <div class="field-label">📅 날짜</div>
+        <input type="date" id="edit-date" value="${e.dateKey || ''}" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit;" />
+      </div>
+
+      <div class="field">
+        <div class="field-label">카테고리</div>
+        <div style="padding:11px 12px; background:var(--bg-secondary); border-radius:8px; font-size:13px;">${e.cat}</div>
+      </div>
+
+      <div class="field">
+        <div class="field-label">메모</div>
+        <input type="text" id="edit-memo" placeholder="(선택)" value="${e.memo || ''}" />
+      </div>
+
+      <div style="display:flex; gap:6px; margin-top:14px;">
+        <button onclick="deleteExpense(${id})" style="flex:1; padding:10px; border:0.5px solid var(--text-danger); background:transparent; color:var(--text-danger); border-radius:var(--radius-md); font-size:12px; cursor:pointer; font-family:inherit;">🗑️ 삭제</button>
+      </div>
+    </div>
+  `;
+  modal.classList.add('show');
+}
+
+function saveExpenseEdit(id) {
+  const e = budget.expenses.find(x => x.id === id);
+  if (!e) return;
+
+  const newAmt = Number(document.getElementById('edit-amt').value);
+  const newDate = document.getElementById('edit-date').value;
+  const newMemo = document.getElementById('edit-memo').value.trim();
+
+  if (!newAmt) { showToast('금액을 입력해주세요'); return; }
+
+  e.amt = newAmt;
+  if (newDate) {
+    e.dateKey = newDate;
+    const [, , d] = newDate.split('-');
+    e.date = Number(d);
+  }
+  e.memo = newMemo;
+
+  saveData();
+  showToast('수정됨');
+  closeModal();
+  renderMoney();
+}
+
+function deleteExpense(id) {
+  const e = budget.expenses.find(x => x.id === id);
+  if (!e) return;
+
+  // 투자 카테고리면 → 연결된 자산도 함께 처리
+  const investCategories = ['투자', '주식', 'ETF', '펀드', '채권', '금', '달러', '예적금', '현금', '부동산'];
+  const isInvestExpense = e.type !== 'income' && investCategories.includes(e.cat);
+
+  // 연결된 자산 찾기 - linkedAssetName 또는 memo
+  let linkedAsset = null;
+  if (isInvestExpense) {
+    const key = e.linkedAssetName || e.memo;
+    if (key) {
+      linkedAsset = assets.find(a => a.name === key && a.type === e.cat);
+    }
+  }
+
+  // 같은 자산에 연결된 다른 지출이 더 있는지 확인
+  let otherExpensesForAsset = 0;
+  if (linkedAsset) {
+    const key = e.linkedAssetName || e.memo;
+    otherExpensesForAsset = budget.expenses.filter(x =>
+      x.id !== id && x.type !== 'income' &&
+      investCategories.includes(x.cat) &&
+      ((x.linkedAssetName === key) || (x.memo === key && !x.linkedAssetName))
+    ).length;
+  }
+
+  let msg = `"${e.memo || e.cat}" ${Number(e.amt).toLocaleString()}원을 삭제할까요?`;
+  let willDeleteAsset = false;
+  if (linkedAsset && otherExpensesForAsset === 0) {
+    msg += `\n\n⚠️ 마지막 매수 기록입니다. 연결된 자산 "${linkedAsset.name}" (${linkedAsset.type})도 함께 삭제됩니다.`;
+    willDeleteAsset = true;
+  } else if (linkedAsset && otherExpensesForAsset > 0) {
+    msg += `\n\n(자산 "${linkedAsset.name}"는 다른 매수 기록이 ${otherExpensesForAsset}개 남아있어 유지됩니다)`;
+  }
+
+  if (!confirm(msg)) return;
+
+  // 지출 삭제
+  budget.expenses = budget.expenses.filter(x => x.id !== id);
+
+  // 마지막 매수 기록이면 → 자산도 삭제
+  if (willDeleteAsset) {
+    assets = assets.filter(a => a.id !== linkedAsset.id);
+  }
+
+  saveData();
+  showToast(willDeleteAsset ? `삭제됨 (자산 "${linkedAsset.name}" 포함)` : '삭제됨');
+  closeModal();
+  renderMoney();
+}
+
 function saveExpense() {
   const amt = Number(document.getElementById('amt-input').value);
   const memo = document.getElementById('memo').value.trim();
@@ -4764,6 +4992,17 @@ function saveExpense() {
   if (investCats.includes(cat)) {
     const invName = document.getElementById('inv-name')?.value?.trim() || '';
     if (invName) {
+      // 메모가 비어있으면 자산 이름을 메모로 (양방향 동기화 키)
+      const lastExp = budget.expenses[budget.expenses.length - 1];
+      if (lastExp && !lastExp.memo) {
+        lastExp.memo = invName;
+      } else if (lastExp && lastExp.memo && !lastExp.memo.includes(invName)) {
+        // 메모 다르면 자산 이름 정보 추가
+        lastExp.linkedAssetName = invName;
+      } else {
+        lastExp.linkedAssetName = invName;
+      }
+
       // 자산 종류에 맞게 수량/가격 처리
       let qty = 1, price = amt, ticker = '';
       if (['주식','ETF','펀드','채권','예적금','부동산'].includes(cat)) {
@@ -8890,13 +9129,50 @@ function updateAsset(id) {
 }
 
 function deleteAsset(id) {
-  if (confirm('이 자산을 삭제할까요?')) {
-    assets = assets.filter(x => x.id !== id);
-    saveData();
-    closeModal();
-    showToast('삭제됨');
-    renderAsset();
+  const asset = assets.find(x => x.id === id);
+  if (!asset) return;
+
+  // 연결된 자동매수 고정지출 찾기
+  const linkedFixed = (budget.fixed || []).filter(f =>
+    f.autoBuy && f.assetInfo && f.assetInfo.name === asset.name && f.assetInfo.type === asset.type
+  );
+
+  // 연결된 자산 투자 지출 찾기 - linkedAssetName 또는 memo
+  const linkedExpenses = (budget.expenses || []).filter(e =>
+    e.type !== 'income' && e.cat === asset.type &&
+    (e.linkedAssetName === asset.name || (!e.linkedAssetName && e.memo === asset.name))
+  );
+
+  let msg = `"${asset.name}" 자산을 삭제할까요?`;
+  if (linkedFixed.length > 0 || linkedExpenses.length > 0) {
+    msg += `\n\n연결된 항목:`;
+    if (linkedFixed.length > 0) msg += `\n- 자동매수 ${linkedFixed.length}개`;
+    if (linkedExpenses.length > 0) msg += `\n- 매수 기록 ${linkedExpenses.length}개`;
+    msg += `\n\n이 항목도 함께 삭제됩니다.`;
   }
+
+  if (!confirm(msg)) return;
+
+  // 자산 삭제
+  assets = assets.filter(x => x.id !== id);
+
+  // 연결된 자동매수 삭제
+  if (linkedFixed.length > 0) {
+    budget.fixed = budget.fixed.filter(f =>
+      !(f.autoBuy && f.assetInfo && f.assetInfo.name === asset.name && f.assetInfo.type === asset.type)
+    );
+  }
+
+  // 연결된 지출 삭제
+  if (linkedExpenses.length > 0) {
+    const expIds = new Set(linkedExpenses.map(e => e.id));
+    budget.expenses = budget.expenses.filter(e => !expIds.has(e.id));
+  }
+
+  saveData();
+  closeModal();
+  showToast(`삭제됨${linkedFixed.length + linkedExpenses.length > 0 ? ` (연결 항목 ${linkedFixed.length + linkedExpenses.length}개 포함)` : ''}`);
+  renderAsset();
 }
 
 function openAddModal() {
