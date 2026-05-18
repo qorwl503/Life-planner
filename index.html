@@ -1594,30 +1594,42 @@ function renderMonthlyReportCard() {
     </div>
     <div style="padding:10px; background:linear-gradient(135deg, #2D3748 0%, #4A5568 100%); border-radius:12px; color:white;">
 
-      <!-- 💸 생활비 통합 박스 (생활비 + 카테고리 + 비상금) -->
+      <!-- 💸 생활비 통합 박스 (생활비 + 비상금) -->
       <div style="padding:10px; background:rgba(255,255,255,0.08); border-radius:8px; margin-bottom:10px;">
-        <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px;">
-          <div style="font-size:10px; opacity:0.85;">💸 생활비 (변동 - 입금)</div>
-          <div style="font-size:16px; font-weight:700;">${fmt(variableSpent)}</div>
-        </div>
-        <div style="font-size:9px; opacity:0.7; line-height:1.5;">
-          변동지출 ${fmt(variableSpent + monthDeposit)} − 입금 ${fmt(monthDeposit)}
-          ${livingGoal > 0 ? ` · 목표 ${fmt(livingGoal)}` : ''}
-        </div>
-        ${topCat ? `
-          <div style="margin-top:6px; padding-top:6px; border-top:0.5px solid rgba(255,255,255,0.12); font-size:9px; opacity:0.85;">
-            📊 가장 많이 쓴: <b>${topCat[0]} ${fmt(topCat[1])}</b> (${Math.round(topCat[1]/monthSpent*100)}%)
+        ${livingGoal > 0 ? `
+          <div style="font-size:10px; opacity:0.85; margin-bottom:4px;">💸 한달 생활비</div>
+          <div style="font-size:11px; opacity:0.9; line-height:1.5;">
+            한달 목표 <b>${fmt(livingGoal)}</b> − 사용 <b>${fmt(variableSpent)}</b>
           </div>
-        ` : ''}
+          <div style="display:flex; justify-content:space-between; align-items:baseline; margin-top:4px;">
+            <div style="font-size:18px; font-weight:700;">= ${fmt(Math.max(0, livingGoal - variableSpent))}</div>
+            <div style="font-size:10px; opacity:0.8;">${Math.round(variableSpent / livingGoal * 100)}% 사용</div>
+          </div>
+          ${variableSpent > livingGoal ? `<div style="font-size:9px; color:#FFB4B4; margin-top:3px;">⚠️ 목표 ${fmt(variableSpent - livingGoal)} 초과</div>` : ''}
+        ` : `
+          <div style="display:flex; justify-content:space-between; align-items:baseline;">
+            <div style="font-size:10px; opacity:0.85;">💸 생활비 (변동 - 입금)</div>
+            <div style="font-size:16px; font-weight:700;">${fmt(variableSpent)}</div>
+          </div>
+          <div style="font-size:9px; opacity:0.7; margin-top:3px;">
+            변동지출 ${fmt(variableSpent + monthDeposit)} − 입금 ${fmt(monthDeposit)}
+          </div>
+        `}
         ${savings > 0 ? `
-          <div style="margin-top:3px; font-size:9px; opacity:0.85;">
-            💰 비상금 적립 가능: <b style="color:#FFD93D;">${fmt(savings)}</b>
+          <div style="margin-top:6px; padding-top:6px; border-top:0.5px solid rgba(255,255,255,0.12); font-size:10px; opacity:0.9;">
+            💰 비상금 가능: <b style="color:#FFD93D;">${fmt(savings)}</b>
           </div>
         ` : ''}
       </div>
 
-      <!-- 운동/할일/챌린지/자산 -->
+      <!-- 자산 / 운동 / 할일 / 챌린지 -->
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+        ${assetChange !== null ? `
+        <div>
+          <div style="font-size:9px; opacity:0.7;">💎 자산 변화</div>
+          <div style="font-size:13px; font-weight:700; margin-top:1px; color:${assetChange >= 0 ? '#A8E6CF' : '#FFB4B4'};">${assetChange >= 0 ? '+' : ''}${fmt(assetChange)}</div>
+          <div style="font-size:8px; opacity:0.7;">전월 대비</div>
+        </div>` : ''}
         <div>
           <div style="font-size:9px; opacity:0.7;">🏃 운동</div>
           <div style="font-size:13px; font-weight:700; margin-top:1px;">${monthWorkouts}일 / ${daysInMonth}일</div>
@@ -1633,11 +1645,6 @@ function renderMonthlyReportCard() {
           <div style="font-size:9px; opacity:0.7;">🎯 챌린지</div>
           <div style="font-size:13px; font-weight:700; margin-top:1px;">${totalChCheck}회</div>
           <div style="font-size:8px; opacity:0.7;">${activeChallenges.length}개 진행</div>
-        </div>` : ''}
-        ${assetChange !== null ? `
-        <div>
-          <div style="font-size:9px; opacity:0.7;">💎 자산</div>
-          <div style="font-size:13px; font-weight:700; margin-top:1px; color:${assetChange >= 0 ? '#A8E6CF' : '#FFB4B4'};">${assetChange >= 0 ? '+' : ''}${fmt(assetChange)}</div>
         </div>` : ''}
       </div>
     </div>
@@ -1876,12 +1883,14 @@ function getEventsForDay(d) {
 
   // 가계부 (옛날 date 호환 + 새 dateKey 둘 다 처리)
   budget.expenses.filter(e => (e.dateKey === k) || (e.date === d && !e.dateKey && currentMonth === new Date().getMonth() && currentYear === new Date().getFullYear())).forEach(e => {
+    const isIncome = e.type === 'income';
     events.push({
       type: 'money',
-      icon: 'ti-wallet',
+      icon: isIncome ? 'ti-wallet' : 'ti-wallet',
       title: e.memo || e.cat,
       sub: e.cat,
-      amount: `-${Number(e.amt).toLocaleString()}원`,
+      amount: `${isIncome ? '+' : '-'}${Number(e.amt).toLocaleString()}원`,
+      isIncome,
     });
   });
 
@@ -6900,10 +6909,18 @@ function renderAsset() {
   saveAssetSnapshot(total, byType);
 
   const typeColors = {
-    '주식':'var(--text-info)', '예적금':'var(--text-success)',
-    '현금':'var(--text-secondary)', '코인':'var(--text-warning)',
-    '부동산':'var(--text-danger)', '펀드':'var(--text-info)',
-    '채권':'var(--text-success)', '기타':'var(--text-tertiary)'
+    '주식':'#8AB4F8',    // 파스텔 파랑
+    'ETF':'#A78BFA',     // 파스텔 보라
+    '펀드':'#7BC8B5',    // 파스텔 청록
+    '채권':'#9CD3A5',    // 파스텔 초록
+    '금':'#F6C76D',      // 파스텔 골드
+    '달러':'#85D4D6',    // 파스텔 시안
+    '예적금':'#A8E6CF',  // 파스텔 민트
+    '청약':'#FFC9A8',    // 파스텔 살구
+    '현금':'#C9C5D9',    // 파스텔 그레이
+    '부동산':'#F6A8A8',  // 파스텔 핑크
+    '코인':'#FFD66E',    // 파스텔 옐로
+    '기타':'#D5D5D5',    // 라이트 그레이
   };
 
   let html = '';
