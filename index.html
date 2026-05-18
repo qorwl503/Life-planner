@@ -5048,7 +5048,8 @@ function saveFixed() {
     paid: false,
     autoBuy: !!autoBuy,
     assetInfo,
-    lastBuyDate: null, // 마지막 자동매수 처리 날짜
+    lastBuyDate: null,
+    createdAt: new Date().toISOString(), // 시작 날짜
   };
   budget.fixed.push(newFixed);
 
@@ -5162,6 +5163,100 @@ function resetSimSettings() {
 }
 
 // 자동매수 처리 - 이번 달 발생한 회차만큼 가계부 + 자산 자동 합산
+async function recalcAutoBuy(assetId, fixedId) {
+  const asset = assets.find(a => a.id === assetId);
+  const fixed = budget.fixed.find(f => f.id === fixedId);
+  if (!asset || !fixed) return;
+
+  if (!confirm(`"${asset.name}" 자산을 처음부터 다시 계산할까요?\n\n현재 수량/평단가가 초기화되고, ${fixed.name}이 시작된 시점부터 이번 달까지의 모든 발생일에 대해 시세 기준으로 재계산됩니다.`)) {
+    return;
+  }
+
+  showToast('🔄 재계산 중...');
+
+  // 자산 초기화
+  asset.qty = 0;
+  asset.price = 0;
+  fixed.lastBuyDate = null; // 처음부터 다시
+
+  // 시세 받아오기
+  let live = liveAssetData[asset.id];
+  if (!live && asset.ticker) {
+    try {
+      live = await fetchAssetLive(asset);
+      liveAssetData[asset.id] = live;
+    } catch (e) {
+      console.error('시세 조회 실패:', e);
+    }
+  }
+  const currPrice = live?.krwPrice || 0;
+
+  if (currPrice <= 0) {
+    showToast('⚠️ 시세를 받을 수 없어요. 티커를 확인해주세요');
+    return;
+  }
+
+  // 시작 날짜: fixed.createdAt 또는 3개월 전부터
+  const start = fixed.createdAt ? new Date(fixed.createdAt) : (() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 3); // 기본 3개월 전부터
+    return d;
+  })();
+  const now = new Date();
+  const cycle = fixed.cycle || 'monthly';
+
+  // 발생일 모두 계산
+  const occurDates = [];
+  const cursor = new Date(start);
+  cursor.setHours(0, 0, 0, 0);
+
+  if (cycle === 'monthly') {
+    while (cursor <= now) {
+      const y = cursor.getFullYear();
+      const m = cursor.getMonth();
+      const daysInM = new Date(y, m + 1, 0).getDate();
+      const targetDay = Math.min(fixed.day, daysInM);
+      const d = new Date(y, m, targetDay);
+      if (d >= start && d <= now) occurDates.push(d);
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+  } else {
+    while (cursor <= now) {
+      if (cursor.getDay() === Number(fixed.dow)) {
+        occurDates.push(new Date(cursor));
+      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    if (cycle === 'biweekly') {
+      const filtered = [];
+      occurDates.forEach((d, i) => {
+        if (i % 2 === 0) filtered.push(d);
+      });
+      occurDates.length = 0;
+      occurDates.push(...filtered);
+    }
+  }
+
+  console.log(`🔄 ${asset.name} 재계산: ${occurDates.length}회 발생일 (시세 ${currPrice}원/주)`);
+
+  // 모든 발생일에 대해 매수 처리
+  occurDates.forEach((d, i) => {
+    const newQty = fixed.amt / currPrice;
+    const oldQty = asset.qty;
+    const oldPrice = asset.price;
+    const totalQty = oldQty + newQty;
+    asset.qty = parseFloat(totalQty.toFixed(4));
+    asset.price = totalQty > 0 ? Math.round(((oldQty * oldPrice) + fixed.amt) / totalQty) : currPrice;
+  });
+
+  fixed.lastBuyDate = occurDates.length > 0 ? occurDates[occurDates.length - 1].toISOString() : null;
+  saveData();
+
+  showToast(`✅ ${occurDates.length}회 자동매수 재계산 완료 (총 ${asset.qty}주)`);
+  closeModal();
+  renderAsset();
+}
+
 async function processAutoBuy(fixed) {
   if (!fixed.autoBuy) {
     console.log(`⏸️ ${fixed.name} - autoBuy=false, 스킵`);
@@ -10425,7 +10520,23 @@ function editAsset(id) {
 
       <div id="e-dynamic-fields"></div>
 
-      <button onclick="deleteAsset(${id})" style="width:100%; padding:12px; border:none; border-radius:var(--radius-md); background:var(--bg-danger); color:var(--text-danger); font-size:13px; font-weight:500; cursor:pointer; font-family:inherit;">자산 삭제</button>
+      ${(() => {
+        // 이 자산에 연결된 자동매수가 있는지 확인
+        const linkedFixed = (budget.fixed || []).find(f =>
+          f.autoBuy && f.assetInfo && f.assetInfo.name === a.name && f.assetInfo.type === a.type
+        );
+        if (!linkedFixed) return '';
+        return `<div style="margin-top:10px; padding:12px; background:rgba(94,92,230,0.08); border-radius:10px;">
+          <div style="font-size:11px; font-weight:600; color:#5E5CE6; margin-bottom:6px;">🤖 자동매수 연결됨</div>
+          <div style="font-size:10px; color:var(--text-secondary); line-height:1.5; margin-bottom:10px;">
+            "${linkedFixed.name}" · 매${linkedFixed.cycle === 'monthly' ? '월' : linkedFixed.cycle === 'weekly' ? '주' : '2주'} ${linkedFixed.amt.toLocaleString()}원<br>
+            <span style="color:var(--text-tertiary);">시세 받아서 정확한 수량으로 누적 매수됩니다</span>
+          </div>
+          <button onclick="recalcAutoBuy(${a.id}, ${linkedFixed.id})" style="width:100%; padding:8px; border:0.5px solid #5E5CE6; background:white; color:#5E5CE6; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">🔄 자동매수 재계산 (처음부터)</button>
+        </div>`;
+      })()}
+
+      <button onclick="deleteAsset(${id})" style="width:100%; padding:12px; border:none; border-radius:var(--radius-md); background:var(--bg-danger); color:var(--text-danger); font-size:13px; font-weight:500; cursor:pointer; font-family:inherit; margin-top:10px;">자산 삭제</button>
     </div>
   `;
   modal.classList.add('show');
