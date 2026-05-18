@@ -4264,8 +4264,28 @@ function editFixed(id) {
       </div>
 
       <div class="field">
+        <div class="field-label">주기</div>
+        <div style="display:flex; gap:4px;" id="ef-cycle">
+          <button class="chip ${(!f.cycle || f.cycle === 'monthly')?'active':''}" data-cy="monthly">매월</button>
+          <button class="chip ${f.cycle === 'weekly'?'active':''}" data-cy="weekly">매주</button>
+          <button class="chip ${f.cycle === 'biweekly'?'active':''}" data-cy="biweekly">격주</button>
+        </div>
+      </div>
+
+      <!-- 매월일 때 - 결제일 -->
+      <div class="field" id="ef-day-field" style="display:${(!f.cycle || f.cycle === 'monthly')?'block':'none'};">
         <div class="field-label">매월 결제일</div>
-        <input type="number" id="ef-day" value="${f.day}" min="1" max="31" />
+        <input type="number" id="ef-day" value="${f.day || 1}" min="1" max="31" />
+      </div>
+
+      <!-- 매주/격주일 때 - 요일 -->
+      <div class="field" id="ef-dow-field" style="display:${(f.cycle === 'weekly' || f.cycle === 'biweekly')?'block':'none'};">
+        <div class="field-label">요일</div>
+        <div style="display:flex; gap:4px;" id="ef-dow">
+          ${['일','월','화','수','목','금','토'].map((d, i) => `
+            <button class="chip ${Number(f.dow) === i?'active':''}" data-d="${i}" style="flex:1; padding:8px 0;">${d}</button>
+          `).join('')}
+        </div>
       </div>
 
       <div class="field">
@@ -4438,6 +4458,25 @@ function editFixed(id) {
     const initType = f.assetInfo?.type || '주식';
     renderAssetDynamicFields(initType);
 
+    // 주기 선택 (매월/매주/격주)
+    document.querySelectorAll('#ef-cycle .chip').forEach(b => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('#ef-cycle .chip').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        const cy = b.dataset.cy;
+        document.getElementById('ef-day-field').style.display = cy === 'monthly' ? 'block' : 'none';
+        document.getElementById('ef-dow-field').style.display = (cy === 'weekly' || cy === 'biweekly') ? 'block' : 'none';
+      });
+    });
+
+    // 요일 선택
+    document.querySelectorAll('#ef-dow .chip').forEach(b => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('#ef-dow .chip').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+      });
+    });
+
     // 카테고리 선택 + 투자 필드 토글
     document.querySelectorAll('#ef-cat .chip').forEach(b => {
       b.addEventListener('click', () => {
@@ -4464,15 +4503,33 @@ function updateFixed(id) {
 
   const name = document.getElementById('ef-name').value.trim();
   const amt = Number(document.getElementById('ef-amt').value);
+  const cycle = document.querySelector('#ef-cycle .chip.active')?.dataset.cy || 'monthly';
   const day = Number(document.getElementById('ef-day').value);
+  const dow = Number(document.querySelector('#ef-dow .chip.active')?.dataset.d);
   const catBtn = document.querySelector('#ef-cat .chip.active');
   const paid = modal.querySelector('.toggle').classList.contains('on');
 
-  if (!name || !amt || !day) { showToast('모든 항목을 입력해주세요'); return; }
+  if (!name || !amt) { showToast('이름과 금액을 입력해주세요'); return; }
+
+  if (cycle === 'monthly' && !day) {
+    showToast('결제일을 입력해주세요');
+    return;
+  }
+  if ((cycle === 'weekly' || cycle === 'biweekly') && isNaN(dow)) {
+    showToast('요일을 선택해주세요');
+    return;
+  }
 
   f.name = name;
   f.amt = amt;
-  f.day = day;
+  f.cycle = cycle;
+  if (cycle === 'monthly') {
+    f.day = day;
+    delete f.dow;
+  } else {
+    f.dow = dow;
+    delete f.day;
+  }
   f.cat = catBtn.dataset.c;
   f.icon = catBtn.dataset.icon;
   f.paid = paid;
@@ -5105,10 +5162,18 @@ function resetSimSettings() {
 }
 
 // 자동매수 처리 - 이번 달 발생한 회차만큼 가계부 + 자산 자동 합산
-function processAutoBuy(fixed) {
-  if (!fixed.autoBuy || !fixed.assetInfo) return;
+async function processAutoBuy(fixed) {
+  if (!fixed.autoBuy) {
+    console.log(`⏸️ ${fixed.name} - autoBuy=false, 스킵`);
+    return;
+  }
+  if (!fixed.assetInfo) {
+    console.log(`⏸️ ${fixed.name} - assetInfo 없음, 스킵`);
+    return;
+  }
   const now = new Date();
   const cycle = fixed.cycle || 'monthly';
+  console.log(`🤖 ${fixed.name} 자동매수 점검 (주기:${cycle}, day:${fixed.day}, dow:${fixed.dow})`);
 
   // 이번 달의 발생일 계산
   const year = now.getFullYear();
@@ -5117,10 +5182,18 @@ function processAutoBuy(fixed) {
   const occurDates = [];
 
   if (cycle === 'monthly') {
+    if (!fixed.day || fixed.day < 1) {
+      console.warn(`⚠️ ${fixed.name} - 결제일 없음 (day=${fixed.day})`);
+      return;
+    }
     const targetDay = Math.min(fixed.day, daysInMonth);
     const d = new Date(year, month, targetDay);
     if (d <= now) occurDates.push(d);
   } else {
+    if (isNaN(Number(fixed.dow))) {
+      console.warn(`⚠️ ${fixed.name} - 요일 없음 (dow=${fixed.dow})`);
+      return;
+    }
     for (let d = 1; d <= daysInMonth; d++) {
       const dt = new Date(year, month, d);
       if (dt.getDay() === Number(fixed.dow) && dt <= now) {
@@ -5128,7 +5201,6 @@ function processAutoBuy(fixed) {
       }
     }
     if (cycle === 'biweekly') {
-      // 격주 - 첫째, 셋째 주만
       const filtered = [];
       occurDates.forEach((d, i) => {
         if (i % 2 === 0) filtered.push(d);
@@ -5137,6 +5209,7 @@ function processAutoBuy(fixed) {
       occurDates.push(...filtered);
     }
   }
+  console.log(`📅 ${fixed.name} - 이번 달 발생일 ${occurDates.length}회:`, occurDates.map(d => d.toLocaleDateString()));
 
   // 마지막 처리 날짜 이후의 회차만 처리
   const lastBuyDate = fixed.lastBuyDate ? new Date(fixed.lastBuyDate) : null;
@@ -5144,19 +5217,44 @@ function processAutoBuy(fixed) {
     ? occurDates.filter(d => d > lastBuyDate)
     : occurDates;
 
-  if (newDates.length === 0) return;
+  if (newDates.length === 0) {
+    console.log(`⏸️ ${fixed.name} - 새 매수일 없음 (마지막 ${lastBuyDate?.toLocaleDateString() || '없음'})`);
+    return;
+  }
+  console.log(`✅ ${fixed.name} - 새 매수 ${newDates.length}건 처리 예정`);
 
   // 자산 찾기
-  const asset = assets.find(a => a.name === fixed.assetInfo.name && a.type === fixed.assetInfo.type);
-  if (!asset) return;
+  let asset = assets.find(a => a.name === fixed.assetInfo.name && a.type === fixed.assetInfo.type);
+  if (!asset) {
+    // 자산이 없으면 자동 생성
+    console.log(`🆕 ${fixed.name} - 자산 자동 생성: ${fixed.assetInfo.name}`);
+    asset = {
+      id: Date.now() + Math.random(),
+      type: fixed.assetInfo.type,
+      name: fixed.assetInfo.name,
+      ticker: fixed.assetInfo.ticker || '',
+      qty: 0,
+      price: 0,
+      note: '자동매수',
+    };
+    assets.push(asset);
+  }
 
-  // 현재 시세 (있으면) 또는 기존 평단가
-  const live = liveAssetData[asset.id];
+  // 현재 시세 (없으면 받아오기)
+  let live = liveAssetData[asset.id];
+  if (!live && asset.ticker) {
+    console.log(`📡 ${asset.name} 시세 받아오는 중...`);
+    try {
+      live = await fetchAssetLive(asset);
+      liveAssetData[asset.id] = live;
+    } catch (e) {
+      console.warn(`${asset.name} 시세 조회 실패:`, e.message);
+    }
+  }
   const currPrice = live?.krwPrice || asset.price || 0;
+  console.log(`💰 ${asset.name} 시세: ${currPrice.toLocaleString()}원`);
 
   newDates.forEach(d => {
-    // 가계부에는 추가 X! (고정지출에 이미 있음 - 중복 방지)
-    // 자산 수량/평단가만 업데이트
     if (currPrice > 0) {
       // 시세 알면 정확한 수량 계산 (소수점 매매 OK)
       const newQty = fixed.amt / currPrice;
@@ -5165,14 +5263,16 @@ function processAutoBuy(fixed) {
       const totalQty = oldQty + newQty;
       asset.qty = parseFloat(totalQty.toFixed(4));
       asset.price = totalQty > 0 ? Math.round(((oldQty * oldPrice) + fixed.amt) / totalQty) : currPrice;
+      console.log(`✅ ${asset.name} 매수: +${newQty.toFixed(4)}주, 총 ${asset.qty}주 @ ${asset.price}`);
     } else {
-      // 시세 모르면 금액만 누적, 수량은 변동 X (소수점 매매는 수동 입력)
+      // 시세 모르면 금액만 추정 - 수량은 1로, 평단가 = 입금 금액
       const oldQty = Number(asset.qty) || 0;
       const oldPrice = Number(asset.price) || 0;
-      // 평단가 = 평균가 + 새 매수 (수량 1로 가정하지 않고 그냥 평균)
-      const totalAmt = oldQty * oldPrice + fixed.amt;
-      // 수량 자체는 본인이 수동으로 정리
-      console.warn(`⚠️ ${asset.name} 시세 모름 - 수량은 수동으로 정리 필요 (현재 누적 금액: ${totalAmt.toLocaleString()}원)`);
+      const newQty = 1; // 추정 1주 (사용자가 수동 조정 가능)
+      const totalQty = oldQty + newQty;
+      asset.qty = totalQty;
+      asset.price = Math.round(((oldQty * oldPrice) + fixed.amt) / totalQty);
+      console.warn(`⚠️ ${asset.name} 시세 모름 - 추정 1주 추가 (수동 정리 필요)`);
     }
   });
 
@@ -5185,7 +5285,7 @@ function processAutoBuy(fixed) {
 }
 
 // 앱 시작 시 모든 자동매수 항목 점검
-function runAllAutoBuys() {
+async function runAllAutoBuys() {
   // 기존 중복 정리: budget.expenses에서 autoBuy=true인 항목 모두 제거 (이제 고정지출만으로 처리)
   const before = budget.expenses.length;
   budget.expenses = budget.expenses.filter(e => !e.autoBuy);
@@ -5196,9 +5296,9 @@ function runAllAutoBuys() {
   }
 
   if (!budget.fixed) return;
-  budget.fixed.forEach(f => {
-    if (f.autoBuy) processAutoBuy(f);
-  });
+  for (const f of budget.fixed) {
+    if (f.autoBuy) await processAutoBuy(f);
+  }
 }
 
 // 월 수입 빠른 편집
