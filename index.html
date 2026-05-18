@@ -3753,7 +3753,9 @@ function renderMoney() {
     납부 완료 <b style="color:var(--text-success);">${fixedPaid.toLocaleString()}원</b> · 남음 <b>${fixedRemaining.toLocaleString()}원</b>
   </div>`;
 
-  // ===== 카테고리별 도넛 차트 (지출만) =====
+  // ===== 카테고리별 도넛 차트 (변동지출 = budget.expenses 전체, 고정지출은 자동 제외) =====
+  // viewMonthExpenses는 budget.expenses 기반이므로 고정지출은 이미 안 포함됨
+  // → 변동지출의 모든 카테고리 (ETF, 식비, 카페 등) 다 표시
   const expensesOnly = viewMonthExpenses.filter(e => e.type !== 'income');
   if (expensesOnly.length > 0) {
     // 카테고리별 합계
@@ -5158,20 +5160,8 @@ function processAutoBuy(fixed) {
   const currPrice = live?.priceKRW || asset.price || 0;
 
   newDates.forEach(d => {
-    const dKey = dateKey(d.getFullYear(), d.getMonth(), d.getDate());
-
-    // 가계부에 자동 기록
-    budget.expenses.push({
-      id: Date.now() + Math.random() * 1000,
-      amt: fixed.amt,
-      cat: fixed.assetInfo.type,
-      memo: `🤖 ${fixed.name} (자동매수)`,
-      dateKey: dKey,
-      date: d.getDate(),
-      autoBuy: true,
-    });
-
-    // 자산 수량/평단가 업데이트
+    // 가계부에는 추가 X! (고정지출에 이미 있음 - 중복 방지)
+    // 자산 수량/평단가만 업데이트
     if (currPrice > 0) {
       // 시세 알면 정확한 수량 계산
       const newQty = fixed.amt / currPrice;
@@ -5184,7 +5174,6 @@ function processAutoBuy(fixed) {
       // 시세 모르면 금액만 누적 (수동 수정 안내)
       const oldQty = Number(asset.qty) || 0;
       const oldPrice = Number(asset.price) || 0;
-      // 수량 1단위 + 금액만 누적 (사용자가 수동 조정)
       asset.qty = oldQty + 1;
       asset.price = (oldPrice * oldQty + fixed.amt) / (oldQty + 1);
       asset.price = Math.round(asset.price);
@@ -5201,6 +5190,15 @@ function processAutoBuy(fixed) {
 
 // 앱 시작 시 모든 자동매수 항목 점검
 function runAllAutoBuys() {
+  // 기존 중복 정리: budget.expenses에서 autoBuy=true인 항목 모두 제거 (이제 고정지출만으로 처리)
+  const before = budget.expenses.length;
+  budget.expenses = budget.expenses.filter(e => !e.autoBuy);
+  const removed = before - budget.expenses.length;
+  if (removed > 0) {
+    console.log(`🧹 기존 자동매수 중복 ${removed}건 정리됨 (이제 고정지출만 사용)`);
+    saveData();
+  }
+
   if (!budget.fixed) return;
   budget.fixed.forEach(f => {
     if (f.autoBuy) processAutoBuy(f);
