@@ -4300,6 +4300,11 @@ function editFixed(id) {
         </div>
       </div>
 
+      <div class="field">
+        <div class="field-label">🚀 시작 날짜 <span style="font-size:9px; color:var(--text-tertiary);">(이 날짜부터 자동매수 적용)</span></div>
+        <input type="date" id="ef-startdate" value="${f.createdAt ? f.createdAt.split('T')[0] : new Date().toISOString().split('T')[0]}" />
+      </div>
+
       <!-- 투자 카테고리 - 자산 자동매수 옵션 -->
       <div id="ef-invest-fields" style="display:${f.cat==='투자'?'block':'none'}; padding:12px; background:rgba(94,92,230,0.08); border-radius:var(--radius-md); margin-bottom:14px;">
         <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; margin-bottom:12px;">
@@ -4533,6 +4538,18 @@ function updateFixed(id) {
   f.cat = catBtn.dataset.c;
   f.icon = catBtn.dataset.icon;
   f.paid = paid;
+
+  // 시작 날짜 저장 (변경 시 자동매수 리셋)
+  const newStartDate = document.getElementById('ef-startdate')?.value;
+  if (newStartDate) {
+    const newCreatedAt = new Date(newStartDate + 'T00:00:00').toISOString();
+    // 시작 날짜 변경 시 lastBuyDate 리셋
+    if (f.createdAt !== newCreatedAt) {
+      f.lastBuyDate = null;
+      console.log(`🔄 ${f.name} - 시작 날짜 변경: ${newStartDate} (자동매수 리셋)`);
+    }
+    f.createdAt = newCreatedAt;
+  }
 
   // 투자 카테고리 처리
   const isInvest = catBtn.dataset.c === '투자';
@@ -4899,6 +4916,12 @@ function openFixedAddModal() {
         </div>
       </div>
 
+      <!-- 시작 날짜 (자동매수 추적용) -->
+      <div class="field">
+        <div class="field-label">🚀 시작 날짜 <span style="font-size:9px; color:var(--text-tertiary);">(이 날짜부터 자동매수 적용)</span></div>
+        <input type="date" id="fx-startdate" value="${new Date().toISOString().split('T')[0]}" />
+      </div>
+
       <div class="field">
         <div class="field-label">카테고리</div>
         <div style="display:flex; gap:6px; flex-wrap:wrap;" id="fx-cat">
@@ -5040,6 +5063,12 @@ function saveFixed() {
     assetInfo = { type: assetType, name: assetName, ticker: assetTicker };
   }
 
+  // 시작 날짜 (사용자 입력 또는 오늘)
+  const startDateInput = document.getElementById('fx-startdate')?.value;
+  const createdAt = startDateInput
+    ? new Date(startDateInput + 'T00:00:00').toISOString()
+    : new Date().toISOString();
+
   const newFixed = {
     id: Date.now(),
     name, amt, cat, icon,
@@ -5049,7 +5078,7 @@ function saveFixed() {
     autoBuy: !!autoBuy,
     assetInfo,
     lastBuyDate: null,
-    createdAt: new Date().toISOString(), // 시작 날짜
+    createdAt, // 사용자 지정 시작 날짜
   };
   budget.fixed.push(newFixed);
 
@@ -5289,11 +5318,18 @@ async function processAutoBuy(fixed) {
   const cycle = fixed.cycle || 'monthly';
   console.log(`🤖 ${fixed.name} 자동매수 점검 (주기:${cycle}, day:${fixed.day}, dow:${fixed.dow})`);
 
-  // 이번 달의 발생일 계산
+  // 이번 달의 발생일 계산 - createdAt 이후만!
   const year = now.getFullYear();
   const month = now.getMonth();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const occurDates = [];
+
+  // 자동매수 시작 날짜 (createdAt 또는 lastBuyDate)
+  const startDate = fixed.createdAt
+    ? new Date(fixed.createdAt)
+    : new Date(year, month, 1); // 기본: 이번 달 1일
+  startDate.setHours(0, 0, 0, 0);
+  console.log(`📅 ${fixed.name} 시작 날짜: ${startDate.toLocaleDateString()}`);
 
   if (cycle === 'monthly') {
     if (!fixed.day || fixed.day < 1) {
@@ -5302,7 +5338,7 @@ async function processAutoBuy(fixed) {
     }
     const targetDay = Math.min(fixed.day, daysInMonth);
     const d = new Date(year, month, targetDay);
-    if (d <= now) occurDates.push(d);
+    if (d <= now && d >= startDate) occurDates.push(d);
   } else {
     if (isNaN(Number(fixed.dow))) {
       console.warn(`⚠️ ${fixed.name} - 요일 없음 (dow=${fixed.dow})`);
@@ -5310,7 +5346,9 @@ async function processAutoBuy(fixed) {
     }
     for (let d = 1; d <= daysInMonth; d++) {
       const dt = new Date(year, month, d);
-      if (dt.getDay() === Number(fixed.dow) && dt <= now) {
+      dt.setHours(0, 0, 0, 0);
+      // createdAt 이후 + 오늘까지 + 해당 요일만
+      if (dt.getDay() === Number(fixed.dow) && dt <= now && dt >= startDate) {
         occurDates.push(dt);
       }
     }
