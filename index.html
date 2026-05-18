@@ -5168,7 +5168,31 @@ async function recalcAutoBuy(assetId, fixedId) {
   const fixed = budget.fixed.find(f => f.id === fixedId);
   if (!asset || !fixed) return;
 
-  if (!confirm(`"${asset.name}" 자산을 처음부터 다시 계산할까요?\n\n현재 수량/평단가가 초기화되고, ${fixed.name}이 시작된 시점부터 이번 달까지의 모든 발생일에 대해 시세 기준으로 재계산됩니다.`)) {
+  // 시작 날짜 입력 받기
+  const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+  const defaultStart = fixed.createdAt
+    ? fixed.createdAt.split('T')[0]
+    : new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]; // 기본: 이번 달 1일
+
+  const startDateStr = prompt(
+    `"${asset.name}" 재계산 시작 날짜를 입력하세요 (YYYY-MM-DD)\n\n자동매수를 실제로 시작한 날짜부터의 발생일만 계산됩니다.\n예: 2026-05-01`,
+    defaultStart
+  );
+
+  if (!startDateStr) return; // 취소
+
+  const start = new Date(startDateStr + 'T00:00:00');
+  if (isNaN(start.getTime())) {
+    showToast('⚠️ 날짜 형식이 잘못됨');
+    return;
+  }
+  if (start > today) {
+    showToast('⚠️ 미래 날짜는 안돼요');
+    return;
+  }
+
+  if (!confirm(`"${asset.name}" 자산을 ${startDateStr}부터 다시 계산할까요?\n\n현재 수량/평단가가 초기화되고 ${startDateStr} ~ 오늘까지 모든 자동매수 발생일이 시세 기준으로 재계산됩니다.`)) {
     return;
   }
 
@@ -5177,7 +5201,8 @@ async function recalcAutoBuy(assetId, fixedId) {
   // 자산 초기화
   asset.qty = 0;
   asset.price = 0;
-  fixed.lastBuyDate = null; // 처음부터 다시
+  fixed.lastBuyDate = null;
+  fixed.createdAt = start.toISOString(); // 새 시작 날짜 저장
 
   // 시세 받아오기
   let live = liveAssetData[asset.id];
@@ -5196,12 +5221,6 @@ async function recalcAutoBuy(assetId, fixedId) {
     return;
   }
 
-  // 시작 날짜: fixed.createdAt 또는 3개월 전부터
-  const start = fixed.createdAt ? new Date(fixed.createdAt) : (() => {
-    const d = new Date();
-    d.setMonth(d.getMonth() - 3); // 기본 3개월 전부터
-    return d;
-  })();
   const now = new Date();
   const cycle = fixed.cycle || 'monthly';
 
@@ -5237,10 +5256,10 @@ async function recalcAutoBuy(assetId, fixedId) {
     }
   }
 
-  console.log(`🔄 ${asset.name} 재계산: ${occurDates.length}회 발생일 (시세 ${currPrice}원/주)`);
+  console.log(`🔄 ${asset.name} 재계산: ${startDateStr} ~ 오늘, ${occurDates.length}회 발생일 (시세 ${currPrice}원/주)`);
 
   // 모든 발생일에 대해 매수 처리
-  occurDates.forEach((d, i) => {
+  occurDates.forEach((d) => {
     const newQty = fixed.amt / currPrice;
     const oldQty = asset.qty;
     const oldPrice = asset.price;
@@ -5252,7 +5271,7 @@ async function recalcAutoBuy(assetId, fixedId) {
   fixed.lastBuyDate = occurDates.length > 0 ? occurDates[occurDates.length - 1].toISOString() : null;
   saveData();
 
-  showToast(`✅ ${occurDates.length}회 자동매수 재계산 완료 (총 ${asset.qty}주)`);
+  showToast(`✅ ${occurDates.length}회 재계산 완료 (총 ${asset.qty}주)`);
   closeModal();
   renderAsset();
 }
@@ -6659,11 +6678,25 @@ function renderAsset() {
           ? `<span style="font-size:9px; padding:2px 5px; border-radius:3px; background:var(--bg-success); color:var(--text-success); margin-left:6px;">LIVE</span>`
           : '';
 
+        // 자동매수 + 환전우대 표시
+        let extraInfo = '';
+        const linkedFx = (budget.fixed || []).find(f =>
+          f.autoBuy && f.assetInfo && f.assetInfo.name === a.name && f.assetInfo.type === a.type
+        );
+        if (linkedFx) {
+          const cy = linkedFx.cycle === 'monthly' ? '매월' : linkedFx.cycle === 'weekly' ? '매주' : '격주';
+          extraInfo += `<span style="font-size:9px; color:#5E5CE6; margin-right:6px;">🤖 자동매수: ${cy} ${linkedFx.amt.toLocaleString()}원</span>`;
+        }
+        if (a.fxDiscount) {
+          extraInfo += `<span style="font-size:9px; color:var(--text-success);">💱 환전우대 ${a.fxDiscount}%</span>`;
+        }
+
         html += `<div class="hold-row" onclick="editAsset(${a.id})">
           <div style="width:38px; height:38px; border-radius:8px; background:var(--bg-secondary); color:var(--text-primary); display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600;">${badge}</div>
           <div style="flex:1; min-width:0;">
             <div style="font-size:14px; font-weight:500;">${a.name}${liveBadge}</div>
             <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">${a.type}${a.ticker ? ' · ' + a.ticker : ''}${a.note ? ' · ' + a.note : ''}</div>
+            ${extraInfo ? `<div style="margin-top:3px;">${extraInfo}</div>` : ''}
           </div>
           <div style="text-align:right;">
             <div style="font-size:14px; font-weight:600;">${Math.round(v).toLocaleString()}원</div>
@@ -8231,19 +8264,26 @@ async function fetchAssetLive(asset) {
 
   // 미국 주식 (USD) → 원화 환산
   if (priceData.currency === 'USD') {
-    const rate = await getUSDKRW();
-    krwPrice = priceData.price * rate;
+    const marketRate = await getUSDKRW();
 
-    // 매입가가 너무 크면 (10만원 이상) → 이미 원화 총액으로 입력한 듯, 수량으로 나누어 단가 추정
-    // 미국 주식 단가는 보통 1주당 수십~수백 달러 = 수만~수십만원
-    // 매입가가 100만원 넘으면 본인이 총액 입력한 것으로 추정
+    // 환전 우대율 적용 (자산별 fxDiscount)
+    // 매수 환율 = 시장환율 × (1 + 스프레드 × (1 - 우대율/100))
+    // 일반 스프레드: 1.75% (증권사 평균)
+    const fxDiscount = Number(asset.fxDiscount) || 0;
+    const baseSpread = 0.0175; // 1.75%
+    const effectiveSpread = baseSpread * (1 - fxDiscount / 100);
+    const buyRate = marketRate * (1 + effectiveSpread);
+
+    krwPrice = priceData.price * buyRate;
+
+    // 매입가가 너무 크면 → 이미 원화 총액으로 입력한 듯, 수량으로 나눔
     if (krwAvgPrice > 1000000 && Number(asset.qty) > 0) {
-      krwAvgPrice = krwAvgPrice / Number(asset.qty); // 1주당 가격으로
+      krwAvgPrice = krwAvgPrice / Number(asset.qty);
     } else if (krwAvgPrice < 10000) {
-      // 매입가가 작으면 (1만원 미만) → 달러 단위로 입력했다고 보고 환율 곱함
-      krwAvgPrice = krwAvgPrice * rate;
+      // 매입가가 작으면 → 달러 단위로 입력했다고 보고 환율 곱함
+      krwAvgPrice = krwAvgPrice * buyRate;
     }
-    // 그 외 (1만~100만) → 이미 원화 1주당 가격으로 간주, 그대로 사용
+    // 그 외 (1만~100만) → 이미 원화 1주당 가격, 그대로 사용
   }
 
   const krwValue = Number(asset.qty) * krwPrice;
@@ -10548,6 +10588,7 @@ function editAsset(id) {
     let h = '';
 
     if (['주식', 'ETF', '펀드'].includes(type)) {
+      const isUS = a.ticker && !/\.(KS|KQ)$/i.test(a.ticker) && !/^\d{6}/.test(a.ticker);
       h = `
         <div class="field">
           <div class="field-label">자산명</div>
@@ -10556,6 +10597,9 @@ function editAsset(id) {
         <div class="field">
           <div class="field-label">티커 (선택)</div>
           <input type="text" id="e-ticker" value="${a.ticker || ''}" placeholder="예: 005930.KS, SPY" />
+          <div style="font-size:9px; color:var(--text-tertiary); margin-top:3px;">
+            한국: 005930.KS · 미국: SPY, QQQ (확장자 없음)
+          </div>
         </div>
         <div class="field" style="display:flex; gap:8px;">
           <div style="flex:1;">
@@ -10563,8 +10607,15 @@ function editAsset(id) {
             <input type="number" id="e-qty" value="${a.qty || 1}" step="0.0001" />
           </div>
           <div style="flex:1;">
-            <div class="field-label">평균 매입가</div>
+            <div class="field-label">평균 매입가 (원)</div>
             <input type="number" id="e-price" value="${a.price}" />
+          </div>
+        </div>
+        <div class="field">
+          <div class="field-label">💱 환전 우대율 % <span style="font-size:9px; color:var(--text-tertiary);">(미국 주식만)</span></div>
+          <input type="number" id="e-fx-discount" value="${a.fxDiscount || ''}" placeholder="예: 95 (95% 우대)" min="0" max="100" step="0.1" />
+          <div style="font-size:9px; color:var(--text-tertiary); margin-top:3px;">
+            본인 증권사 환전우대율 (없으면 비워두기)
           </div>
         </div>
       `;
@@ -10761,12 +10812,14 @@ function updateAsset(id) {
   const rounds = Number(document.getElementById('e-rounds')?.value) || 0;
   const subType = document.querySelector('#e-subtype .chip.active')?.dataset.s || '';
   const buyprice = Number(document.getElementById('e-buyprice')?.value) || 0;
+  const fxDiscount = Number(document.getElementById('e-fx-discount')?.value) || 0;
 
   if (rate) a.rate = rate; else delete a.rate;
   if (maturity) a.maturity = maturity; else delete a.maturity;
   if (rounds) a.rounds = rounds; else delete a.rounds;
   if (subType) a.subType = subType; else delete a.subType;
   if (buyprice) a.buyprice = buyprice; else delete a.buyprice;
+  if (fxDiscount) a.fxDiscount = fxDiscount; else delete a.fxDiscount;
 
   saveData();
   showToast('저장됨');
