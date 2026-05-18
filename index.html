@@ -3880,9 +3880,14 @@ function renderMoney() {
   // ===== 날짜별 내역 그룹 (전체 보기 + 편집 모드) =====
   const allMonthExp = viewMonthExpenses.slice().sort((a, b) => (b.dateKey || '').localeCompare(a.dateKey || ''));
   const isEditMode = window.expenseEditMode || false;
+  if (typeof window.expenseListExpanded === 'undefined') window.expenseListExpanded = true;
+  const listExpanded = window.expenseListExpanded || isEditMode;
 
   html += `<div style="display:flex; justify-content:space-between; align-items:center; margin: 18px 0 8px;">
-    <span style="font-size:14px; font-weight:600;">${isCurrentMonth ? '내역' : `${monthLabel} 내역`} (${allMonthExp.length}건)</span>
+    <div onclick="if (!${isEditMode}) { window.expenseListExpanded = !window.expenseListExpanded; renderMoney(); }" style="display:flex; align-items:center; gap:6px; cursor:${isEditMode ? 'default' : 'pointer'};">
+      <span style="font-size:14px; font-weight:600;">${isCurrentMonth ? '내역' : `${monthLabel} 내역`} (${allMonthExp.length}건)</span>
+      ${!isEditMode ? `<span style="font-size:11px; color:var(--text-tertiary);">${listExpanded ? '▲' : '▼'}</span>` : ''}
+    </div>
     <div style="display:flex; align-items:center; gap:6px;">
       ${isEditMode ? `
         <button onclick="bulkDeleteExpenses()" style="border:none; background:var(--bg-danger); color:var(--text-danger); padding:5px 12px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">🗑️ 선택 삭제</button>
@@ -3899,6 +3904,17 @@ function renderMoney() {
       <i class="ti ti-receipt"></i>
       ${isCurrentMonth ? '아직 입력된 내역이 없어요' : '이 달엔 입력된 내역이 없어요'}<br>
       ${isCurrentMonth ? '<span style="font-size:11px; opacity:0.7;">+ 버튼으로 지출/입금을 추가하세요</span>' : ''}
+    </div>`;
+  } else if (!listExpanded) {
+    // 접힌 상태 - 합계만 표시
+    const totalSpent = allMonthExp.filter(e => e.type !== 'income').reduce((s, e) => s + Number(e.amt), 0);
+    const totalDep = allMonthExp.filter(e => e.type === 'income').reduce((s, e) => s + Number(e.amt), 0);
+    html += `<div style="padding:14px; background:var(--bg-secondary); border-radius:10px; text-align:center; font-size:12px; color:var(--text-tertiary);">
+      <div>총 ${allMonthExp.length}건 · 펼쳐서 보기</div>
+      <div style="margin-top:6px;">
+        ${totalSpent > 0 ? `<span style="color:var(--text-primary); font-weight:600;">-${totalSpent.toLocaleString()}원</span>` : ''}
+        ${totalDep > 0 ? ` <span style="color:var(--text-success); font-weight:600;">+${totalDep.toLocaleString()}원</span>` : ''}
+      </div>
     </div>`;
   } else {
     // 편집 모드면 선택 안내
@@ -4237,7 +4253,40 @@ function editFixed(id) {
           <button class="chip ${f.cat==='공과금'?'active':''}" data-c="공과금" data-icon="ti-bolt">공과금</button>
           <button class="chip ${f.cat==='보험'?'active':''}" data-c="보험" data-icon="ti-shield">보험</button>
           <button class="chip ${f.cat==='구독'?'active':''}" data-c="구독" data-icon="ti-device-tv">구독</button>
+          <button class="chip ${f.cat==='투자'?'active':''}" data-c="투자" data-icon="ti-trending-up">💎 투자</button>
           <button class="chip ${f.cat==='기타'?'active':''}" data-c="기타" data-icon="ti-dots">기타</button>
+        </div>
+      </div>
+
+      <!-- 투자 카테고리 - 자산 자동매수 옵션 -->
+      <div id="ef-invest-fields" style="display:${f.cat==='투자'?'block':'none'}; padding:12px; background:rgba(94,92,230,0.08); border-radius:var(--radius-md); margin-bottom:14px;">
+        <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; margin-bottom:12px;">
+          <input type="checkbox" id="ef-autobuy" ${f.autoBuy?'checked':''} style="width:18px; height:18px; cursor:pointer; flex-shrink:0; margin-top:2px;" />
+          <div style="flex:1;">
+            <div style="font-size:12px; font-weight:600; color:#5E5CE6;">🤖 자동매수 (자산에 자동 합산)</div>
+            <div style="font-size:10px; color:var(--text-tertiary); margin-top:3px; line-height:1.4;">
+              매월 자동으로 자산에 매수 처리됩니다.
+            </div>
+          </div>
+        </label>
+
+        <div class="field">
+          <div class="field-label">자산 종류</div>
+          <div style="display:flex; gap:4px; flex-wrap:wrap;" id="ef-asset-type">
+            ${['주식','ETF','펀드','채권','금','달러','예적금','청약','현금','부동산'].map(t =>
+              `<button class="chip ${f.assetInfo?.type===t?'active':''}" data-t="${t}">${t}</button>`
+            ).join('')}
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="field-label">자산명</div>
+          <input type="text" id="ef-asset-name" value="${f.assetInfo?.name || ''}" placeholder="예: 삼성전자, 주택청약통장" />
+        </div>
+
+        <div class="field">
+          <div class="field-label">티커 (선택 - 시세 자동 갱신)</div>
+          <input type="text" id="ef-asset-ticker" value="${f.assetInfo?.ticker || ''}" placeholder="예: 005930.KS" />
         </div>
       </div>
 
@@ -4254,9 +4303,19 @@ function editFixed(id) {
   modal.classList.add('show');
 
   setTimeout(() => {
+    // 카테고리 선택 + 투자 필드 토글
     document.querySelectorAll('#ef-cat .chip').forEach(b => {
       b.addEventListener('click', () => {
         document.querySelectorAll('#ef-cat .chip').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        const isInvest = b.dataset.c === '투자';
+        document.getElementById('ef-invest-fields').style.display = isInvest ? 'block' : 'none';
+      });
+    });
+    // 자산 종류 선택
+    document.querySelectorAll('#ef-asset-type .chip').forEach(b => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('#ef-asset-type .chip').forEach(x => x.classList.remove('active'));
         b.classList.add('active');
       });
     });
@@ -4281,6 +4340,37 @@ function updateFixed(id) {
   f.cat = catBtn.dataset.c;
   f.icon = catBtn.dataset.icon;
   f.paid = paid;
+
+  // 투자 카테고리 처리
+  const isInvest = catBtn.dataset.c === '투자';
+  if (isInvest) {
+    const autoBuy = document.getElementById('ef-autobuy')?.checked;
+    const assetType = document.querySelector('#ef-asset-type .chip.active')?.dataset.t || '주식';
+    const assetName = document.getElementById('ef-asset-name')?.value?.trim() || name;
+    const assetTicker = document.getElementById('ef-asset-ticker')?.value?.trim() || '';
+
+    f.autoBuy = !!autoBuy;
+    f.assetInfo = { name: assetName, type: assetType, ticker: assetTicker };
+
+    // 자산이 없으면 자동 생성
+    if (autoBuy) {
+      let asset = assets.find(a => a.name === assetName && a.type === assetType);
+      if (!asset) {
+        assets.push({
+          id: Date.now(),
+          type: assetType,
+          name: assetName,
+          ticker: assetTicker,
+          qty: 0,
+          price: 0,
+          note: '자동매수',
+        });
+      }
+    }
+  } else {
+    f.autoBuy = false;
+    delete f.assetInfo;
+  }
 
   saveData();
   showToast('수정됨');
