@@ -4502,7 +4502,7 @@ function editFixed(id) {
   }, 50);
 }
 
-function updateFixed(id) {
+async function updateFixed(id) {
   const f = budget.fixed.find(x => x.id === id);
   if (!f) return;
 
@@ -4539,14 +4539,25 @@ function updateFixed(id) {
   f.icon = catBtn.dataset.icon;
   f.paid = paid;
 
-  // 시작 날짜 저장 (변경 시 자동매수 리셋)
+  // 시작 날짜 저장 (변경 시 자동매수 + 자산 리셋)
   const newStartDate = document.getElementById('ef-startdate')?.value;
   if (newStartDate) {
     const newCreatedAt = new Date(newStartDate + 'T00:00:00').toISOString();
-    // 시작 날짜 변경 시 lastBuyDate 리셋
     if (f.createdAt !== newCreatedAt) {
+      // 시작 날짜 변경 → 연결된 자산도 0으로 리셋
       f.lastBuyDate = null;
-      console.log(`🔄 ${f.name} - 시작 날짜 변경: ${newStartDate} (자동매수 리셋)`);
+      f.createdAt = newCreatedAt;
+
+      if (f.assetInfo) {
+        const linkedAsset = assets.find(a =>
+          a.name === f.assetInfo.name && a.type === f.assetInfo.type
+        );
+        if (linkedAsset && confirm(`시작 날짜를 ${newStartDate}로 변경하셨어요.\n\n연결된 자산 "${linkedAsset.name}"을 0으로 리셋하고 새 시작 날짜부터 자동 재계산할까요?\n\n(취소하면 수량/평단가는 그대로 유지됩니다)`)) {
+          linkedAsset.qty = 0;
+          linkedAsset.price = 0;
+          console.log(`🔄 ${linkedAsset.name} 리셋 + ${newStartDate}부터 재계산 예정`);
+        }
+      }
     }
     f.createdAt = newCreatedAt;
   }
@@ -4598,7 +4609,17 @@ function updateFixed(id) {
   saveData();
   showToast('수정됨');
   closeModal();
+
+  // 자동매수 활성 + 시작 날짜 있으면 즉시 재실행
+  if (f.autoBuy && f.assetInfo) {
+    showToast('🔄 자동매수 재계산 중...');
+    await processAutoBuy(f);
+    saveData();
+    showToast(`✅ 재계산 완료`);
+  }
+
   renderMoney();
+  renderAsset();
 }
 
 function deleteFixed(id) {
@@ -4963,20 +4984,121 @@ function openFixedAddModal() {
           </div>
         </div>
 
-        <div class="field">
-          <div class="field-label">자산명</div>
-          <input type="text" id="fx-asset-name" placeholder="예: 삼성전자, SPY (없으면 자동 생성)" />
-        </div>
-
-        <div class="field">
-          <div class="field-label">티커 (선택 - 시세 자동 갱신)</div>
-          <input type="text" id="fx-asset-ticker" placeholder="예: 005930.KS, SPY" />
-        </div>
+        <div id="fx-asset-dynamic-fields"></div>
       </div>
     </div>
   `;
   modal.classList.add('show');
+
+  // 자산 종류별 동적 필드
+  function renderFxAssetDynamic(type) {
+    const container = document.getElementById('fx-asset-dynamic-fields');
+    if (!container) return;
+    let h = '';
+
+    if (['주식', 'ETF', '펀드'].includes(type)) {
+      h = `
+        <div class="field">
+          <div class="field-label">자산명</div>
+          <input type="text" id="fx-asset-name" placeholder="예: 삼성전자, SPY" />
+        </div>
+        <div class="field">
+          <div class="field-label">티커 (선택 - 시세 자동 갱신)</div>
+          <input type="text" id="fx-asset-ticker" placeholder="예: 005930.KS, SPY" />
+        </div>
+      `;
+    } else if (type === '채권') {
+      h = `
+        <div class="field">
+          <div class="field-label">자산명</div>
+          <input type="text" id="fx-asset-name" placeholder="예: 국고채 3년물" />
+        </div>
+        <div class="field">
+          <div class="field-label">금리 % (선택)</div>
+          <input type="number" id="fx-asset-rate" placeholder="예: 3.5" step="0.01" />
+        </div>
+        <input type="hidden" id="fx-asset-ticker" value="" />
+      `;
+    } else if (type === '금') {
+      h = `
+        <div class="field">
+          <div class="field-label">자산명</div>
+          <input type="text" id="fx-asset-name" placeholder="예: 한국조폐공사 골드바, 신한 골드뱅킹" />
+        </div>
+        <input type="hidden" id="fx-asset-ticker" value="" />
+      `;
+    } else if (type === '달러') {
+      h = `
+        <div class="field">
+          <div class="field-label">계좌명</div>
+          <input type="text" id="fx-asset-name" placeholder="예: 외화예금, 미국 주식 계좌" />
+        </div>
+        <input type="hidden" id="fx-asset-ticker" value="" />
+      `;
+    } else if (type === '예적금') {
+      h = `
+        <div class="field">
+          <div class="field-label">상품명</div>
+          <input type="text" id="fx-asset-name" placeholder="예: 토스 정기예금" />
+        </div>
+        <div class="field">
+          <div class="field-label">금리 % (선택)</div>
+          <input type="number" id="fx-asset-rate" placeholder="예: 4.5" step="0.01" />
+        </div>
+        <input type="hidden" id="fx-asset-ticker" value="" />
+      `;
+    } else if (type === '청약') {
+      h = `
+        <div class="field">
+          <div class="field-label">청약 종류</div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;" id="fx-asset-subtype">
+            <button class="chip active" data-s="주택청약종합저축">주택청약</button>
+            <button class="chip" data-s="청년주택드림">청년주택드림</button>
+            <button class="chip" data-s="기타">기타</button>
+          </div>
+        </div>
+        <div class="field">
+          <div class="field-label">통장명/은행</div>
+          <input type="text" id="fx-asset-name" placeholder="예: KB 주택청약통장" />
+        </div>
+        <div class="field">
+          <div class="field-label">금리 % (선택)</div>
+          <input type="number" id="fx-asset-rate" placeholder="예: 2.8" step="0.01" />
+        </div>
+        <input type="hidden" id="fx-asset-ticker" value="" />
+      `;
+    } else if (type === '현금') {
+      h = `
+        <div class="field">
+          <div class="field-label">위치/이름</div>
+          <input type="text" id="fx-asset-name" placeholder="예: 토스 통장, 비상금" />
+        </div>
+        <input type="hidden" id="fx-asset-ticker" value="" />
+      `;
+    } else if (type === '부동산') {
+      h = `
+        <div class="field">
+          <div class="field-label">이름</div>
+          <input type="text" id="fx-asset-name" placeholder="예: 서울 강남 아파트" />
+        </div>
+        <input type="hidden" id="fx-asset-ticker" value="" />
+      `;
+    }
+
+    container.innerHTML = h;
+
+    // 서브타입 클릭
+    container.querySelectorAll('#fx-asset-subtype .chip').forEach(b => {
+      b.addEventListener('click', () => {
+        container.querySelectorAll('#fx-asset-subtype .chip').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+      });
+    });
+  }
+
   setTimeout(() => {
+    renderFxAssetDynamic('주식'); // 초기
+
     document.querySelectorAll('#fx-cat .chip').forEach(b => {
       b.addEventListener('click', () => {
         document.querySelectorAll('#fx-cat .chip').forEach(x => x.classList.remove('active'));
@@ -4987,11 +5109,12 @@ function openFixedAddModal() {
       });
     });
 
-    // 자산 종류 선택
+    // 자산 종류 선택 → 동적 필드 변경
     document.querySelectorAll('#fx-asset-type .chip').forEach(b => {
       b.addEventListener('click', () => {
         document.querySelectorAll('#fx-asset-type .chip').forEach(x => x.classList.remove('active'));
         b.classList.add('active');
+        renderFxAssetDynamic(b.dataset.t);
       });
     });
 
@@ -5192,6 +5315,170 @@ function resetSimSettings() {
 }
 
 // 자동매수 처리 - 이번 달 발생한 회차만큼 가계부 + 자산 자동 합산
+// ===== 매수 기록 (lots) 시스템 =====
+
+// 자산의 모든 lot에서 총 수량 + 평균 평단가 계산
+function recalcAssetFromLots(asset) {
+  if (!asset.lots || asset.lots.length === 0) {
+    return; // lot 없으면 수동 입력 그대로
+  }
+  let totalQty = 0;
+  let totalCost = 0;
+  asset.lots.forEach(lot => {
+    const q = Number(lot.qty) || 0;
+    const p = Number(lot.price) || 0;
+    totalQty += q;
+    totalCost += q * p;
+  });
+  asset.qty = parseFloat(totalQty.toFixed(4));
+  asset.price = totalQty > 0 ? Math.round(totalCost / totalQty) : 0;
+}
+
+// 자산에 lot 추가 헬퍼
+function addAssetLot(asset, lot) {
+  if (!asset.lots) asset.lots = [];
+  asset.lots.push({
+    id: Date.now() + Math.random(),
+    source: lot.source || '수동 입력',
+    qty: Number(lot.qty) || 0,
+    price: Number(lot.price) || 0,
+    date: lot.date || new Date().toISOString().split('T')[0],
+    fxDiscount: lot.fxDiscount || null,
+    autoBuy: !!lot.autoBuy,
+    note: lot.note || '',
+  });
+  recalcAssetFromLots(asset);
+}
+
+// ===== Lot 관리 함수 =====
+function addManualLot(assetId, lotIdToEdit) {
+  const asset = assets.find(a => a.id === assetId);
+  if (!asset) return;
+
+  const existingLot = lotIdToEdit ? (asset.lots || []).find(l => String(l.id) === String(lotIdToEdit)) : null;
+  const isEdit = !!existingLot;
+
+  // 임시 저장 (모달 닫고 다시 열기 위해)
+  window._editingAssetId = assetId;
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal(); setTimeout(()=>editAsset(${assetId}),50);">취소</button>
+        <h2>${isEdit ? '매수 기록 수정' : '+ 매수 기록 추가'}</h2>
+        <button class="modal-save" onclick="saveLot(${assetId}, ${isEdit ? `'${existingLot.id}'` : 'null'})">저장</button>
+      </div>
+
+      <div class="field">
+        <div class="field-label">출처/메모</div>
+        <input type="text" id="lot-source" value="${existingLot?.source || ''}" placeholder="예: 키움 (과거), 토스, 미래에셋" />
+      </div>
+
+      <div class="field" style="display:flex; gap:8px;">
+        <div style="flex:1;">
+          <div class="field-label">수량 (주)</div>
+          <input type="number" id="lot-qty" value="${existingLot?.qty || ''}" step="0.0001" placeholder="0" />
+        </div>
+        <div style="flex:1;">
+          <div class="field-label">1주당 가격 (원)</div>
+          <input type="number" id="lot-price" value="${existingLot?.price || ''}" placeholder="0" />
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="field-label">매수일</div>
+        <input type="date" id="lot-date" value="${existingLot?.date || new Date().toISOString().split('T')[0]}" />
+      </div>
+
+      <div class="field">
+        <div class="field-label">환전 우대율 % (선택)</div>
+        <input type="number" id="lot-fx" value="${existingLot?.fxDiscount || ''}" min="0" max="100" step="0.1" placeholder="예: 95" />
+      </div>
+
+      <div class="field">
+        <div class="field-label">메모 (선택)</div>
+        <input type="text" id="lot-note" value="${existingLot?.note || ''}" placeholder="추가 메모" />
+      </div>
+
+      <div id="lot-total-preview" style="padding:10px; background:var(--bg-secondary); border-radius:8px; text-align:center; font-size:11px;">
+        매수 금액 미리보기: <b id="lot-total-val">0원</b>
+      </div>
+    </div>
+  `;
+  modal.classList.add('show');
+
+  setTimeout(() => {
+    const updateTotal = () => {
+      const q = Number(document.getElementById('lot-qty').value) || 0;
+      const p = Number(document.getElementById('lot-price').value) || 0;
+      document.getElementById('lot-total-val').textContent = (q * p).toLocaleString() + '원';
+    };
+    document.getElementById('lot-qty').addEventListener('input', updateTotal);
+    document.getElementById('lot-price').addEventListener('input', updateTotal);
+    updateTotal();
+  }, 50);
+}
+
+function saveLot(assetId, lotIdToEdit) {
+  const asset = assets.find(a => a.id === assetId);
+  if (!asset) return;
+
+  const source = document.getElementById('lot-source').value.trim() || '수동 입력';
+  const qty = Number(document.getElementById('lot-qty').value);
+  const price = Number(document.getElementById('lot-price').value);
+  const date = document.getElementById('lot-date').value;
+  const fxDiscount = Number(document.getElementById('lot-fx').value) || null;
+  const note = document.getElementById('lot-note').value.trim();
+
+  if (!qty || !price) {
+    showToast('수량과 가격을 입력해주세요');
+    return;
+  }
+
+  if (!asset.lots) asset.lots = [];
+
+  if (lotIdToEdit && lotIdToEdit !== 'null') {
+    // 수정
+    const idx = asset.lots.findIndex(l => String(l.id) === String(lotIdToEdit));
+    if (idx >= 0) {
+      asset.lots[idx] = { ...asset.lots[idx], source, qty, price, date, fxDiscount, note };
+    }
+    showToast('수정됨');
+  } else {
+    // 추가
+    asset.lots.push({
+      id: Date.now() + Math.random(),
+      source, qty, price, date,
+      fxDiscount,
+      autoBuy: false,
+      note,
+    });
+    showToast('매수 기록 추가됨');
+  }
+
+  recalcAssetFromLots(asset);
+  saveData();
+  closeModal();
+  setTimeout(() => editAsset(assetId), 50);
+}
+
+function editLot(assetId, lotId) {
+  addManualLot(assetId, lotId);
+}
+
+function deleteLot(assetId, lotId) {
+  if (!confirm('이 매수 기록을 삭제할까요?')) return;
+  const asset = assets.find(a => a.id === assetId);
+  if (!asset || !asset.lots) return;
+  asset.lots = asset.lots.filter(l => String(l.id) !== String(lotId));
+  recalcAssetFromLots(asset);
+  saveData();
+  showToast('삭제됨');
+  closeModal();
+  setTimeout(() => editAsset(assetId), 50);
+}
+
 async function recalcAutoBuy(assetId, fixedId) {
   const asset = assets.find(a => a.id === assetId);
   const fixed = budget.fixed.find(f => f.id === fixedId);
@@ -5287,14 +5574,23 @@ async function recalcAutoBuy(assetId, fixedId) {
 
   console.log(`🔄 ${asset.name} 재계산: ${startDateStr} ~ 오늘, ${occurDates.length}회 발생일 (시세 ${currPrice}원/주)`);
 
-  // 모든 발생일에 대해 매수 처리
+  // 기존 자동매수 lot만 제거 (수동 입력 lot는 유지)
+  if (asset.lots) {
+    asset.lots = asset.lots.filter(lot => !lot.autoBuy);
+  }
+
+  // 모든 발생일에 대해 lot 추가
   occurDates.forEach((d) => {
     const newQty = fixed.amt / currPrice;
-    const oldQty = asset.qty;
-    const oldPrice = asset.price;
-    const totalQty = oldQty + newQty;
-    asset.qty = parseFloat(totalQty.toFixed(4));
-    asset.price = totalQty > 0 ? Math.round(((oldQty * oldPrice) + fixed.amt) / totalQty) : currPrice;
+    addAssetLot(asset, {
+      source: `🤖 ${fixed.name}`,
+      qty: newQty,
+      price: currPrice,
+      date: d.toISOString().split('T')[0],
+      fxDiscount: asset.fxDiscount || null,
+      autoBuy: true,
+      note: '자동매수 (재계산)',
+    });
   });
 
   fixed.lastBuyDate = occurDates.length > 0 ? occurDates[occurDates.length - 1].toISOString() : null;
@@ -5407,24 +5703,32 @@ async function processAutoBuy(fixed) {
   console.log(`💰 ${asset.name} 시세: ${currPrice.toLocaleString()}원`);
 
   newDates.forEach(d => {
+    const dateStr = d.toISOString().split('T')[0];
     if (currPrice > 0) {
       // 시세 알면 정확한 수량 계산 (소수점 매매 OK)
       const newQty = fixed.amt / currPrice;
-      const oldQty = Number(asset.qty) || 0;
-      const oldPrice = Number(asset.price) || 0;
-      const totalQty = oldQty + newQty;
-      asset.qty = parseFloat(totalQty.toFixed(4));
-      asset.price = totalQty > 0 ? Math.round(((oldQty * oldPrice) + fixed.amt) / totalQty) : currPrice;
-      console.log(`✅ ${asset.name} 매수: +${newQty.toFixed(4)}주, 총 ${asset.qty}주 @ ${asset.price}`);
+      // lot 추가
+      addAssetLot(asset, {
+        source: `🤖 ${fixed.name}`,
+        qty: newQty,
+        price: currPrice,
+        date: dateStr,
+        fxDiscount: asset.fxDiscount || null,
+        autoBuy: true,
+        note: '자동매수',
+      });
+      console.log(`✅ ${asset.name} lot 추가: ${dateStr}, ${newQty.toFixed(4)}주 @ ${currPrice}, 총 ${asset.qty}주`);
     } else {
-      // 시세 모르면 금액만 추정 - 수량은 1로, 평단가 = 입금 금액
-      const oldQty = Number(asset.qty) || 0;
-      const oldPrice = Number(asset.price) || 0;
-      const newQty = 1; // 추정 1주 (사용자가 수동 조정 가능)
-      const totalQty = oldQty + newQty;
-      asset.qty = totalQty;
-      asset.price = Math.round(((oldQty * oldPrice) + fixed.amt) / totalQty);
-      console.warn(`⚠️ ${asset.name} 시세 모름 - 추정 1주 추가 (수동 정리 필요)`);
+      // 시세 모르면 추정 매수 (1주 + fixed.amt 평단가)
+      addAssetLot(asset, {
+        source: `🤖 ${fixed.name} (시세 추정)`,
+        qty: 1,
+        price: fixed.amt,
+        date: dateStr,
+        autoBuy: true,
+        note: '시세 추정 - 수동 정리 필요',
+      });
+      console.warn(`⚠️ ${asset.name} 시세 모름 - 1주 추가 (수동 정리 필요)`);
     }
   });
 
@@ -10626,6 +10930,8 @@ function editAsset(id) {
     let h = '';
 
     if (['주식', 'ETF', '펀드'].includes(type)) {
+      const lots = a.lots || [];
+      const hasLots = lots.length > 0;
       const isUS = a.ticker && !/\.(KS|KQ)$/i.test(a.ticker) && !/^\d{6}/.test(a.ticker);
       h = `
         <div class="field">
@@ -10639,16 +10945,72 @@ function editAsset(id) {
             한국: 005930.KS · 미국: SPY, QQQ (확장자 없음)
           </div>
         </div>
-        <div class="field" style="display:flex; gap:8px;">
-          <div style="flex:1;">
-            <div class="field-label">수량 (주)</div>
-            <input type="number" id="e-qty" value="${a.qty || 1}" step="0.0001" />
+
+        ${hasLots ? `
+          <!-- 매수 기록 (lots) -->
+          <div style="margin-top:14px; padding:12px; background:rgba(94,92,230,0.06); border-radius:10px; border:0.5px solid rgba(94,92,230,0.2);">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+              <div style="font-size:11px; font-weight:600; color:#5E5CE6;">📋 매수 기록 ${lots.length}건</div>
+              <button onclick="addManualLot(${a.id})" style="border:none; background:#5E5CE6; color:white; padding:4px 10px; border-radius:999px; font-size:10px; font-weight:600; cursor:pointer; font-family:inherit;">+ 추가</button>
+            </div>
+            <div style="max-height:180px; overflow-y:auto;">
+              ${lots.slice().sort((x, y) => (y.date || '').localeCompare(x.date || '')).map(lot => {
+                const isAuto = lot.autoBuy;
+                return `<div style="padding:8px 10px; background:white; border-radius:6px; margin-bottom:5px; display:flex; align-items:center; gap:8px; font-size:11px;">
+                  <div style="flex:1; min-width:0;">
+                    <div style="font-weight:600;">${lot.source}</div>
+                    <div style="font-size:9px; color:var(--text-tertiary); margin-top:1px;">
+                      ${lot.date} · ${Number(lot.qty).toFixed(4).replace(/\.?0+$/, '')}주 × ${Number(lot.price).toLocaleString()}원
+                      ${lot.fxDiscount ? ` · 우대 ${lot.fxDiscount}%` : ''}
+                    </div>
+                  </div>
+                  <div style="font-weight:600; font-size:11px;">${(lot.qty * lot.price).toLocaleString()}원</div>
+                  <button onclick="editLot(${a.id}, '${lot.id}')" style="border:none; background:transparent; color:var(--text-tertiary); padding:4px; cursor:pointer; font-family:inherit; font-size:14px;">✏️</button>
+                  <button onclick="deleteLot(${a.id}, '${lot.id}')" style="border:none; background:transparent; color:var(--text-danger); padding:4px; cursor:pointer; font-family:inherit; font-size:14px;">🗑️</button>
+                </div>`;
+              }).join('')}
+            </div>
+            <div style="margin-top:8px; padding-top:8px; border-top:0.5px solid rgba(94,92,230,0.2); display:flex; justify-content:space-between; font-size:11px;">
+              <span style="color:var(--text-secondary);">총 합계 (자동 계산)</span>
+              <span style="font-weight:700; color:#5E5CE6;">${Number(a.qty).toFixed(4).replace(/\.?0+$/, '')}주 평균 ${Number(a.price).toLocaleString()}원</span>
+            </div>
           </div>
-          <div style="flex:1;">
-            <div class="field-label">평균 매입가 (원)</div>
-            <input type="number" id="e-price" value="${a.price}" />
+
+          <!-- 합계 수동 수정 (옵션) -->
+          <details style="margin-top:10px;">
+            <summary style="font-size:10px; color:var(--text-tertiary); cursor:pointer;">📝 합계 수동 수정 (선택)</summary>
+            <div style="padding:8px 0;">
+              <div class="field" style="display:flex; gap:8px;">
+                <div style="flex:1;">
+                  <div class="field-label">수량 (주)</div>
+                  <input type="number" id="e-qty" value="${a.qty || 0}" step="0.0001" />
+                </div>
+                <div style="flex:1;">
+                  <div class="field-label">평균 매입가 (원)</div>
+                  <input type="number" id="e-price" value="${a.price || 0}" />
+                </div>
+              </div>
+              <div style="font-size:9px; color:var(--text-tertiary);">⚠️ 합계를 직접 수정하면 매수 기록과 어긋날 수 있어요</div>
+            </div>
+          </details>
+        ` : `
+          <!-- lots 없을 때: 직접 입력 -->
+          <div class="field" style="display:flex; gap:8px;">
+            <div style="flex:1;">
+              <div class="field-label">수량 (주)</div>
+              <input type="number" id="e-qty" value="${a.qty || 1}" step="0.0001" />
+            </div>
+            <div style="flex:1;">
+              <div class="field-label">평균 매입가 (원)</div>
+              <input type="number" id="e-price" value="${a.price}" />
+            </div>
           </div>
-        </div>
+          <div style="margin-top:6px;">
+            <button onclick="addManualLot(${a.id})" style="border:none; background:rgba(94,92,230,0.12); color:#5E5CE6; padding:8px 14px; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">📋 매수 기록 시스템 사용</button>
+            <div style="font-size:9px; color:var(--text-tertiary); margin-top:4px;">증권사별/날짜별로 매수 기록 관리하기</div>
+          </div>
+        `}
+
         <div class="field">
           <div class="field-label">💱 환전 우대율 % <span style="font-size:9px; color:var(--text-tertiary);">(미국 주식만)</span></div>
           <input type="number" id="e-fx-discount" value="${a.fxDiscount || ''}" placeholder="예: 95 (95% 우대)" min="0" max="100" step="0.1" />
@@ -10858,6 +11220,11 @@ function updateAsset(id) {
   if (subType) a.subType = subType; else delete a.subType;
   if (buyprice) a.buyprice = buyprice; else delete a.buyprice;
   if (fxDiscount) a.fxDiscount = fxDiscount; else delete a.fxDiscount;
+
+  // lots 있으면 자동 재계산 (수동 수정 값 덮어쓰기)
+  if (a.lots && a.lots.length > 0) {
+    recalcAssetFromLots(a);
+  }
 
   saveData();
   showToast('저장됨');
