@@ -1576,6 +1576,14 @@ function renderMonthlyReportCard() {
   const prevSnap = snapshots[prevMStr];
   const assetChange = (thisSnap && prevSnap) ? thisSnap.total - prevSnap.total : null;
 
+  // 현재 총 자산 (스냅샷 없어도 표시)
+  const currentAssetTotal = (assets || []).reduce((sum, a) => {
+    const live = liveAssetData?.[a.id];
+    const qty = Number(a.qty) || 1;
+    const price = live?.krwPrice || Number(a.price) || 0;
+    return sum + (qty * price);
+  }, 0);
+
   // 6. 비상금 (목표 - 사용)
   const livingGoal = settings.livingGoals?.[targetMStr] || settings.defaultLivingGoal || 0;
   const investCats = ['투자', '주식', 'ETF', '펀드', '채권', '금', '달러', '예적금', '청약', '현금', '부동산'];
@@ -1624,12 +1632,13 @@ function renderMonthlyReportCard() {
 
       <!-- 자산 / 운동 / 할일 / 챌린지 -->
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
-        ${assetChange !== null ? `
         <div>
-          <div style="font-size:9px; opacity:0.7;">💎 자산 변화</div>
-          <div style="font-size:13px; font-weight:700; margin-top:1px; color:${assetChange >= 0 ? '#A8E6CF' : '#FFB4B4'};">${assetChange >= 0 ? '+' : ''}${fmt(assetChange)}</div>
-          <div style="font-size:8px; opacity:0.7;">전월 대비</div>
-        </div>` : ''}
+          <div style="font-size:9px; opacity:0.7;">💎 자산</div>
+          <div style="font-size:13px; font-weight:700; margin-top:1px;">${fmt(currentAssetTotal)}</div>
+          ${assetChange !== null
+            ? `<div style="font-size:8px; color:${assetChange >= 0 ? '#A8E6CF' : '#FFB4B4'};">${assetChange >= 0 ? '+' : ''}${fmt(assetChange)} (전월대비)</div>`
+            : `<div style="font-size:8px; opacity:0.7;">${assets.length}개 자산</div>`}
+        </div>
         <div>
           <div style="font-size:9px; opacity:0.7;">🏃 운동</div>
           <div style="font-size:13px; font-weight:700; margin-top:1px;">${monthWorkouts}일 / ${daysInMonth}일</div>
