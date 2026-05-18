@@ -3621,98 +3621,93 @@ function renderMoney() {
     </div>
   `;
 
-  html += `
-    <div class="budget-hero ${heroClass}">
-      <div class="label">${isCurrentMonth ? '변동 생활비 (남은 금액)' : `${monthLabel} 지출 내역`}</div>
-      <div class="big-num">${isCurrentMonth ? variableRemaining.toLocaleString() + '원' : variableSpent.toLocaleString() + '원'}</div>
-      <div class="sub">${variableBudget.toLocaleString()}원 중 ${variableSpent.toLocaleString()}원 사용 · ${variableUsedPct}%</div>
-      <div class="budget-bar"><div style="width:${Math.min(variableUsedPct,100)}%;"></div></div>
-      <div class="budget-bar-labels"><span>0</span><span>${variableBudget.toLocaleString()}원</span></div>
-      ${isCurrentMonth ? `<div class="day-pace">
-        <div class="item"><div class="pn">${safeDaily.toLocaleString()}원</div><div class="pl">남은 ${daysLeft}일 일일 한도</div></div>
-        <div class="item"><div class="pn">${actualDaily.toLocaleString()}원</div><div class="pl">현재 일평균</div></div>
-      </div>` : `<div class="day-pace">
-        <div class="item"><div class="pn">${actualDaily.toLocaleString()}원</div><div class="pl">일평균 지출</div></div>
-        <div class="item"><div class="pn">${daysInMonth}일</div><div class="pl">총 일수</div></div>
-      </div>`}
-    </div>
-  `;
-
-  // 🎯 목표 생활비 카드 (본인이 직접 설정)
+  // 🎯 변동 생활비 + 목표 + 비상금 - 모두 통합 카드 (연보라)
   const monthGoalKey = `${budgetViewYear}-${String(budgetViewMonth + 1).padStart(2, '0')}`;
   const goalLiving = (settings.livingGoals && settings.livingGoals[monthGoalKey]) || settings.defaultLivingGoal || 0;
 
-  if (isCurrentMonth || goalLiving > 0) {
-    const goalSpent = variableSpent; // 변동 지출만 (투자, 고정 X)
-    const goalRemaining = goalLiving - goalSpent;
-    const goalUsedPct = goalLiving > 0 ? Math.round((goalSpent / goalLiving) * 100) : 0;
-    const goalOver = goalSpent > goalLiving;
-    const goalSavings = Math.max(0, variableBudget - goalLiving); // 비상금 가능 금액
+  const goalSpent = variableSpent; // 변동 지출만 (투자, 고정 X)
+  const goalRemaining = goalLiving - goalSpent;
+  const goalUsedPct = goalLiving > 0 ? Math.round((goalSpent / goalLiving) * 100) : 0;
+  const goalOver = goalLiving > 0 && goalSpent > goalLiving;
+  const goalSavings = Math.max(0, variableBudget - goalLiving);
+  const actualSavingsIfGoalMet = Math.max(0, goalRemaining);
+  const totalPotentialSavings = goalLiving > 0 ? (goalSavings + actualSavingsIfGoalMet) : variableRemaining;
 
-    html += `
-      <div style="background:white; border:0.5px solid var(--border-tertiary); border-radius:14px; padding:14px; margin-bottom:12px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-          <div style="font-size:13px; font-weight:600; color:var(--text-primary);">
-            🎯 목표 생활비
-          </div>
-          <button onclick="editLivingGoal()" style="border:none; background:var(--bg-secondary); color:var(--text-secondary); padding:4px 10px; border-radius:999px; font-size:10px; font-weight:500; cursor:pointer; font-family:inherit;">
-            ${goalLiving > 0 ? '⚙️ 수정' : '+ 목표 설정'}
-          </button>
+  html += `
+    <div style="background:linear-gradient(135deg, #5E3FB8 0%, #7A5DC2 100%); border-radius:14px; padding:16px; margin-bottom:12px; color:white;">
+      <!-- 헤더 -->
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <div style="font-size:12px; opacity:0.9; font-weight:500;">
+          💰 변동 생활비 ${isCurrentMonth ? '· 비상금 가능' : ''}
         </div>
-        ${goalLiving > 0 ? `
-          <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px;">
-            <div style="font-size:20px; font-weight:700; color:${goalOver ? 'var(--text-danger)' : 'var(--text-success)'};">
-              ${goalRemaining.toLocaleString()}원<span style="font-size:11px; opacity:0.6; font-weight:500;"> 남음</span>
-            </div>
-            <div style="font-size:11px; color:var(--text-tertiary);">${goalUsedPct}%</div>
+        <button onclick="editLivingGoal()" style="border:none; background:rgba(255,255,255,0.18); color:white; padding:4px 10px; border-radius:999px; font-size:10px; font-weight:500; cursor:pointer; font-family:inherit;">
+          ${goalLiving > 0 ? '⚙️ 수정' : '+ 목표 설정'}
+        </button>
+      </div>
+
+      <!-- 메인 숫자: 남은 변동 생활비 = 비상금 가능 -->
+      <div style="margin-bottom:14px;">
+        <div style="font-size:28px; font-weight:700; letter-spacing:-0.5px;">
+          ${isCurrentMonth ? variableRemaining.toLocaleString() : variableSpent.toLocaleString()}원
+        </div>
+        <div style="font-size:11px; opacity:0.85; margin-top:2px;">
+          ${isCurrentMonth ? `${variableBudget.toLocaleString()}원 중 ${variableSpent.toLocaleString()}원 사용 · ${variableUsedPct}%` : `이 달 변동 지출 총액`}
+        </div>
+      </div>
+
+      <!-- Progress Bar -->
+      <div style="height:6px; background:rgba(255,255,255,0.2); border-radius:3px; overflow:hidden; margin-bottom:4px;">
+        <div style="height:100%; width:${Math.min(variableUsedPct, 100)}%; background:rgba(255,255,255,0.9); transition:width 0.4s;"></div>
+      </div>
+      <div style="display:flex; justify-content:space-between; font-size:9px; opacity:0.8; margin-bottom:14px;">
+        <span>0</span><span>${variableBudget.toLocaleString()}원</span>
+      </div>
+
+      <!-- 일일 페이스 -->
+      ${isCurrentMonth ? `
+        <div style="display:flex; gap:12px; padding:10px 0; border-top:0.5px solid rgba(255,255,255,0.2); border-bottom:0.5px solid rgba(255,255,255,0.2); margin-bottom:12px;">
+          <div style="flex:1;">
+            <div style="font-size:14px; font-weight:600;">${safeDaily.toLocaleString()}원</div>
+            <div style="font-size:9px; opacity:0.8; margin-top:1px;">남은 ${daysLeft}일 일일 한도</div>
           </div>
-          <div style="font-size:11px; color:var(--text-tertiary); margin-bottom:8px;">
-            목표 ${goalLiving.toLocaleString()}원 중 ${goalSpent.toLocaleString()}원 사용
+          <div style="flex:1;">
+            <div style="font-size:14px; font-weight:600;">${actualDaily.toLocaleString()}원</div>
+            <div style="font-size:9px; opacity:0.8; margin-top:1px;">현재 일평균</div>
           </div>
-          <div style="height:6px; background:rgba(0,0,0,0.08); border-radius:3px; overflow:hidden;">
-            <div style="height:100%; width:${Math.min(goalUsedPct, 100)}%; background:${goalOver ? 'var(--text-danger)' : goalUsedPct > 80 ? 'var(--text-warning)' : 'var(--text-success)'};"></div>
+        </div>
+      ` : ''}
+
+      <!-- 목표 생활비 진행 -->
+      ${goalLiving > 0 ? `
+        <div>
+          <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px;">
+            <div style="font-size:11px; opacity:0.85;">🎯 목표 ${goalLiving.toLocaleString()}원 中</div>
+            <div style="font-size:11px; opacity:0.85;">${goalUsedPct}%</div>
           </div>
-          ${goalOver ? `
-            <div style="margin-top:8px; padding:8px 10px; background:var(--bg-danger); border-radius:8px; font-size:11px; color:var(--text-danger);">
-              ⚠️ 목표 초과! <b>${(goalSpent - goalLiving).toLocaleString()}원</b> 초과 사용
-            </div>
-          ` : isCurrentMonth ? `
-            <div style="margin-top:8px; font-size:10px; color:var(--text-tertiary);">
-              남은 ${daysLeft}일 · 하루 ${daysLeft > 0 ? Math.round(goalRemaining / daysLeft).toLocaleString() : 0}원 가능
+          <div style="font-size:13px; font-weight:600; margin-bottom:6px; color:${goalOver ? '#FFB4B4' : '#A8E6CF'};">
+            ${goalRemaining >= 0 ? goalRemaining.toLocaleString() + '원 남음' : Math.abs(goalRemaining).toLocaleString() + '원 초과'}
+          </div>
+          <div style="height:5px; background:rgba(255,255,255,0.2); border-radius:3px; overflow:hidden;">
+            <div style="height:100%; width:${Math.min(goalUsedPct, 100)}%; background:${goalOver ? '#FFB4B4' : '#A8E6CF'};"></div>
+          </div>
+          ${isCurrentMonth && !goalOver ? `
+            <div style="font-size:9px; opacity:0.8; margin-top:6px;">
+              하루 ${daysLeft > 0 ? Math.round(goalRemaining / daysLeft).toLocaleString() : 0}원 가능 (${daysLeft}일)
             </div>
           ` : ''}
-        ` : `
-          <div style="font-size:11px; color:var(--text-tertiary); line-height:1.5; padding: 4px 0;">
-            본인이 자유롭게 쓸 금액 목표를 설정하면 절약한 만큼 비상금으로 모을 수 있어요.
-          </div>
-        `}
-      </div>
-    `;
-
-    // 💰 비상금 가능 금액 카드
-    if (goalLiving > 0 && goalSavings > 0) {
-      const actualSavingsIfGoalMet = Math.max(0, goalRemaining); // 목표 안 넘기면 추가로 절약되는 돈
-      const totalPotentialSavings = goalSavings + actualSavingsIfGoalMet;
-
-      html += `
-        <div style="background:linear-gradient(135deg, #FFF7E6 0%, #FFEFD5 100%); border:0.5px solid #F4A261; border-radius:14px; padding:14px; margin-bottom:12px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-            <div style="font-size:12px; font-weight:600; color:#B45309;">
-              💰 비상금 적립 가능
+          ${goalOver ? `
+            <div style="margin-top:8px; padding:6px 10px; background:rgba(255,180,180,0.18); border-radius:6px; font-size:10px;">
+              ⚠️ 목표 초과! <b>${(goalSpent - goalLiving).toLocaleString()}원</b> 더 사용 — 비상금 적립이 어려워요
             </div>
-            <div style="font-size:10px; color:#B45309; opacity:0.7;">목표 절약 시</div>
-          </div>
-          <div style="font-size:22px; font-weight:700; color:#B45309;">
-            ${totalPotentialSavings.toLocaleString()}원
-          </div>
-          <div style="font-size:10px; color:#8B5A1A; margin-top:6px; line-height:1.5;">
-            <div>📌 기본 여유 (변동 - 목표): <b>${goalSavings.toLocaleString()}원</b></div>
-            ${actualSavingsIfGoalMet > 0 && isCurrentMonth ? `<div>✨ 현재 페이스로 추가 절약: <b>${actualSavingsIfGoalMet.toLocaleString()}원</b></div>` : ''}
-          </div>
+          ` : ''}
         </div>
-      `;
-    }
-  }
+      ` : isCurrentMonth ? `
+        <div style="font-size:10px; opacity:0.85; line-height:1.5;">
+          🎯 목표 생활비를 설정하면 절약한 만큼 비상금으로 모을 수 있어요. 우측 상단 [+ 목표 설정] 클릭
+        </div>
+      ` : ''}
+    </div>
+  `;
 
   if (variableSpent > 0 && isCurrentMonth) {
     if (isOverPace) {
