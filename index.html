@@ -1594,14 +1594,13 @@ function renderMonthlyReportCard() {
     </div>
     <div style="padding:14px; background:linear-gradient(135deg, #2D3748 0%, #4A5568 100%); border-radius:14px; color:white;">
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
-        <div>
-          <div style="font-size:10px; opacity:0.7;">💰 변동지출</div>
-          <div style="font-size:16px; font-weight:700; margin-top:2px;">${fmt(variableSpent)}</div>
+        <div style="grid-column: 1 / -1; padding:10px; background:rgba(255,255,255,0.08); border-radius:8px;">
+          <div style="font-size:10px; opacity:0.85; margin-bottom:4px;">💸 생활비 (변동 - 입금)</div>
+          <div style="font-size:18px; font-weight:700;">${fmt(variableSpent)}</div>
+          <div style="font-size:9px; opacity:0.7; margin-top:3px;">
+            변동지출 ${fmt(variableSpent + monthDeposit)} − 입금 ${fmt(monthDeposit)}
+          </div>
           ${livingGoal > 0 ? `<div style="font-size:9px; opacity:0.7; margin-top:2px;">목표 ${fmt(livingGoal)}</div>` : ''}
-        </div>
-        <div>
-          <div style="font-size:10px; opacity:0.7;">💵 입금</div>
-          <div style="font-size:16px; font-weight:700; margin-top:2px;">${monthDeposit > 0 ? '+' + fmt(monthDeposit) : '-'}</div>
         </div>
         <div>
           <div style="font-size:10px; opacity:0.7;">🏃 운동</div>
@@ -3446,9 +3445,14 @@ function renderMoney() {
     return count;
   }
 
-  const fixedTotal = budget.fixed.reduce((s, f) => s + Number(f.amt) * countOccurrences(f, budgetViewYear, budgetViewMonth), 0);
+  // 고정지출 - 일반 (투자 제외)
+  const fixedTotalAll = budget.fixed.reduce((s, f) => s + Number(f.amt) * countOccurrences(f, budgetViewYear, budgetViewMonth), 0);
+  const fixedInvestTotal = budget.fixed
+    .filter(f => f.cat === '투자')
+    .reduce((s, f) => s + Number(f.amt) * countOccurrences(f, budgetViewYear, budgetViewMonth), 0);
+  const fixedTotal = fixedTotalAll - fixedInvestTotal; // 고정지출은 투자 제외!
   const fixedPaid = budget.fixed.filter(f => f.paid).reduce((s, f) => s + Number(f.amt) * countOccurrences(f, budgetViewYear, budgetViewMonth), 0);
-  const fixedRemaining = fixedTotal - fixedPaid;
+  const fixedRemaining = fixedTotalAll - fixedPaid;
 
   // 보고 있는 월의 지출 합산
   const viewMonthPrefix = `${budgetViewYear}-${String(budgetViewMonth+1).padStart(2,'0')}`;
@@ -3463,9 +3467,12 @@ function renderMoney() {
 
   // 투자 카테고리 분류 (자산 종류) - 지출만 대상
   const investCategories = ['투자', '주식', 'ETF', '펀드', '채권', '금', '달러', '예적금', '청약', '현금', '부동산'];
-  const investSpent = monthSpending
+  const variableInvestSpent = monthSpending
     .filter(e => investCategories.includes(e.cat))
     .reduce((s, e) => s + Number(e.amt), 0);
+
+  // 자산 투자 = 변동지출 중 투자 + 고정지출 중 투자 (모두 자산쪽으로)
+  const investSpent = variableInvestSpent + fixedInvestTotal;
   // 변동 생활비 사용액 = 일반 지출 - 입금(받은 돈)
   const grossLivingSpent = monthSpending
     .filter(e => !investCategories.includes(e.cat))
@@ -3810,6 +3817,24 @@ function renderMoney() {
             }).join('')}
           </div>
         </div>
+        ${(() => {
+          const monthDeposit = viewMonthExpenses.filter(e => e.type === 'income').reduce((s, e) => s + Number(e.amt), 0);
+          const finalSpent = Math.max(0, totalExp - monthDeposit);
+          return `<div style="margin-top:12px; padding-top:10px; border-top:0.5px solid var(--border-tertiary); display:flex; justify-content:space-between; align-items:baseline;">
+            <div>
+              <div style="font-size:10px; color:var(--text-tertiary);">총 지출</div>
+              <div style="font-size:14px; font-weight:700;">${totalExp.toLocaleString()}원</div>
+            </div>
+            ${monthDeposit > 0 ? `<div style="text-align:center;">
+              <div style="font-size:10px; color:var(--text-tertiary);">입금</div>
+              <div style="font-size:14px; font-weight:700; color:var(--text-success);">-${monthDeposit.toLocaleString()}원</div>
+            </div>` : ''}
+            <div style="text-align:right;">
+              <div style="font-size:10px; color:var(--text-tertiary);">최종 지출</div>
+              <div style="font-size:16px; font-weight:700; color:var(--text-info);">${finalSpent.toLocaleString()}원</div>
+            </div>
+          </div>`;
+        })()}
       </div>
     `;
   }
@@ -4279,15 +4304,7 @@ function editFixed(id) {
           </div>
         </div>
 
-        <div class="field">
-          <div class="field-label">자산명</div>
-          <input type="text" id="ef-asset-name" value="${f.assetInfo?.name || ''}" placeholder="예: 삼성전자, 주택청약통장" />
-        </div>
-
-        <div class="field">
-          <div class="field-label">티커 (선택 - 시세 자동 갱신)</div>
-          <input type="text" id="ef-asset-ticker" value="${f.assetInfo?.ticker || ''}" placeholder="예: 005930.KS" />
-        </div>
+        <div id="ef-asset-dynamic-fields"></div>
       </div>
 
       <div class="row-flex">
@@ -4302,7 +4319,128 @@ function editFixed(id) {
   `;
   modal.classList.add('show');
 
+  // 자산 종류별 동적 필드 렌더링
+  function renderAssetDynamicFields(type) {
+    const container = document.getElementById('ef-asset-dynamic-fields');
+    if (!container) return;
+    const ai = f.assetInfo || {};
+    let h = '';
+    if (['주식', 'ETF', '펀드'].includes(type)) {
+      h = `
+        <div class="field">
+          <div class="field-label">자산명</div>
+          <input type="text" id="ef-asset-name" value="${ai.name || ''}" placeholder="예: 삼성전자, SPY" />
+        </div>
+        <div class="field">
+          <div class="field-label">티커 (선택 - 시세 자동 갱신)</div>
+          <input type="text" id="ef-asset-ticker" value="${ai.ticker || ''}" placeholder="예: 005930.KS, SPY" />
+        </div>
+      `;
+    } else if (type === '채권') {
+      h = `
+        <div class="field">
+          <div class="field-label">자산명</div>
+          <input type="text" id="ef-asset-name" value="${ai.name || ''}" placeholder="예: 국고채 3년물" />
+        </div>
+        <div class="field">
+          <div class="field-label">금리 % (선택)</div>
+          <input type="number" id="ef-asset-rate" value="${ai.rate || ''}" placeholder="예: 3.5" step="0.01" />
+        </div>
+        <div class="field">
+          <div class="field-label">만기 (선택)</div>
+          <input type="text" id="ef-asset-maturity" value="${ai.maturity || ''}" placeholder="예: 2027.01" />
+        </div>
+      `;
+    } else if (type === '금') {
+      h = `
+        <div class="field">
+          <div class="field-label">자산명</div>
+          <input type="text" id="ef-asset-name" value="${ai.name || ''}" placeholder="예: 한국조폐공사 골드바, 신한 골드뱅킹" />
+        </div>
+        <input type="hidden" id="ef-asset-ticker" value="" />
+        <div style="padding:10px; background:var(--bg-warning); border-radius:8px; font-size:10px; color:var(--text-warning); line-height:1.5;">
+          💡 1돈 = 3.75g, 1냥 = 37.5g
+        </div>
+      `;
+    } else if (type === '달러') {
+      h = `
+        <div class="field">
+          <div class="field-label">자산명</div>
+          <input type="text" id="ef-asset-name" value="${ai.name || ''}" placeholder="예: 외화예금, 미국 주식 계좌" />
+        </div>
+        <input type="hidden" id="ef-asset-ticker" value="" />
+      `;
+    } else if (type === '예적금') {
+      h = `
+        <div class="field">
+          <div class="field-label">상품명</div>
+          <input type="text" id="ef-asset-name" value="${ai.name || ''}" placeholder="예: 토스 정기예금, 카카오 적금" />
+        </div>
+        <div class="field">
+          <div class="field-label">금리 % (선택)</div>
+          <input type="number" id="ef-asset-rate" value="${ai.rate || ''}" placeholder="예: 4.5" step="0.01" />
+        </div>
+        <input type="hidden" id="ef-asset-ticker" value="" />
+      `;
+    } else if (type === '청약') {
+      h = `
+        <div class="field">
+          <div class="field-label">청약 종류</div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;" id="ef-asset-subtype">
+            ${['주택청약종합저축','청년주택드림','기타'].map(s =>
+              `<button class="chip ${(ai.subType || '주택청약종합저축') === s ? 'active' : ''}" data-s="${s}">${s}</button>`
+            ).join('')}
+          </div>
+        </div>
+        <div class="field">
+          <div class="field-label">통장명/은행</div>
+          <input type="text" id="ef-asset-name" value="${ai.name || ''}" placeholder="예: KB 주택청약통장" />
+        </div>
+        <div class="field" style="display:flex; gap:8px;">
+          <div style="flex:1;">
+            <div class="field-label">납입 회차</div>
+            <input type="number" id="ef-asset-rounds" value="${ai.rounds || ''}" placeholder="예: 24" />
+          </div>
+          <div style="flex:1;">
+            <div class="field-label">금리 % (선택)</div>
+            <input type="number" id="ef-asset-rate" value="${ai.rate || ''}" placeholder="예: 2.8" step="0.01" />
+          </div>
+        </div>
+        <input type="hidden" id="ef-asset-ticker" value="" />
+      `;
+    } else if (type === '현금') {
+      h = `
+        <div class="field">
+          <div class="field-label">위치/이름</div>
+          <input type="text" id="ef-asset-name" value="${ai.name || ''}" placeholder="예: 토스 통장, 비상금" />
+        </div>
+        <input type="hidden" id="ef-asset-ticker" value="" />
+      `;
+    } else if (type === '부동산') {
+      h = `
+        <div class="field">
+          <div class="field-label">이름</div>
+          <input type="text" id="ef-asset-name" value="${ai.name || ''}" placeholder="예: 서울 강남 아파트" />
+        </div>
+        <input type="hidden" id="ef-asset-ticker" value="" />
+      `;
+    }
+    container.innerHTML = h;
+
+    // 청약 서브타입 클릭
+    container.querySelectorAll('#ef-asset-subtype .chip').forEach(b => {
+      b.addEventListener('click', () => {
+        container.querySelectorAll('#ef-asset-subtype .chip').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+      });
+    });
+  }
+
   setTimeout(() => {
+    // 초기 자산 종류 렌더링
+    const initType = f.assetInfo?.type || '주식';
+    renderAssetDynamicFields(initType);
+
     // 카테고리 선택 + 투자 필드 토글
     document.querySelectorAll('#ef-cat .chip').forEach(b => {
       b.addEventListener('click', () => {
@@ -4312,11 +4450,12 @@ function editFixed(id) {
         document.getElementById('ef-invest-fields').style.display = isInvest ? 'block' : 'none';
       });
     });
-    // 자산 종류 선택
+    // 자산 종류 선택 → 동적 필드 변경
     document.querySelectorAll('#ef-asset-type .chip').forEach(b => {
       b.addEventListener('click', () => {
         document.querySelectorAll('#ef-asset-type .chip').forEach(x => x.classList.remove('active'));
         b.classList.add('active');
+        renderAssetDynamicFields(b.dataset.t);
       });
     });
   }, 50);
@@ -4348,15 +4487,23 @@ function updateFixed(id) {
     const assetType = document.querySelector('#ef-asset-type .chip.active')?.dataset.t || '주식';
     const assetName = document.getElementById('ef-asset-name')?.value?.trim() || name;
     const assetTicker = document.getElementById('ef-asset-ticker')?.value?.trim() || '';
+    const assetRate = Number(document.getElementById('ef-asset-rate')?.value) || 0;
+    const assetMaturity = document.getElementById('ef-asset-maturity')?.value?.trim() || '';
+    const assetRounds = Number(document.getElementById('ef-asset-rounds')?.value) || 0;
+    const assetSubType = document.querySelector('#ef-asset-subtype .chip.active')?.dataset.s || '';
 
     f.autoBuy = !!autoBuy;
     f.assetInfo = { name: assetName, type: assetType, ticker: assetTicker };
+    if (assetRate) f.assetInfo.rate = assetRate;
+    if (assetMaturity) f.assetInfo.maturity = assetMaturity;
+    if (assetRounds) f.assetInfo.rounds = assetRounds;
+    if (assetSubType) f.assetInfo.subType = assetSubType;
 
     // 자산이 없으면 자동 생성
     if (autoBuy) {
       let asset = assets.find(a => a.name === assetName && a.type === assetType);
       if (!asset) {
-        assets.push({
+        asset = {
           id: Date.now(),
           type: assetType,
           name: assetName,
@@ -4364,7 +4511,12 @@ function updateFixed(id) {
           qty: 0,
           price: 0,
           note: '자동매수',
-        });
+        };
+        if (assetRate) asset.rate = assetRate;
+        if (assetMaturity) asset.maturity = assetMaturity;
+        if (assetRounds) asset.rounds = assetRounds;
+        if (assetSubType) asset.subType = assetSubType;
+        assets.push(asset);
       }
     }
   } else {
@@ -6281,7 +6433,7 @@ function renderAsset() {
       html += `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
         <span style="font-size:12px; color:var(--text-secondary);">${assets.length}개 자산</span>
         <div style="display:flex; align-items:center; gap:6px;">
-          <span style="font-size:10px; color:var(--text-tertiary);">탭하면 수정</span>
+          <button onclick="manualRefreshAssetPrices()" style="border:none; background:var(--bg-secondary); color:var(--text-secondary); padding:5px 10px; border-radius:999px; font-size:11px; cursor:pointer; font-family:inherit;" title="시세 갱신">🔄 시세</button>
           <button onclick="openAssetAddModal()" style="border:none; background:var(--bg-info); color:var(--text-info); padding:5px 12px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">+ 추가</button>
         </div>
       </div>`;
@@ -7895,11 +8047,35 @@ async function fetchAssetLive(asset) {
 }
 
 async function refreshAllAssetPrices() {
-  const promises = assets.filter(a => a.ticker).map(async (a) => {
-    const data = await fetchAssetLive(a);
-    liveAssetData[a.id] = data;
+  const tickerAssets = assets.filter(a => a.ticker);
+  console.log(`📈 자산 시세 갱신 시작: ${tickerAssets.length}개`);
+  if (tickerAssets.length === 0) {
+    console.log('티커 입력된 자산 없음 - 시세 갱신 안 함');
+    return;
+  }
+  const promises = tickerAssets.map(async (a) => {
+    try {
+      const data = await fetchAssetLive(a);
+      liveAssetData[a.id] = data;
+      console.log(`✅ ${a.name} (${a.ticker}): ${data?.price || '실패'}`);
+    } catch (e) {
+      console.error(`❌ ${a.name} (${a.ticker}):`, e.message);
+    }
   });
   await Promise.all(promises);
+  console.log('📈 시세 갱신 완료');
+}
+
+// 수동 시세 갱신 (자산 헤더 버튼용)
+async function manualRefreshAssetPrices() {
+  showToast('시세 갱신 중...');
+  window._lastAssetRefresh = 0; // 캐시 무효화
+  marketIndices = null;
+  await refreshAllAssetPrices();
+  if (assetTab === 'holdings') {
+    showToast('✨ 시세 갱신 완료');
+    renderAsset();
+  }
 }
 
 // 시장 지수 가져오기
@@ -10120,51 +10296,252 @@ function editAsset(id) {
       </div>
 
       <div class="field">
-        <div class="field-label">자산명</div>
-        <input type="text" id="e-name" value="${a.name}" />
-      </div>
-
-      <div class="field">
-        <div class="field-label">티커 심볼 (선택)</div>
-        <input type="text" id="e-ticker" value="${a.ticker || ''}" placeholder="예: 005930.KS, TSLA, BTC-USD" />
-        <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px;">비워두면 수동 입력 가격 사용</div>
-      </div>
-
-      <div class="field" style="display:flex; gap:8px;">
-        <div style="flex:1;">
-          <div class="field-label">수량</div>
-          <input type="number" id="e-qty" value="${a.qty}" step="0.0001" />
-        </div>
-        <div style="flex:1;">
-          <div class="field-label">평균 매입가</div>
-          <input type="number" id="e-price" value="${a.price}" />
+        <div class="field-label">자산 종류</div>
+        <div style="display:flex; gap:4px; flex-wrap:wrap;" id="e-type">
+          ${['주식','ETF','펀드','채권','금','달러','예적금','청약','현금','부동산'].map(t =>
+            `<button class="chip ${a.type===t?'active':''}" data-t="${t}">${t}</button>`
+          ).join('')}
         </div>
       </div>
 
-      <div class="field">
-        <div class="field-label">메모</div>
-        <input type="text" id="e-note" value="${a.note || ''}" />
-      </div>
+      <div id="e-dynamic-fields"></div>
 
       <button onclick="deleteAsset(${id})" style="width:100%; padding:12px; border:none; border-radius:var(--radius-md); background:var(--bg-danger); color:var(--text-danger); font-size:13px; font-weight:500; cursor:pointer; font-family:inherit;">자산 삭제</button>
     </div>
   `;
   modal.classList.add('show');
+
+  // 자산 종류별 동적 필드
+  function renderEditDynamic(type) {
+    const container = document.getElementById('e-dynamic-fields');
+    if (!container) return;
+    let h = '';
+
+    if (['주식', 'ETF', '펀드'].includes(type)) {
+      h = `
+        <div class="field">
+          <div class="field-label">자산명</div>
+          <input type="text" id="e-name" value="${a.name}" />
+        </div>
+        <div class="field">
+          <div class="field-label">티커 (선택)</div>
+          <input type="text" id="e-ticker" value="${a.ticker || ''}" placeholder="예: 005930.KS, SPY" />
+        </div>
+        <div class="field" style="display:flex; gap:8px;">
+          <div style="flex:1;">
+            <div class="field-label">수량 (주)</div>
+            <input type="number" id="e-qty" value="${a.qty || 1}" step="0.0001" />
+          </div>
+          <div style="flex:1;">
+            <div class="field-label">평균 매입가</div>
+            <input type="number" id="e-price" value="${a.price}" />
+          </div>
+        </div>
+      `;
+    } else if (type === '채권') {
+      h = `
+        <div class="field">
+          <div class="field-label">자산명</div>
+          <input type="text" id="e-name" value="${a.name}" />
+        </div>
+        <div class="field" style="display:flex; gap:8px;">
+          <div style="flex:1;">
+            <div class="field-label">투자 금액</div>
+            <input type="number" id="e-price" value="${a.price}" />
+          </div>
+          <div style="flex:1;">
+            <div class="field-label">금리 %</div>
+            <input type="number" id="e-rate" value="${a.rate || ''}" step="0.01" />
+          </div>
+        </div>
+        <div class="field">
+          <div class="field-label">만기 (선택)</div>
+          <input type="text" id="e-maturity" value="${a.maturity || ''}" placeholder="예: 2027.01" />
+        </div>
+        <input type="hidden" id="e-qty" value="1" />
+        <input type="hidden" id="e-ticker" value="" />
+      `;
+    } else if (type === '금') {
+      h = `
+        <div class="field">
+          <div class="field-label">자산명</div>
+          <input type="text" id="e-name" value="${a.name}" placeholder="예: 신한 골드뱅킹, 골드바" />
+        </div>
+        <div class="field" style="display:flex; gap:8px;">
+          <div style="flex:1;">
+            <div class="field-label">수량 (g)</div>
+            <input type="number" id="e-qty" value="${a.qty || 3.75}" step="0.01" />
+          </div>
+          <div style="flex:1;">
+            <div class="field-label">g당 평균가</div>
+            <input type="number" id="e-price" value="${a.price}" />
+          </div>
+        </div>
+        <input type="hidden" id="e-ticker" value="" />
+        <div style="padding:10px; background:var(--bg-warning); border-radius:8px; font-size:10px; color:var(--text-warning); line-height:1.5;">
+          💡 1돈 = 3.75g, 1냥 = 37.5g
+        </div>
+      `;
+    } else if (type === '달러') {
+      h = `
+        <div class="field">
+          <div class="field-label">자산명</div>
+          <input type="text" id="e-name" value="${a.name}" placeholder="예: 외화예금" />
+        </div>
+        <div class="field" style="display:flex; gap:8px;">
+          <div style="flex:1;">
+            <div class="field-label">수량 (USD)</div>
+            <input type="number" id="e-qty" value="${a.qty || 100}" step="0.01" />
+          </div>
+          <div style="flex:1;">
+            <div class="field-label">평균 환율</div>
+            <input type="number" id="e-price" value="${a.price || 1300}" />
+          </div>
+        </div>
+        <input type="hidden" id="e-ticker" value="USDKRW=X" />
+      `;
+    } else if (type === '예적금') {
+      h = `
+        <div class="field">
+          <div class="field-label">상품명</div>
+          <input type="text" id="e-name" value="${a.name}" placeholder="예: 토스 정기예금" />
+        </div>
+        <div class="field" style="display:flex; gap:8px;">
+          <div style="flex:1;">
+            <div class="field-label">현재 잔액</div>
+            <input type="number" id="e-price" value="${a.price}" />
+          </div>
+          <div style="flex:1;">
+            <div class="field-label">금리 %</div>
+            <input type="number" id="e-rate" value="${a.rate || ''}" step="0.01" />
+          </div>
+        </div>
+        <input type="hidden" id="e-qty" value="1" />
+        <input type="hidden" id="e-ticker" value="" />
+      `;
+    } else if (type === '청약') {
+      h = `
+        <div class="field">
+          <div class="field-label">청약 종류</div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;" id="e-subtype">
+            ${['주택청약종합저축','청년주택드림','기타'].map(s =>
+              `<button class="chip ${(a.subType || '주택청약종합저축') === s ? 'active' : ''}" data-s="${s}">${s}</button>`
+            ).join('')}
+          </div>
+        </div>
+        <div class="field">
+          <div class="field-label">통장명/은행</div>
+          <input type="text" id="e-name" value="${a.name}" placeholder="예: KB 주택청약통장" />
+        </div>
+        <div class="field" style="display:flex; gap:8px;">
+          <div style="flex:1;">
+            <div class="field-label">현재 납입액</div>
+            <input type="number" id="e-price" value="${a.price}" />
+          </div>
+          <div style="flex:1;">
+            <div class="field-label">납입 회차</div>
+            <input type="number" id="e-rounds" value="${a.rounds || ''}" />
+          </div>
+        </div>
+        <div class="field">
+          <div class="field-label">금리 % (선택)</div>
+          <input type="number" id="e-rate" value="${a.rate || ''}" step="0.01" />
+        </div>
+        <input type="hidden" id="e-qty" value="1" />
+        <input type="hidden" id="e-ticker" value="" />
+      `;
+    } else if (type === '현금') {
+      h = `
+        <div class="field">
+          <div class="field-label">위치/이름</div>
+          <input type="text" id="e-name" value="${a.name}" placeholder="예: 토스 통장" />
+        </div>
+        <div class="field">
+          <div class="field-label">금액</div>
+          <input type="number" id="e-price" value="${a.price}" />
+        </div>
+        <input type="hidden" id="e-qty" value="1" />
+        <input type="hidden" id="e-ticker" value="" />
+      `;
+    } else if (type === '부동산') {
+      h = `
+        <div class="field">
+          <div class="field-label">이름</div>
+          <input type="text" id="e-name" value="${a.name}" placeholder="예: 서울 강남 아파트" />
+        </div>
+        <div class="field">
+          <div class="field-label">현재 시세</div>
+          <input type="number" id="e-price" value="${a.price}" />
+        </div>
+        <div class="field">
+          <div class="field-label">매입가 (선택)</div>
+          <input type="number" id="e-buyprice" value="${a.buyprice || ''}" />
+        </div>
+        <input type="hidden" id="e-qty" value="1" />
+        <input type="hidden" id="e-ticker" value="" />
+      `;
+    }
+
+    h += `<div class="field">
+      <div class="field-label">메모 (선택)</div>
+      <input type="text" id="e-note" value="${a.note || ''}" />
+    </div>`;
+
+    container.innerHTML = h;
+
+    // 서브타입 클릭
+    container.querySelectorAll('#e-subtype .chip').forEach(b => {
+      b.addEventListener('click', () => {
+        container.querySelectorAll('#e-subtype .chip').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+      });
+    });
+  }
+
+  setTimeout(() => {
+    // 초기 종류
+    renderEditDynamic(a.type || '주식');
+
+    // 종류 클릭 시 변경
+    document.querySelectorAll('#e-type .chip').forEach(b => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('#e-type .chip').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        renderEditDynamic(b.dataset.t);
+      });
+    });
+  }, 50);
 }
 
 function updateAsset(id) {
   const a = assets.find(x => x.id === id);
-  if (a) {
-    a.name = document.getElementById('e-name').value.trim() || a.name;
-    a.ticker = document.getElementById('e-ticker').value.trim();
-    a.qty = Number(document.getElementById('e-qty').value) || a.qty;
-    a.price = Number(document.getElementById('e-price').value) || a.price;
-    a.note = document.getElementById('e-note').value.trim();
-    saveData();
-    showToast('저장됨');
-    closeModal();
-    renderAsset();
-  }
+  if (!a) return;
+
+  const newType = document.querySelector('#e-type .chip.active')?.dataset.t || a.type;
+  a.type = newType;
+  a.name = document.getElementById('e-name')?.value?.trim() || a.name;
+  a.ticker = document.getElementById('e-ticker')?.value?.trim() || '';
+  a.qty = Number(document.getElementById('e-qty')?.value) || a.qty || 1;
+  a.price = Number(document.getElementById('e-price')?.value) || a.price;
+  a.note = document.getElementById('e-note')?.value?.trim() || '';
+
+  // 종류별 추가 필드
+  const rate = Number(document.getElementById('e-rate')?.value) || 0;
+  const maturity = document.getElementById('e-maturity')?.value?.trim() || '';
+  const rounds = Number(document.getElementById('e-rounds')?.value) || 0;
+  const subType = document.querySelector('#e-subtype .chip.active')?.dataset.s || '';
+  const buyprice = Number(document.getElementById('e-buyprice')?.value) || 0;
+
+  if (rate) a.rate = rate; else delete a.rate;
+  if (maturity) a.maturity = maturity; else delete a.maturity;
+  if (rounds) a.rounds = rounds; else delete a.rounds;
+  if (subType) a.subType = subType; else delete a.subType;
+  if (buyprice) a.buyprice = buyprice; else delete a.buyprice;
+
+  saveData();
+  showToast('저장됨');
+  closeModal();
+  renderAsset();
 }
 
 function deleteAsset(id) {
