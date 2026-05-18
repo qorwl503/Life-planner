@@ -2137,6 +2137,13 @@ function quickAdd(d) {
             <div class="desc">운동 기록</div>
           </div>
         </button>
+        <button class="connect-card" onclick="closeModal(); openAssetAddModal();">
+          <i class="ti ti-chart-pie" style="font-size:22px; color:var(--text-info);"></i>
+          <div class="info">
+            <div class="name">자산</div>
+            <div class="desc">자산 추가</div>
+          </div>
+        </button>
       </div>
     </div>
   `;
@@ -3721,12 +3728,19 @@ function renderMoney() {
   // ★ AI 분석 카드
   html += renderMoneyAI(variableSpent, projectedTotal);
 
+  if (typeof window.fixedExpanded === 'undefined') window.fixedExpanded = false;
+
   html += `<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
-    <span style="font-size:14px; font-weight:600;">고정지출 ${budget.fixed.length}개</span>
+    <div onclick="window.fixedExpanded = !window.fixedExpanded; renderMoney();" style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+      <span style="font-size:14px; font-weight:600;">고정지출 ${budget.fixed.length}개</span>
+      <span style="font-size:11px; color:var(--text-tertiary);">${window.fixedExpanded ? '▲' : '▼'}</span>
+    </div>
     <button onclick="openFixedAddModal()" style="border:none; background:transparent; font-size:12px; color:var(--text-info); cursor:pointer; font-family:inherit; font-weight:500;">+ 추가</button>
   </div>`;
 
-  html += `<div class="card" style="padding:0 14px; margin-bottom:10px;">${renderFixedRows()}</div>`;
+  if (window.fixedExpanded) {
+    html += `<div class="card" style="padding:0 14px; margin-bottom:10px;">${renderFixedRows()}</div>`;
+  }
 
   html += `<div style="margin-bottom:14px; text-align:center; font-size:11px; color:var(--text-tertiary);">
     납부 완료 <b style="color:var(--text-success);">${fixedPaid.toLocaleString()}원</b> · 남음 <b>${fixedRemaining.toLocaleString()}원</b>
@@ -4071,58 +4085,121 @@ function bulkDeleteExpenses() {
 }
 
 function renderFixedRows() {
+  if (typeof window.fixedGroupOpen === 'undefined') window.fixedGroupOpen = {};
+
+  const catMeta = {
+    '주거': { icon: 'ti-home', emoji: '🏠' },
+    '공과금': { icon: 'ti-bolt', emoji: '🔌' },
+    '보험': { icon: 'ti-shield', emoji: '🛡️' },
+    '구독': { icon: 'ti-device-tv', emoji: '📺' },
+    '투자': { icon: 'ti-trending-up', emoji: '💎' },
+    '기타': { icon: 'ti-dots', emoji: '⋯' },
+  };
   const order = ['주거', '공과금', '보험', '구독', '투자', '기타'];
-  const sorted = [...budget.fixed].sort((a, b) => {
-    const oa = order.indexOf(a.cat);
-    const ob = order.indexOf(b.cat);
-    if (oa !== ob) return oa - ob;
-    return (a.day || 0) - (b.day || 0);
+
+  // 카테고리별 그룹화
+  const grouped = {};
+  budget.fixed.forEach(f => {
+    const cat = order.includes(f.cat) ? f.cat : '기타';
+    if (!grouped[cat]) grouped[cat] = [];
+    grouped[cat].push(f);
   });
 
   const dowNames = ['일','월','화','수','목','금','토'];
 
-  return sorted.map(f => {
-    const cycle = f.cycle || 'monthly';
-    // 이번 달 발생 횟수
-    let occurCount = 1;
-    if (cycle !== 'monthly') {
-      const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
-      let count = 0;
-      for (let d = 1; d <= daysInMonth; d++) {
-        const dt = new Date(currentYear, currentMonth, d);
-        if (dt.getDay() === Number(f.dow)) count++;
+  // 카테고리별 합계 함수
+  const calcGroupTotal = (items) => {
+    return items.reduce((sum, f) => {
+      const cycle = f.cycle || 'monthly';
+      let occurCount = 1;
+      if (cycle !== 'monthly') {
+        const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+        let count = 0;
+        for (let d = 1; d <= daysInMonth; d++) {
+          const dt = new Date(currentYear, currentMonth, d);
+          if (dt.getDay() === Number(f.dow)) count++;
+        }
+        if (cycle === 'biweekly') count = Math.ceil(count / 2);
+        occurCount = count;
       }
-      if (cycle === 'biweekly') count = Math.ceil(count / 2);
-      occurCount = count;
-    }
-    const totalAmt = Number(f.amt) * occurCount;
-    const cycleLabel = cycle === 'monthly'
-      ? `매월 ${f.day}일`
-      : cycle === 'weekly'
-        ? `매주 ${dowNames[f.dow]} (월 ${occurCount}회)`
-        : `격주 ${dowNames[f.dow]} (월 ${occurCount}회)`;
+      return sum + Number(f.amt) * occurCount;
+    }, 0);
+  };
 
-    return `
-    <div class="fixed-row">
-      <div class="ic" style="background:${f.paid?'var(--bg-success)':'var(--bg-secondary)'}; color:${f.paid?'var(--text-success)':'var(--text-secondary)'}; cursor:pointer;" onclick="toggleFixedPaid(${f.id})">
-        <i class="ti ${f.icon}"></i>
-      </div>
-      <div style="flex:1; min-width:0; cursor:pointer;" onclick="toggleFixedPaid(${f.id})">
-        <div class="nm">${f.name}</div>
-        <div class="meta">${f.cat} · ${cycleLabel}</div>
-      </div>
-      <div style="text-align:right; cursor:pointer;" onclick="toggleFixedPaid(${f.id})">
-        <div class="amt ${f.paid?'paid':'upcoming'}">${totalAmt.toLocaleString()}원</div>
-        <div class="meta" style="color:${f.paid?'var(--text-success)':'var(--text-tertiary)'};">
-          ${f.paid ? '✓ 완료' : occurCount > 1 ? `${f.amt.toLocaleString()}원 × ${occurCount}` : (f.day && f.day < today ? '⚠ 연체' : (f.day ? `${f.day - today}일 후` : ''))}
+  let html = '';
+  order.forEach(cat => {
+    const items = grouped[cat];
+    if (!items || items.length === 0) return;
+
+    const meta = catMeta[cat] || { emoji: '·' };
+    const groupTotal = calcGroupTotal(items);
+    const paidCount = items.filter(f => f.paid).length;
+    const allPaid = paidCount === items.length;
+    const isOpen = !!window.fixedGroupOpen[cat];
+
+    html += `
+      <div onclick="window.fixedGroupOpen['${cat}'] = !window.fixedGroupOpen['${cat}']; renderMoney();" style="display:flex; align-items:center; justify-content:space-between; padding:12px 0; border-bottom:0.5px solid var(--border-tertiary); cursor:pointer;">
+        <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+          <span style="font-size:18px;">${meta.emoji}</span>
+          <span style="font-size:13px; font-weight:600;">${cat}</span>
+          <span style="font-size:10px; padding:1px 6px; border-radius:999px; background:var(--bg-secondary); color:var(--text-secondary);">${items.length}</span>
+          ${allPaid ? `<span style="font-size:10px; color:var(--text-success);">✓</span>` : `<span style="font-size:10px; color:var(--text-tertiary);">${paidCount}/${items.length}</span>`}
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:13px; font-weight:600;">${groupTotal.toLocaleString()}원</span>
+          <span style="font-size:11px; color:var(--text-tertiary);">${isOpen ? '▲' : '▼'}</span>
         </div>
       </div>
-      <button onclick="editFixed(${f.id})" style="border:none; background:transparent; cursor:pointer; padding:6px 4px 6px 8px; color:var(--text-tertiary); font-family:inherit; flex-shrink:0;" aria-label="수정">
-        <i class="ti ti-dots-vertical" style="font-size:16px;"></i>
-      </button>
-    </div>
-  `;
-  }).join('');
+    `;
+
+    if (isOpen) {
+      // 정렬: 발생일 순
+      const sorted = items.slice().sort((a, b) => (a.day || 0) - (b.day || 0));
+      sorted.forEach(f => {
+        const cycle = f.cycle || 'monthly';
+        let occurCount = 1;
+        if (cycle !== 'monthly') {
+          const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+          let count = 0;
+          for (let d = 1; d <= daysInMonth; d++) {
+            const dt = new Date(currentYear, currentMonth, d);
+            if (dt.getDay() === Number(f.dow)) count++;
+          }
+          if (cycle === 'biweekly') count = Math.ceil(count / 2);
+          occurCount = count;
+        }
+        const totalAmt = Number(f.amt) * occurCount;
+        const cycleLabel = cycle === 'monthly'
+          ? `매월 ${f.day}일`
+          : cycle === 'weekly'
+            ? `매주 ${dowNames[f.dow]} (월 ${occurCount}회)`
+            : `격주 ${dowNames[f.dow]} (월 ${occurCount}회)`;
+
+        html += `
+        <div class="fixed-row" style="padding-left:20px; background:var(--bg-secondary); border-bottom:0.5px solid var(--border-tertiary);">
+          <div class="ic" style="background:${f.paid?'var(--bg-success)':'white'}; color:${f.paid?'var(--text-success)':'var(--text-secondary)'}; cursor:pointer;" onclick="toggleFixedPaid(${f.id})">
+            <i class="ti ${f.icon}"></i>
+          </div>
+          <div style="flex:1; min-width:0; cursor:pointer;" onclick="toggleFixedPaid(${f.id})">
+            <div class="nm">${f.name}</div>
+            <div class="meta">${cycleLabel}</div>
+          </div>
+          <div style="text-align:right; cursor:pointer;" onclick="toggleFixedPaid(${f.id})">
+            <div class="amt ${f.paid?'paid':'upcoming'}">${totalAmt.toLocaleString()}원</div>
+            <div class="meta" style="color:${f.paid?'var(--text-success)':'var(--text-tertiary)'};">
+              ${f.paid ? '✓ 완료' : occurCount > 1 ? `${f.amt.toLocaleString()}원 × ${occurCount}` : (f.day && f.day < today ? '⚠ 연체' : (f.day ? `${f.day - today}일 후` : ''))}
+            </div>
+          </div>
+          <button onclick="editFixed(${f.id})" style="border:none; background:transparent; cursor:pointer; padding:6px 4px 6px 8px; color:var(--text-tertiary); font-family:inherit; flex-shrink:0;" aria-label="수정">
+            <i class="ti ti-dots-vertical" style="font-size:16px;"></i>
+          </button>
+        </div>
+        `;
+      });
+    }
+  });
+
+  return html;
 }
 
 function editFixed(id) {
@@ -4226,7 +4303,7 @@ function toggleFixedPaid(id) {
   if (f) {
     f.paid = !f.paid;
     saveData();
-    showToast(f.paid ? `${f.name} 납부 완료` : `${f.name} 미납 변경`);
+    showToast(f.paid ? `${f.name} 납부 완료` : `${f.name} 납부 취소`);
   }
   renderMoney();
 }
