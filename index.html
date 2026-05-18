@@ -5157,13 +5157,13 @@ function processAutoBuy(fixed) {
 
   // 현재 시세 (있으면) 또는 기존 평단가
   const live = liveAssetData[asset.id];
-  const currPrice = live?.priceKRW || asset.price || 0;
+  const currPrice = live?.krwPrice || asset.price || 0;
 
   newDates.forEach(d => {
     // 가계부에는 추가 X! (고정지출에 이미 있음 - 중복 방지)
     // 자산 수량/평단가만 업데이트
     if (currPrice > 0) {
-      // 시세 알면 정확한 수량 계산
+      // 시세 알면 정확한 수량 계산 (소수점 매매 OK)
       const newQty = fixed.amt / currPrice;
       const oldQty = Number(asset.qty) || 0;
       const oldPrice = Number(asset.price) || 0;
@@ -5171,12 +5171,13 @@ function processAutoBuy(fixed) {
       asset.qty = parseFloat(totalQty.toFixed(4));
       asset.price = totalQty > 0 ? Math.round(((oldQty * oldPrice) + fixed.amt) / totalQty) : currPrice;
     } else {
-      // 시세 모르면 금액만 누적 (수동 수정 안내)
+      // 시세 모르면 금액만 누적, 수량은 변동 X (소수점 매매는 수동 입력)
       const oldQty = Number(asset.qty) || 0;
       const oldPrice = Number(asset.price) || 0;
-      asset.qty = oldQty + 1;
-      asset.price = (oldPrice * oldQty + fixed.amt) / (oldQty + 1);
-      asset.price = Math.round(asset.price);
+      // 평단가 = 평균가 + 새 매수 (수량 1로 가정하지 않고 그냥 평균)
+      const totalAmt = oldQty * oldPrice + fixed.amt;
+      // 수량 자체는 본인이 수동으로 정리
+      console.warn(`⚠️ ${asset.name} 시세 모름 - 수량은 수동으로 정리 필요 (현재 누적 금액: ${totalAmt.toLocaleString()}원)`);
     }
   });
 
@@ -6456,8 +6457,12 @@ function renderAsset() {
           </div>`;
         } else if (live?.error) {
           priceInfo = `<div style="font-size:10px; color:var(--text-danger);">시세 조회 실패</div>`;
-        } else if (a.qty > 1) {
-          priceInfo = `<div style="font-size:10px; color:var(--text-tertiary);">${a.qty}주 × ${Number(a.price).toLocaleString()}</div>`;
+        } else if (a.qty && Number(a.qty) > 0 && Number(a.qty) !== 1) {
+          // 소수점 매매 지원 - 정수면 그대로, 소수면 최대 4자리
+          const qtyStr = Number.isInteger(Number(a.qty))
+            ? Number(a.qty).toLocaleString()
+            : Number(a.qty).toFixed(4).replace(/\.?0+$/, ''); // 0.5000 → 0.5
+          priceInfo = `<div style="font-size:10px; color:var(--text-tertiary);">${qtyStr}주 × ${Number(a.price).toLocaleString()}</div>`;
         }
 
         const liveBadge = a.ticker
