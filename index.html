@@ -1671,6 +1671,7 @@ function renderCalendar() {
   header.innerHTML = `
     <h1>홈</h1>
     <div class="header-actions">
+      <button onclick="openSettingsModal()" aria-label="설정"><i class="ti ti-settings"></i></button>
       <button onclick="openAddModal()" aria-label="추가"><i class="ti ti-plus"></i></button>
     </div>
   `;
@@ -7135,8 +7136,6 @@ function renderAsset() {
     <div class="header-actions">
       <button onclick="manualRefreshPrices()" aria-label="새로고침" id="refresh-btn"><i class="ti ti-refresh"></i></button>
       <button onclick="openAIKeyModal()" aria-label="AI 설정" style="position:relative;"><i class="ti ti-sparkles"></i>${!window.GEMINI_API_KEY ? '<span style="position:absolute; top:6px; right:6px; width:6px; height:6px; border-radius:50%; background:#FF3B30;"></span>' : ''}</button>
-      <button onclick="openAccountModal()" aria-label="계정"><i class="ti ti-user-circle"></i></button>
-      <button onclick="openSettingsModal()" aria-label="설정"><i class="ti ti-settings"></i></button>
       <button onclick="openAssetAddModal()" aria-label="추가"><i class="ti ti-plus"></i></button>
     </div>
   `;
@@ -10757,23 +10756,38 @@ function openSettingsModal() {
     <div class="modal">
       <div class="modal-handle"></div>
       <div class="modal-header">
-        <button class="modal-cancel" onclick="closeModal()">취소</button>
-        <h2>자산 설정</h2>
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+        <h2>설정</h2>
         <button class="modal-save" onclick="saveSettings()">저장</button>
       </div>
 
+      <!-- 👤 계정 -->
+      <button onclick="closeModal(); setTimeout(()=>openAccountModal(),100);" style="width:100%; padding:14px; border:0.5px solid var(--border-tertiary); background:white; border-radius:var(--radius-md); cursor:pointer; font-family:inherit; text-align:left; margin-bottom:16px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-size:20px;">👤</span>
+          <div style="flex:1;">
+            <div style="font-size:13px; font-weight:600;">계정</div>
+            <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${(typeof firebaseUser !== 'undefined' && firebaseUser?.email) ? firebaseUser.email : '로그인 / 동기화'}</div>
+          </div>
+          <i class="ti ti-chevron-right" style="color:var(--text-tertiary);"></i>
+        </div>
+      </button>
+
+      <!-- 💰 재무 설정 -->
       <div style="padding:12px; background:var(--bg-secondary); border-radius:var(--radius-md); margin-bottom:14px; font-size:11px; color:var(--text-secondary); line-height:1.6;">
-        AI 자산 코치가 더 정확한 추천을 하려면 이 정보가 필요해요.
+        💰 AI 자산 코치가 더 정확한 추천을 하려면 이 정보가 필요해요.
       </div>
 
       <div class="field">
         <div class="field-label">월 소득 (세후)</div>
         <input type="number" id="set-income" value="${settings.monthlyIncome}" placeholder="3000000" />
+        ${quickAmtButtons('set-income')}
       </div>
 
       <div class="field">
         <div class="field-label">월 저축 목표</div>
         <input type="number" id="set-saving" value="${settings.savingsGoal}" placeholder="500000" />
+        ${quickAmtButtons('set-saving')}
       </div>
 
       <div class="field">
