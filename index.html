@@ -6347,12 +6347,14 @@ async function processAssetCapture(input) {
 각 항목: {type, name, qty, price, ticker}
 - type: 다음 중 - "주식","ETF","펀드","채권","금","달러","예적금","청약","현금","부동산"
 - name: 종목명/계좌명 (예: "삼성전자", "토스 정기예금", "주택청약통장")
-- qty: 보유 수량 (주식이면 주, 예금이면 1)
-- price: 평단가 또는 평균 매수가 (원)
+- qty: 보유 수량 (소수점 매매 OK! 예: 0.5, 3.2456 같이 정확히 추출. 정수만 가능한 게 아님)
+- price: 평단가 또는 평균 매수가 (원, 정수)
 - ticker: 종목 코드 (있으면, 한국주식 6자리 또는 미국 티커)
 
+⚠️ 중요: 미국 주식/ETF는 보통 소수점 단위로 매매됨 (예: SPY 0.5234주). 보유 수량에 소수점 있으면 그대로 추출해줘. 절대 반올림하지 마.
+
 반드시 다음 JSON 형식으로만:
-{"items":[{"type":"주식","name":"삼성전자","qty":10,"price":70000,"ticker":"005930"}]}
+{"items":[{"type":"주식","name":"삼성전자","qty":10,"price":70000,"ticker":"005930"},{"type":"ETF","name":"SPY","qty":0.5234,"price":750000,"ticker":"SPY"}]}
 
 분석 불가하면: {"items":[],"error":"이유"}`;
 
@@ -6402,17 +6404,20 @@ function openAssetReviewModal(items) {
   window._assetReviewItems = items.map((it, i) => ({ ...it, _checked: true, _id: i }));
 
   const renderList = () => {
-    return window._assetReviewItems.map((it, i) => `
+    return window._assetReviewItems.map((it, i) => {
+      const q = Number(it.qty) || 0;
+      const qtyStr = Number.isInteger(q) ? q.toLocaleString() : q.toFixed(4).replace(/\.?0+$/, '');
+      return `
       <div style="display:flex; align-items:center; gap:8px; padding:10px 0; border-bottom:0.5px solid var(--border-tertiary);">
         <input type="checkbox" id="ar-${i}" ${it._checked ? 'checked' : ''} onchange="window._assetReviewItems[${i}]._checked = this.checked;" style="width:18px; height:18px; cursor:pointer;" />
         <div style="flex:1; min-width:0;">
           <div style="font-size:13px; font-weight:500;">${it.name}</div>
           <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">
-            ${it.type} · ${Number(it.qty || 1).toLocaleString()} × ${Number(it.price || 0).toLocaleString()}원 = <b>${(Number(it.qty || 1) * Number(it.price || 0)).toLocaleString()}원</b>
+            ${it.type} · ${qtyStr}주 × ${Number(it.price || 0).toLocaleString()}원 = <b>${Math.round(q * Number(it.price || 0)).toLocaleString()}원</b>
           </div>
         </div>
       </div>
-    `).join('');
+    `;}).join('');
   };
 
   modal.innerHTML = `
@@ -6444,12 +6449,14 @@ function saveAssetReviewItems() {
   }
 
   selected.forEach(it => {
+    const rawQty = Number(it.qty);
+    const qty = isFinite(rawQty) ? parseFloat(rawQty.toFixed(4)) : 1;
     assets.push({
       id: Date.now() + Math.random(),
       type: it.type || '주식',
       name: it.name || '이름없음',
-      qty: Number(it.qty) || 1,
-      price: Number(it.price) || 0,
+      qty,
+      price: Math.round(Number(it.price)) || 0,
       ticker: it.ticker || '',
       memo: '',
     });
