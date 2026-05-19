@@ -1671,8 +1671,7 @@ function renderCalendar() {
   header.innerHTML = `
     <h1>홈</h1>
     <div class="header-actions">
-      <button onclick="openAIKeyModal()" aria-label="AI 설정" style="position:relative;"><i class="ti ti-sparkles"></i>${!window.GEMINI_API_KEY ? '<span style="position:absolute; top:6px; right:6px; width:6px; height:6px; border-radius:50%; background:#FF3B30;"></span>' : ''}</button>
-      <button onclick="openSettingsModal()" aria-label="설정"><i class="ti ti-settings"></i></button>
+      <button onclick="openSettingsModal()" aria-label="설정" style="position:relative;"><i class="ti ti-settings"></i>${!window.GEMINI_API_KEY ? '<span style="position:absolute; top:6px; right:6px; width:6px; height:6px; border-radius:50%; background:#FF3B30;"></span>' : ''}</button>
       <button onclick="openAddModal()" aria-label="추가"><i class="ti ti-plus"></i></button>
     </div>
   `;
@@ -10786,10 +10785,6 @@ function openSettingsModal() {
           <i class="ti ti-chevron-right" style="color:var(--text-tertiary);"></i>
         </div>
       </button>
-
-      <div style="margin-top:14px; font-size:10px; color:var(--text-tertiary); padding:10px; line-height:1.6;">
-        💡 자산 관련 설정(월 소득, 저축 목표, 투자 성향)은 <b>자산 탭 → 🎯</b>에서 변경하세요.
-      </div>
     </div>
   `;
   modal.classList.add('show');
