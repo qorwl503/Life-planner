@@ -5355,9 +5355,13 @@ function resetSimSettings() {
 
 // 자산의 모든 lot에서 총 수량 + 평균 평단가 계산
 function recalcAssetFromLots(asset) {
+  // 납입형 자산 (청약/예적금/현금/부동산): 기존 잔액 + lot 누적
+  const isDepositType = ['청약', '예적금', '현금', '부동산'].includes(asset.type);
+
   if (!asset.lots || asset.lots.length === 0) {
     return; // lot 없으면 수동 입력 그대로
   }
+
   let totalQty = 0;
   let totalCost = 0;
   asset.lots.forEach(lot => {
@@ -5366,8 +5370,21 @@ function recalcAssetFromLots(asset) {
     totalQty += q;
     totalCost += q * p;
   });
-  asset.qty = parseFloat(totalQty.toFixed(4));
-  asset.price = totalQty > 0 ? Math.round(totalCost / totalQty) : 0;
+
+  if (isDepositType) {
+    // 납입형: 기존 잔액(initialBalance) + lot 누적
+    const initialBalance = Number(asset.initialBalance) || 0;
+    const initialRounds = Number(asset.initialRounds) || 0;
+    asset.qty = 1;
+    asset.price = Math.round(initialBalance + totalCost); // 기존 + 자동 누적
+    if (asset.type === '청약') {
+      asset.rounds = initialRounds + totalQty; // 기존 회차 + 자동 회차
+    }
+  } else {
+    // 주식/ETF/금/달러 등 - 수량 × 평단가
+    asset.qty = parseFloat(totalQty.toFixed(4));
+    asset.price = totalQty > 0 ? Math.round(totalCost / totalQty) : 0;
+  }
 }
 
 // 자산에 lot 추가 헬퍼
@@ -5754,10 +5771,27 @@ async function processAutoBuy(fixed) {
 
   newDates.forEach(d => {
     const dateStr = d.toISOString().split('T')[0];
-    if (currPrice > 0) {
-      // 시세 알면 정확한 수량 계산 (소수점 매매 OK)
+
+    // 청약/예적금/현금/부동산: 납입형 - 금액 그대로 누적 (qty=1, price=금액)
+    const isDepositType = ['청약', '예적금', '현금', '부동산'].includes(asset.type);
+
+    if (isDepositType) {
+      addAssetLot(asset, {
+        source: `🤖 ${fixed.name}`,
+        qty: 1,
+        price: fixed.amt,
+        date: dateStr,
+        autoBuy: true,
+        note: '자동 납입',
+      });
+      // 청약은 회차도 ++
+      if (asset.type === '청약') {
+        asset.rounds = (asset.rounds || 0) + 1;
+      }
+      console.log(`💰 ${asset.name} 납입 lot 추가: ${dateStr}, ${fixed.amt.toLocaleString()}원, 총 ${asset.price.toLocaleString()}원${asset.type === '청약' ? `, ${asset.rounds}회차` : ''}`);
+    } else if (currPrice > 0) {
+      // 주식/ETF/금/달러: 시세 알면 정확한 수량 계산 (소수점 매매 OK)
       const newQty = fixed.amt / currPrice;
-      // lot 추가
       addAssetLot(asset, {
         source: `🤖 ${fixed.name}`,
         qty: newQty,
@@ -6197,7 +6231,7 @@ function openExpenseModal(forDateKey) {
 
       <!-- 📸 카드 캡처로 자동 입력 -->
       <div style="margin-bottom:14px;">
-        <input type="file" id="card-capture-input" accept="image/*" style="display:none;" onchange="processCardCapture(this)" />
+        <input type="file" id="card-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processCardCapture(this)" />
         <button onclick="document.getElementById('card-capture-input').click()" style="width:100%; padding:12px; border:1.5px dashed var(--text-info); background:rgba(70,140,255,0.06); color:var(--text-info); border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:8px;">
           <i class="ti ti-camera" style="font-size:16px;"></i>
           📸 카드 사용 내역 캡처 자동 입력
@@ -6559,8 +6593,8 @@ function deleteExpense(id) {
 // ===== 📸 카드 캡처 OCR (Gemini Vision) =====
 // ===== 📸 자산 캡처 OCR (Gemini Vision) =====
 async function processAssetCapture(input) {
-  const file = input.files?.[0];
-  if (!file) return;
+  const files = Array.from(input.files || []);
+  if (files.length === 0) return;
 
   if (!window.GEMINI_API_KEY) {
     showToast('AI 키 먼저 설정해주세요');
@@ -6569,17 +6603,24 @@ async function processAssetCapture(input) {
 
   const statusEl = document.getElementById('asset-capture-status');
   statusEl.style.display = 'block';
-  statusEl.innerHTML = `<div style="display:flex; align-items:center; justify-content:center; gap:6px;"><div class="spinner" style="width:12px; height:12px;"></div>분석 중...</div>`;
 
-  try {
-    const base64 = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result.split(',')[1]);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
+  const allItems = [];
+  let successCount = 0;
+  let failCount = 0;
 
-    const mimeType = file.type || 'image/jpeg';
+  for (let idx = 0; idx < files.length; idx++) {
+    const file = files[idx];
+    statusEl.innerHTML = `<div style="display:flex; align-items:center; justify-content:center; gap:6px;"><div class="spinner" style="width:12px; height:12px;"></div>이미지 ${idx + 1}/${files.length} 분석 중...</div>`;
+
+    try {
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      const mimeType = file.type || 'image/jpeg';
 
     const prompt = `증권/은행/투자 앱 화면에서 보유 자산을 추출해 JSON 반환.
 
@@ -6668,19 +6709,35 @@ async function processAssetCapture(input) {
       console.log(`  ${i+1}. ${it.name}: qty=${it.qty} (typeof: ${typeof it.qty}), price=${it.price}`);
     });
 
-    if (parsed.error || !parsed.items || parsed.items.length === 0) {
-      statusEl.innerHTML = `<span style="color:var(--text-warning);">⚠️ ${parsed.error || '추출된 자산이 없어요'}</span>`;
-      return;
+      if (parsed.error || !parsed.items || parsed.items.length === 0) {
+        console.warn(`이미지 ${idx + 1} 추출 실패:`, parsed.error || '항목 없음');
+        failCount++;
+        continue;
+      }
+
+      // 이미지별 출처 메모 추가
+      parsed.items.forEach(it => {
+        it._sourceImg = `이미지 ${idx + 1}/${files.length}`;
+      });
+      allItems.push(...parsed.items);
+      successCount++;
+    } catch (e) {
+      console.error(`이미지 ${idx + 1} 오류:`, e);
+      failCount++;
     }
-
-    statusEl.style.display = 'none';
-    closeModal();
-    openAssetReviewModal(parsed.items);
-
-  } catch (e) {
-    console.error('자산 캡처 오류:', e);
-    statusEl.innerHTML = `<span style="color:var(--text-danger);">❌ ${e.message}</span>`;
   }
+
+  if (allItems.length === 0) {
+    statusEl.innerHTML = `<span style="color:var(--text-warning);">⚠️ 추출된 자산이 없어요 (${failCount}개 실패)</span>`;
+    input.value = '';
+    return;
+  }
+
+  statusEl.style.display = 'none';
+  closeModal();
+
+  showToast(`✅ ${files.length}장에서 ${allItems.length}개 자산 추출됨`);
+  openAssetReviewModal(allItems);
 
   input.value = '';
 }
@@ -6843,8 +6900,8 @@ function saveAssetReviewItems() {
 }
 
 async function processCardCapture(input) {
-  const file = input.files?.[0];
-  if (!file) return;
+  const files = Array.from(input.files || []);
+  if (files.length === 0) return;
 
   if (!window.GEMINI_API_KEY) {
     showToast('AI 키 먼저 설정해주세요');
@@ -6854,21 +6911,25 @@ async function processCardCapture(input) {
 
   const statusEl = document.getElementById('card-capture-status');
   statusEl.style.display = 'block';
-  statusEl.innerHTML = `<div style="display:flex; align-items:center; justify-content:center; gap:6px;"><div class="spinner" style="width:12px; height:12px;"></div>분석 중...</div>`;
 
-  try {
-    // 이미지 → base64
-    const base64 = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result.split(',')[1]);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
+  const allItems = [];
+  let failCount = 0;
 
-    const mimeType = file.type || 'image/jpeg';
+  for (let idx = 0; idx < files.length; idx++) {
+    const file = files[idx];
+    statusEl.innerHTML = `<div style="display:flex; align-items:center; justify-content:center; gap:6px;"><div class="spinner" style="width:12px; height:12px;"></div>이미지 ${idx + 1}/${files.length} 분석 중...</div>`;
 
-    // Gemini Vision API 호출
-    const prompt = `이 이미지는 카드 사용 내역 (또는 영수증, 결제 알림 등)이야.
+    try {
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      const mimeType = file.type || 'image/jpeg';
+
+      const prompt = `이 이미지는 카드 사용 내역 (또는 영수증, 결제 알림 등)이야.
 거래 항목들을 모두 추출해서 JSON 배열로 반환해줘.
 
 규칙:
@@ -6884,65 +6945,67 @@ async function processCardCapture(input) {
 
 만약 분석 불가하면: {"items":[],"error":"이유"}`;
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${window.GEMINI_API_KEY}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${window.GEMINI_API_KEY}`;
 
-    const body = {
-      contents: [{
-        parts: [
-          { text: prompt },
-          { inline_data: { mime_type: mimeType, data: base64 } }
-        ]
-      }],
-      generationConfig: {
-        temperature: 0.1,
-        maxOutputTokens: 2000,
+      const body = {
+        contents: [{
+          parts: [
+            { text: prompt },
+            { inline_data: { mime_type: mimeType, data: base64 } }
+          ]
+        }],
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 2000,
+        }
+      };
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error?.message || `HTTP ${res.status}`);
+
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      console.log(`📸 OCR 결과 ${idx + 1}:`, text);
+
+      let jsonStr = text.trim().replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+      let parsed;
+      try { parsed = JSON.parse(jsonStr); }
+      catch (e) {
+        const match = jsonStr.match(/\{[\s\S]*\}/);
+        if (match) parsed = JSON.parse(match[0]);
+        else throw new Error('JSON 파싱 실패');
       }
-    };
 
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+      if (parsed.error || !parsed.items || parsed.items.length === 0) {
+        console.warn(`이미지 ${idx + 1} 추출 실패`);
+        failCount++;
+        continue;
+      }
 
-    const data = await res.json();
-    if (!res.ok || data.error) {
-      throw new Error(data.error?.message || `HTTP ${res.status}`);
-    }
-
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    console.log('📸 OCR 결과:', text);
-
-    // JSON 추출 (```json ... ``` 또는 그냥 JSON)
-    let jsonStr = text.trim();
-    jsonStr = jsonStr.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-
-    let parsed;
-    try {
-      parsed = JSON.parse(jsonStr);
+      allItems.push(...parsed.items);
     } catch (e) {
-      // JSON 추출 재시도
-      const match = jsonStr.match(/\{[\s\S]*\}/);
-      if (match) parsed = JSON.parse(match[0]);
-      else throw new Error('JSON 파싱 실패');
+      console.error(`이미지 ${idx + 1} 오류:`, e);
+      failCount++;
     }
-
-    if (parsed.error || !parsed.items || parsed.items.length === 0) {
-      statusEl.innerHTML = `<span style="color:var(--text-warning);">⚠️ ${parsed.error || '추출된 항목이 없어요'}</span>`;
-      return;
-    }
-
-    statusEl.style.display = 'none';
-    closeModal();
-    // 검토 모달 표시
-    openCardReviewModal(parsed.items);
-
-  } catch (e) {
-    console.error('카드 캡처 오류:', e);
-    statusEl.innerHTML = `<span style="color:var(--text-danger);">❌ ${e.message}</span>`;
   }
 
-  input.value = ''; // 같은 파일 다시 선택 가능하게
+  if (allItems.length === 0) {
+    statusEl.innerHTML = `<span style="color:var(--text-warning);">⚠️ 추출된 항목 없음</span>`;
+    input.value = '';
+    return;
+  }
+
+  statusEl.style.display = 'none';
+  closeModal();
+  showToast(`✅ ${files.length}장에서 ${allItems.length}개 거래 추출됨`);
+  openCardReviewModal(allItems);
+
+  input.value = '';
 }
 
 // 카드 캡처 검토 모달 - 추출된 항목 확인 + 일괄 추가
@@ -7077,15 +7140,22 @@ function saveExpense() {
       if (lastExp && !lastExp.memo) {
         lastExp.memo = invName;
       } else if (lastExp && lastExp.memo && !lastExp.memo.includes(invName)) {
-        // 메모 다르면 자산 이름 정보 추가
         lastExp.linkedAssetName = invName;
       } else {
         lastExp.linkedAssetName = invName;
       }
 
+      const today = dateKeyVal;
+      const isDepositType = ['청약', '예적금', '현금', '부동산'].includes(cat);
+
       // 자산 종류에 맞게 수량/가격 처리
       let qty = 1, price = amt, ticker = '';
-      if (['주식','ETF','펀드','채권','예적금','부동산'].includes(cat)) {
+
+      if (isDepositType) {
+        // 납입형: qty=1, price=납입액
+        qty = 1;
+        price = amt;
+      } else if (['주식','ETF','펀드','채권'].includes(cat)) {
         qty = Number(document.getElementById('inv-qty')?.value) || 1;
         price = qty > 0 ? amt / qty : amt;
         ticker = document.getElementById('inv-ticker')?.value?.trim() || '';
@@ -7095,30 +7165,53 @@ function saveExpense() {
       } else if (cat === '달러') {
         qty = Number(document.getElementById('inv-dollar-qty')?.value) || 1;
         price = qty > 0 ? amt / qty : amt;
-      } else if (cat === '현금') {
-        qty = 1;
-        price = amt;
       }
 
-      // 기존 자산 있으면 → 수량 추가 + 평균가 재계산
+      // 기존 자산 찾기
       const existing = assets.find(a => a.name === invName && a.type === cat);
+
       if (existing) {
-        const oldQty = Number(existing.qty) || 0;
-        const oldPrice = Number(existing.price) || 0;
-        const newQty = oldQty + qty;
-        const newAvgPrice = newQty > 0 ? ((oldQty * oldPrice) + amt) / newQty : price;
-        existing.qty = newQty;
-        existing.price = Math.round(newAvgPrice);
+        // lots 시스템으로 추가
+        addAssetLot(existing, {
+          source: `📝 가계부 ${today}`,
+          qty,
+          price: Math.round(price),
+          date: today,
+          fxDiscount: existing.fxDiscount || null,
+          autoBuy: false,
+          note: '가계부에서 추가',
+        });
+        // 청약은 회차도 ++
+        if (cat === '청약') {
+          existing.rounds = (existing.rounds || 0) + 1;
+        }
         if (ticker && !existing.ticker) existing.ticker = ticker;
-        showToast(`${cat} ${amt.toLocaleString()}원 추가 (${invName} 평단 재계산)`);
+        showToast(`${cat} ${amt.toLocaleString()}원 추가 (${invName})`);
       } else {
-        // 신규 자산 추가
-        assets.push({
+        // 신규 자산 (lots 시스템으로)
+        const newAsset = {
           id: Date.now() + 1,
           name: invName,
-          ticker, type: cat, region: '국내',
-          qty, price: Math.round(price),
+          ticker,
+          type: cat,
+          region: '국내',
+          qty: 0,
+          price: 0,
           note: memo || '가계부에서 자동 추가',
+          lots: [],
+        };
+        if (cat === '청약') {
+          newAsset.subType = '주택청약종합저축';
+          newAsset.rounds = 1;
+        }
+        assets.push(newAsset);
+        addAssetLot(newAsset, {
+          source: `📝 가계부 ${today}`,
+          qty,
+          price: Math.round(price),
+          date: today,
+          autoBuy: false,
+          note: '가계부 첫 입력',
         });
         showToast(`${cat} ${amt.toLocaleString()}원 저장 (${invName} 자산 추가됨)`);
       }
@@ -10994,7 +11087,7 @@ function openAssetAddModal() {
 
       <!-- 📸 캡처로 자동 입력 -->
       <div style="margin-bottom:14px;">
-        <input type="file" id="asset-capture-input" accept="image/*" style="display:none;" onchange="processAssetCapture(this)" />
+        <input type="file" id="asset-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processAssetCapture(this)" />
         <button onclick="document.getElementById('asset-capture-input').click()" style="width:100%; padding:12px; border:1.5px dashed var(--text-info); background:rgba(70,140,255,0.06); color:var(--text-info); border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:8px;">
           <i class="ti ti-camera" style="font-size:16px;"></i>
           📸 증권/은행 앱 캡처 자동 입력
@@ -11689,8 +11782,6 @@ function updateAsset(id) {
   a.type = newType;
   a.name = document.getElementById('e-name')?.value?.trim() || a.name;
   a.ticker = document.getElementById('e-ticker')?.value?.trim() || '';
-  a.qty = Number(document.getElementById('e-qty')?.value) || a.qty || 1;
-  a.price = Number(document.getElementById('e-price')?.value) || a.price;
   a.note = document.getElementById('e-note')?.value?.trim() || '';
 
   // 종류별 추가 필드
@@ -11703,14 +11794,38 @@ function updateAsset(id) {
 
   if (rate) a.rate = rate; else delete a.rate;
   if (maturity) a.maturity = maturity; else delete a.maturity;
-  if (rounds) a.rounds = rounds; else delete a.rounds;
   if (subType) a.subType = subType; else delete a.subType;
   if (buyprice) a.buyprice = buyprice; else delete a.buyprice;
   if (fxDiscount) a.fxDiscount = fxDiscount; else delete a.fxDiscount;
 
-  // lots 있으면 자동 재계산 (수동 수정 값 덮어쓰기)
-  if (a.lots && a.lots.length > 0) {
-    recalcAssetFromLots(a);
+  // 납입형 자산 (청약/예적금/현금/부동산)
+  const isDepositType = ['청약', '예적금', '현금', '부동산'].includes(newType);
+  if (isDepositType) {
+    // 입력값 = 기존 잔액 (lot로 들어온 자동매수와 별개)
+    const userInputPrice = Number(document.getElementById('e-price')?.value) || 0;
+    a.qty = 1;
+    a.initialBalance = userInputPrice;
+    if (newType === '청약') {
+      a.initialRounds = rounds; // 사용자 입력 회차 = 기존 회차
+    }
+
+    // lots 있으면 자동 매수분 + 기존 합산
+    if (a.lots && a.lots.length > 0) {
+      recalcAssetFromLots(a); // 위 함수가 initialBalance + lots 합산
+    } else {
+      // lots 없으면 입력값 그대로
+      a.price = userInputPrice;
+      if (newType === '청약') a.rounds = rounds;
+    }
+  } else {
+    // 주식/ETF/금/달러 등 - 기존 방식
+    a.qty = Number(document.getElementById('e-qty')?.value) || a.qty || 1;
+    a.price = Number(document.getElementById('e-price')?.value) || a.price;
+    if (rounds) a.rounds = rounds; else delete a.rounds;
+
+    if (a.lots && a.lots.length > 0) {
+      recalcAssetFromLots(a);
+    }
   }
 
   saveData();
