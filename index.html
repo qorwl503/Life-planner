@@ -6581,21 +6581,62 @@ async function processAssetCapture(input) {
 
     const mimeType = file.type || 'image/jpeg';
 
-    const prompt = `이 이미지는 증권/은행/투자 앱 화면이야. 보유 자산 정보를 추출해서 JSON 배열로 반환해줘.
+    const prompt = `증권/은행/투자 앱 화면에서 보유 자산을 추출해 JSON 반환.
 
 각 항목: {type, name, qty, price, ticker}
-- type: 다음 중 - "주식","ETF","펀드","채권","금","달러","예적금","청약","현금","부동산"
-- name: 종목명/계좌명 (예: "삼성전자", "토스 정기예금", "주택청약통장")
-- qty: 보유 수량 (소수점 매매 OK! 예: 0.5, 3.2456 같이 정확히 추출. 정수만 가능한 게 아님)
-- price: 평단가 또는 평균 매수가 (원, 정수)
-- ticker: 종목 코드 (있으면, 한국주식 6자리 또는 미국 티커)
 
-⚠️ 중요: 미국 주식/ETF는 보통 소수점 단위로 매매됨 (예: SPY 0.5234주). 보유 수량에 소수점 있으면 그대로 추출해줘. 절대 반올림하지 마.
+📌 자산 종류 (type) 판단:
+- **주식**: 개별 회사 주식 (삼성전자, AAPL, 카카오 등)
+- **ETF**: TIGER, KODEX, SPY, QQQ, KBSTAR 등 (XX선물, XX인덱스도 ETF)
+- **펀드**: ○○○펀드, 미래에셋자산운용 등
+- **채권**: 국고채, 회사채
+- **금**: 골드뱅킹, 골드바, KRX 금 (단위 g 또는 돈)
+- **달러**: 외화예금, 달러통장 (단위 USD)
+- **예적금**: 정기예금, 적금, ○○저축 (단위 원)
+- **청약**: 주택청약, 청년주택드림
+- **현금**: 보통예금, 통장 잔액, CMA
+- **부동산**: 아파트, 빌라, 오피스텔
 
-반드시 다음 JSON 형식으로만:
-{"items":[{"type":"주식","name":"삼성전자","qty":10,"price":70000,"ticker":"005930"},{"type":"ETF","name":"SPY","qty":0.5234,"price":750000,"ticker":"SPY"}]}
+📌 추출 규칙:
+1. **수량 (qty)**: 소수점까지 정확히
+   - 주식/ETF: 보유 주수 (0.5234, 1.7821, 10 등) - 절대 반올림 X
+   - 금: g 단위 (3.75, 7.5 등) 또는 돈 → g 환산 (1돈 = 3.75g)
+   - 달러: USD 금액 (예: 1250)
+   - 예적금/청약/현금/부동산: 보통 1 (단일 자산)
 
-분석 불가하면: {"items":[],"error":"이유"}`;
+2. **price (가격)**: 정수 원화
+   - 주식/ETF: 1주당 평균 매입가 (70000 등)
+   - 금: g당 매입가 (218860 등)
+   - 달러: 평균 매수 환율 (1380 등)
+   - 예적금: 현재 잔액 (5000000 등)
+   - 부동산: 현재 시세 (800000000 등)
+
+3. **ticker**: 종목 코드 (있으면)
+   - 한국 주식/ETF: 6자리 숫자 (005930, 379810)
+   - 미국: 영문 (SPY, AAPL, QQQ)
+   - 금/예적금/청약/현금/부동산: 보통 없음 → ""
+
+📌 동일 종목 여러 줄이면 각각 추출:
+- 키움 SPY 3주 / 토스 SPY 5주 → SPY 두 번 추출 (앱이 합산 처리)
+
+📤 출력 (JSON만):
+{"items":[
+  {"type":"주식","name":"삼성전자","qty":10,"price":70000,"ticker":"005930"},
+  {"type":"ETF","name":"TIGER 미국S&P500","qty":9,"price":27360,"ticker":"360750"},
+  {"type":"ETF","name":"SPYM","qty":2.5234,"price":85000,"ticker":"SPYM"},
+  {"type":"금","name":"신한 골드뱅킹","qty":3.75,"price":218860,"ticker":""},
+  {"type":"예적금","name":"토스 정기예금","qty":1,"price":5000000,"ticker":""},
+  {"type":"청약","name":"KB 주택청약","qty":1,"price":1500000,"ticker":""}
+]}
+
+❌ 분석 불가:
+{"items":[],"error":"이유"}
+
+⚠️ 절대 주의:
+- 수량 반올림 금지
+- ETF는 type="ETF" (주식 X)
+- 금은 단위 g로 환산
+- JSON 외 다른 글자 추가 금지`;
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${window.GEMINI_API_KEY}`;
     const body = {
@@ -6613,6 +6654,7 @@ async function processAssetCapture(input) {
     if (!res.ok || data.error) throw new Error(data.error?.message || `HTTP ${res.status}`);
 
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    console.log('🤖 Gemini OCR 원본 응답:', text);
     let jsonStr = text.trim().replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
     let parsed;
     try { parsed = JSON.parse(jsonStr); }
@@ -6621,6 +6663,10 @@ async function processAssetCapture(input) {
       if (match) parsed = JSON.parse(match[0]);
       else throw new Error('JSON 파싱 실패');
     }
+    console.log('📊 파싱된 자산:', parsed.items);
+    parsed.items?.forEach((it, i) => {
+      console.log(`  ${i+1}. ${it.name}: qty=${it.qty} (typeof: ${typeof it.qty}), price=${it.price}`);
+    });
 
     if (parsed.error || !parsed.items || parsed.items.length === 0) {
       statusEl.innerHTML = `<span style="color:var(--text-warning);">⚠️ ${parsed.error || '추출된 자산이 없어요'}</span>`;
@@ -6640,23 +6686,67 @@ async function processAssetCapture(input) {
 }
 
 function openAssetReviewModal(items) {
-  window._assetReviewItems = items.map((it, i) => ({ ...it, _checked: true, _id: i }));
+  // 각 항목에 기존 자산 매칭 + 액션 (auto = 자동 판단)
+  window._assetReviewItems = items.map((it, i) => {
+    const type = it.type || '주식';
+    const name = it.name || '이름없음';
+    const existing = assets.find(a => a.name === name && a.type === type);
+    return {
+      ...it,
+      _checked: true,
+      _id: i,
+      _existingId: existing?.id || null,
+      _action: existing ? 'merge' : 'new', // merge | new | skip
+    };
+  });
 
-  const renderList = () => {
-    return window._assetReviewItems.map((it, i) => {
+  window._renderAssetReview = () => {
+    const list = window._assetReviewItems.map((it, i) => {
       const q = Number(it.qty) || 0;
       const qtyStr = Number.isInteger(q) ? q.toLocaleString() : q.toFixed(4).replace(/\.?0+$/, '');
+      const hasExisting = !!it._existingId;
+      const existing = hasExisting ? assets.find(a => a.id === it._existingId) : null;
+
       return `
-      <div style="display:flex; align-items:center; gap:8px; padding:10px 0; border-bottom:0.5px solid var(--border-tertiary);">
-        <input type="checkbox" id="ar-${i}" ${it._checked ? 'checked' : ''} onchange="window._assetReviewItems[${i}]._checked = this.checked;" style="width:18px; height:18px; cursor:pointer;" />
-        <div style="flex:1; min-width:0;">
-          <div style="font-size:13px; font-weight:500;">${it.name}</div>
-          <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">
-            ${it.type} · ${qtyStr}주 × ${Number(it.price || 0).toLocaleString()}원 = <b>${Math.round(q * Number(it.price || 0)).toLocaleString()}원</b>
+      <div style="padding:10px; border:0.5px solid var(--border-tertiary); border-radius:10px; margin-bottom:8px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <input type="checkbox" id="ar-${i}" ${it._checked ? 'checked' : ''} onchange="window._assetReviewItems[${i}]._checked = this.checked;" style="width:18px; height:18px; cursor:pointer; flex-shrink:0;" />
+          <div style="flex:1; min-width:0;">
+            <div style="font-size:13px; font-weight:600;">${it.name}</div>
+            <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">
+              ${it.type} · ${qtyStr}주 × ${Number(it.price || 0).toLocaleString()}원
+            </div>
+            <div style="font-size:10px; color:var(--text-secondary); margin-top:1px;">
+              = <b>${Math.round(q * Number(it.price || 0)).toLocaleString()}원</b>
+            </div>
           </div>
         </div>
+
+        ${hasExisting ? `
+          <div style="margin-top:8px; padding:8px; background:var(--bg-warning); border-radius:8px; font-size:10px; color:var(--text-warning); line-height:1.5;">
+            ⚠️ 같은 자산 이미 있음: ${existing.name} (${existing.qty || 0}주 평균 ${(existing.price || 0).toLocaleString()}원)
+          </div>
+          <div style="display:flex; gap:4px; margin-top:6px;" id="action-${i}">
+            <button onclick="window._assetReviewItems[${i}]._action='merge'; window._renderAssetReview();" style="flex:1; padding:7px 5px; border:1px solid ${it._action==='merge'?'var(--text-info)':'var(--border-tertiary)'}; background:${it._action==='merge'?'var(--bg-info)':'white'}; color:${it._action==='merge'?'var(--text-info)':'var(--text-secondary)'}; border-radius:6px; font-size:10px; font-weight:${it._action==='merge'?'600':'500'}; cursor:pointer; font-family:inherit;">
+              🔗 합산<br><span style="font-size:8px; opacity:0.7;">기존에 추가</span>
+            </button>
+            <button onclick="window._assetReviewItems[${i}]._action='new'; window._renderAssetReview();" style="flex:1; padding:7px 5px; border:1px solid ${it._action==='new'?'var(--text-success)':'var(--border-tertiary)'}; background:${it._action==='new'?'var(--bg-success)':'white'}; color:${it._action==='new'?'var(--text-success)':'var(--text-secondary)'}; border-radius:6px; font-size:10px; font-weight:${it._action==='new'?'600':'500'}; cursor:pointer; font-family:inherit;">
+              ✨ 신규<br><span style="font-size:8px; opacity:0.7;">별도 자산</span>
+            </button>
+            <button onclick="window._assetReviewItems[${i}]._action='skip'; window._renderAssetReview();" style="flex:1; padding:7px 5px; border:1px solid ${it._action==='skip'?'var(--text-danger)':'var(--border-tertiary)'}; background:${it._action==='skip'?'var(--bg-danger)':'white'}; color:${it._action==='skip'?'var(--text-danger)':'var(--text-secondary)'}; border-radius:6px; font-size:10px; font-weight:${it._action==='skip'?'600':'500'}; cursor:pointer; font-family:inherit;">
+              🚫 건너뛰기<br><span style="font-size:8px; opacity:0.7;">추가 X</span>
+            </button>
+          </div>
+        ` : `
+          <div style="margin-top:6px; padding:6px 8px; background:var(--bg-success); border-radius:6px; font-size:10px; color:var(--text-success);">
+            ✨ 새 자산으로 추가됩니다
+          </div>
+        `}
       </div>
     `;}).join('');
+
+    const container = document.getElementById('asset-review-list');
+    if (container) container.innerHTML = list;
   };
 
   modal.innerHTML = `
@@ -6669,43 +6759,87 @@ function openAssetReviewModal(items) {
       </div>
 
       <div style="padding:10px 12px; background:var(--bg-info); border-radius:8px; margin-bottom:12px; font-size:11px; color:var(--text-info); line-height:1.5;">
-        💡 ${items.length}개 자산 추출. 체크된 것만 추가됩니다.
+        💡 ${items.length}개 자산 추출됨. 기존과 중복되면 합산/신규 선택 가능
       </div>
 
-      <div style="max-height:60vh; overflow-y:auto;">
-        ${renderList()}
-      </div>
+      <div id="asset-review-list" style="max-height:60vh; overflow-y:auto;"></div>
     </div>
   `;
   modal.classList.add('show');
+
+  setTimeout(() => window._renderAssetReview(), 50);
 }
 
 function saveAssetReviewItems() {
-  const selected = (window._assetReviewItems || []).filter(it => it._checked);
+  const selected = (window._assetReviewItems || []).filter(it => it._checked && it._action !== 'skip');
   if (selected.length === 0) {
     showToast('선택된 항목이 없어요');
     return;
   }
 
+  let addedCount = 0;
+  let mergedCount = 0;
+  const today = new Date().toISOString().split('T')[0];
+
   selected.forEach(it => {
     const rawQty = Number(it.qty);
     const qty = isFinite(rawQty) ? parseFloat(rawQty.toFixed(4)) : 1;
-    assets.push({
-      id: Date.now() + Math.random(),
-      type: it.type || '주식',
-      name: it.name || '이름없음',
-      qty,
-      price: Math.round(Number(it.price)) || 0,
-      ticker: it.ticker || '',
-      memo: '',
-    });
+    const price = Math.round(Number(it.price)) || 0;
+    const type = it.type || '주식';
+    const name = it.name || '이름없음';
+
+    if (it._action === 'merge' && it._existingId) {
+      // 기존 자산에 lot 추가 (합산)
+      const existing = assets.find(a => a.id === it._existingId);
+      if (existing) {
+        addAssetLot(existing, {
+          source: `📸 OCR ${today}`,
+          qty,
+          price,
+          date: today,
+          fxDiscount: existing.fxDiscount || null,
+          autoBuy: false,
+          note: '캡처 합산',
+        });
+        if (!existing.ticker && it.ticker) existing.ticker = it.ticker;
+        mergedCount++;
+      }
+    } else {
+      // 새 자산 (신규)
+      const newAsset = {
+        id: Date.now() + Math.random(),
+        type,
+        name: it._action === 'new' && it._existingId ? `${name} (2)` : name, // 동명 다른 자산이면 (2) 붙임
+        qty: 0,
+        price: 0,
+        ticker: it.ticker || '',
+        memo: '',
+        lots: [],
+      };
+      assets.push(newAsset);
+      addAssetLot(newAsset, {
+        source: `📸 OCR ${today}`,
+        qty,
+        price,
+        date: today,
+        autoBuy: false,
+        note: '캡처 추가',
+      });
+      addedCount++;
+    }
   });
 
   saveData();
-  showToast(`✨ ${selected.length}개 자산 추가됨`);
+
+  let msg = '';
+  if (addedCount > 0) msg += `✨ 신규 ${addedCount}건`;
+  if (mergedCount > 0) msg += (msg ? ', ' : '') + `🔗 합산 ${mergedCount}건`;
+  showToast(msg || '저장됨');
+
   closeModal();
   renderAsset();
   delete window._assetReviewItems;
+  delete window._renderAssetReview;
 }
 
 async function processCardCapture(input) {
