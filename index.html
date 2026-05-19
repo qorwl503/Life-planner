@@ -4286,6 +4286,7 @@ function editFixed(id) {
       <div class="field">
         <div class="field-label">금액 (월)</div>
         <input type="number" id="ef-amt" value="${f.amt}" />
+        ${quickAmtButtons('ef-amt')}
       </div>
 
       <div class="field">
@@ -4928,6 +4929,7 @@ function openFixedAddModal() {
       <div class="field">
         <div class="field-label">1회 금액</div>
         <input type="number" id="fx-amt" placeholder="0" />
+        ${quickAmtButtons('fx-amt')}
       </div>
 
       <div class="field">
@@ -5418,6 +5420,7 @@ function addManualLot(assetId, lotIdToEdit) {
           <input type="number" id="lot-price" value="${existingLot?.price || ''}" placeholder="0" />
         </div>
       </div>
+      ${quickAmtButtons('lot-price')}
 
       <div class="field">
         <div class="field-label">매수일</div>
@@ -5834,6 +5837,7 @@ function editLivingGoal() {
         <input type="number" id="goal-input" placeholder="예: 500000" value="${current || ''}" autofocus
           oninput="document.getElementById('goal-val').textContent = (Number(this.value) || 0).toLocaleString();" />
       </div>
+      ${quickAmtButtons('goal-input')}
 
       <div class="field">
         <label style="display:flex; align-items:center; gap:10px; cursor:pointer; font-size:12px;">
@@ -5906,6 +5910,7 @@ function editMonthlyIncome() {
       <div class="field">
         <div class="field-label">${monthLabel} 수입 (원)</div>
         <input type="number" id="quick-income" value="${current}" placeholder="3000000" autofocus />
+        ${quickAmtButtons('quick-income')}
       </div>
 
       <div class="field" style="margin-top:14px;">
@@ -5944,6 +5949,34 @@ function saveMonthlyIncomeQuick() {
   renderMoney();
 }
 
+// 빠른 금액 추가 (가계부/자산 등 어디서나 사용)
+function quickAddAmt(targetId, amt, clear) {
+  const el = document.getElementById(targetId);
+  if (!el) return;
+  if (clear) {
+    el.value = '';
+  } else {
+    el.value = String((Number(el.value) || 0) + amt);
+  }
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+// 빠른 금액 버튼 HTML 생성 (공통)
+function quickAmtButtons(targetId, options = {}) {
+  const { includeCalc = false, marginTop = '-8px' } = options;
+  return `
+    <div style="display:flex; gap:5px; margin-top:${marginTop}; margin-bottom:12px; flex-wrap:wrap;">
+      <button type="button" onclick="quickAddAmt('${targetId}', 1000)" style="flex:1; padding:6px 0; border:0.5px solid var(--border-tertiary); background:white; border-radius:7px; font-size:10px; color:var(--text-secondary); cursor:pointer; font-family:inherit;">+1천</button>
+      <button type="button" onclick="quickAddAmt('${targetId}', 10000)" style="flex:1; padding:6px 0; border:0.5px solid var(--border-tertiary); background:white; border-radius:7px; font-size:10px; color:var(--text-secondary); cursor:pointer; font-family:inherit;">+1만</button>
+      <button type="button" onclick="quickAddAmt('${targetId}', 50000)" style="flex:1; padding:6px 0; border:0.5px solid var(--border-tertiary); background:white; border-radius:7px; font-size:10px; color:var(--text-secondary); cursor:pointer; font-family:inherit;">+5만</button>
+      <button type="button" onclick="quickAddAmt('${targetId}', 100000)" style="flex:1; padding:6px 0; border:0.5px solid var(--border-tertiary); background:white; border-radius:7px; font-size:10px; color:var(--text-secondary); cursor:pointer; font-family:inherit;">+10만</button>
+      <button type="button" onclick="quickAddAmt('${targetId}', 1000000)" style="flex:1; padding:6px 0; border:0.5px solid var(--border-tertiary); background:white; border-radius:7px; font-size:10px; color:var(--text-secondary); cursor:pointer; font-family:inherit;">+100만</button>
+      ${includeCalc ? `<button type="button" onclick="window._calcReturnTarget='${targetId}'; window._calcCurrentExpr=document.getElementById('${targetId}')?.value||''; openCalcModal(false);" style="padding:6px 9px; border:0.5px solid var(--border-tertiary); background:white; border-radius:7px; font-size:11px; color:var(--text-secondary); cursor:pointer; font-family:inherit;">🧮</button>` : ''}
+      <button type="button" onclick="quickAddAmt('${targetId}', 0, true)" style="padding:6px 10px; border:0.5px solid var(--text-danger); background:white; border-radius:7px; font-size:10px; color:var(--text-danger); cursor:pointer; font-family:inherit;">C</button>
+    </div>
+  `;
+}
+
 // 독립 계산기 (헤더 버튼용 - 가계부 모달 없이도 사용)
 function openStandaloneCalculator() {
   window._calcReturnTarget = null; // 적용 대상 없음 (복사용)
@@ -5971,59 +6004,82 @@ function openCalcModal(standalone) {
     <div style="background:white; width:100%; max-width:500px; border-radius:20px 20px 0 0; padding:16px; max-height:80vh; animation:slideUp 0.25s;">
       <div style="width:36px; height:4px; background:#D5D5D5; border-radius:2px; margin:0 auto 14px;"></div>
 
-      <!-- 표시창 -->
-      <div style="background:#F4F5F7; border-radius:12px; padding:18px; margin-bottom:14px; text-align:right; min-height:80px;">
-        <div id="calc-expr" style="font-size:14px; color:#888; line-height:1.4; min-height:18px; word-break:break-all;">${window._calcCurrentExpr || '0'}</div>
-        <div id="calc-result" style="font-size:32px; font-weight:700; color:#000; margin-top:6px; word-break:break-all;">${window._calcCurrentExpr || '0'}</div>
+      <!-- 표시창 (키보드 입력 가능) -->
+      <div style="background:#F4F5F7; border-radius:12px; padding:14px; margin-bottom:14px; min-height:80px;">
+        <input id="calc-input" type="text" value="${window._calcCurrentExpr || ''}" placeholder="계산식 입력 (예: 15000+3500)"
+          style="width:100%; border:none; background:transparent; font-size:18px; color:#000; outline:none; text-align:right; font-family:inherit;"
+          oninput="calcInputChanged()" />
+        <div id="calc-result" style="font-size:28px; font-weight:700; color:#000; margin-top:6px; text-align:right; word-break:break-all;">${window._calcCurrentExpr || '0'}</div>
       </div>
 
       <!-- 버튼 그리드 -->
       <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:8px;">
-        <button onclick="calcClear()" style="${calcBtnStyle('#FFEEEE', '#D14343')}">C</button>
-        <button onclick="calcBack()" style="${calcBtnStyle('#F4F5F7', '#000')}">⌫</button>
-        <button onclick="calcAppend('%')" style="${calcBtnStyle('#F4F5F7', '#5E5CE6')}">%</button>
-        <button onclick="calcAppend('/')" style="${calcBtnStyle('#5E5CE6', 'white')}">÷</button>
+        <button type="button" onclick="calcClear()" style="${calcBtnStyle('#FFEEEE', '#D14343')}">C</button>
+        <button type="button" onclick="calcBack()" style="${calcBtnStyle('#F4F5F7', '#000')}">⌫</button>
+        <button type="button" onclick="calcAppend('%')" style="${calcBtnStyle('#F4F5F7', '#5E5CE6')}">%</button>
+        <button type="button" onclick="calcAppend('/')" style="${calcBtnStyle('#5E5CE6', 'white')}">÷</button>
 
-        <button onclick="calcAppend('7')" style="${calcBtnStyle('white', '#000')}">7</button>
-        <button onclick="calcAppend('8')" style="${calcBtnStyle('white', '#000')}">8</button>
-        <button onclick="calcAppend('9')" style="${calcBtnStyle('white', '#000')}">9</button>
-        <button onclick="calcAppend('*')" style="${calcBtnStyle('#5E5CE6', 'white')}">×</button>
+        <button type="button" onclick="calcAppend('7')" style="${calcBtnStyle('white', '#000')}">7</button>
+        <button type="button" onclick="calcAppend('8')" style="${calcBtnStyle('white', '#000')}">8</button>
+        <button type="button" onclick="calcAppend('9')" style="${calcBtnStyle('white', '#000')}">9</button>
+        <button type="button" onclick="calcAppend('*')" style="${calcBtnStyle('#5E5CE6', 'white')}">×</button>
 
-        <button onclick="calcAppend('4')" style="${calcBtnStyle('white', '#000')}">4</button>
-        <button onclick="calcAppend('5')" style="${calcBtnStyle('white', '#000')}">5</button>
-        <button onclick="calcAppend('6')" style="${calcBtnStyle('white', '#000')}">6</button>
-        <button onclick="calcAppend('-')" style="${calcBtnStyle('#5E5CE6', 'white')}">−</button>
+        <button type="button" onclick="calcAppend('4')" style="${calcBtnStyle('white', '#000')}">4</button>
+        <button type="button" onclick="calcAppend('5')" style="${calcBtnStyle('white', '#000')}">5</button>
+        <button type="button" onclick="calcAppend('6')" style="${calcBtnStyle('white', '#000')}">6</button>
+        <button type="button" onclick="calcAppend('-')" style="${calcBtnStyle('#5E5CE6', 'white')}">−</button>
 
-        <button onclick="calcAppend('1')" style="${calcBtnStyle('white', '#000')}">1</button>
-        <button onclick="calcAppend('2')" style="${calcBtnStyle('white', '#000')}">2</button>
-        <button onclick="calcAppend('3')" style="${calcBtnStyle('white', '#000')}">3</button>
-        <button onclick="calcAppend('+')" style="${calcBtnStyle('#5E5CE6', 'white')}">+</button>
+        <button type="button" onclick="calcAppend('1')" style="${calcBtnStyle('white', '#000')}">1</button>
+        <button type="button" onclick="calcAppend('2')" style="${calcBtnStyle('white', '#000')}">2</button>
+        <button type="button" onclick="calcAppend('3')" style="${calcBtnStyle('white', '#000')}">3</button>
+        <button type="button" onclick="calcAppend('+')" style="${calcBtnStyle('#5E5CE6', 'white')}">+</button>
 
-        <button onclick="calcAppend('000')" style="${calcBtnStyle('#F4F5F7', '#000')}">000</button>
-        <button onclick="calcAppend('0')" style="${calcBtnStyle('white', '#000')}">0</button>
-        <button onclick="calcAppend('.')" style="${calcBtnStyle('white', '#000')}">.</button>
-        <button onclick="calcEquals()" style="${calcBtnStyle('#3F9F6B', 'white')}">=</button>
+        <button type="button" onclick="calcAppend('000')" style="${calcBtnStyle('#F4F5F7', '#000')}">000</button>
+        <button type="button" onclick="calcAppend('0')" style="${calcBtnStyle('white', '#000')}">0</button>
+        <button type="button" onclick="calcAppend('.')" style="${calcBtnStyle('white', '#000')}">.</button>
+        <button type="button" onclick="calcEquals()" style="${calcBtnStyle('#3F9F6B', 'white')}">=</button>
       </div>
 
       <!-- 빠른 입력 -->
       <div style="display:flex; gap:6px; margin-top:10px; flex-wrap:wrap;">
-        <button onclick="calcQuick(10000)" style="flex:1; padding:8px; border:0.5px solid #E0E0E0; background:white; border-radius:8px; font-size:11px; cursor:pointer; font-family:inherit;">+1만</button>
-        <button onclick="calcQuick(50000)" style="flex:1; padding:8px; border:0.5px solid #E0E0E0; background:white; border-radius:8px; font-size:11px; cursor:pointer; font-family:inherit;">+5만</button>
-        <button onclick="calcQuick(100000)" style="flex:1; padding:8px; border:0.5px solid #E0E0E0; background:white; border-radius:8px; font-size:11px; cursor:pointer; font-family:inherit;">+10만</button>
-        <button onclick="calcQuick(500000)" style="flex:1; padding:8px; border:0.5px solid #E0E0E0; background:white; border-radius:8px; font-size:11px; cursor:pointer; font-family:inherit;">+50만</button>
+        <button type="button" onclick="calcQuick(10000)" style="flex:1; padding:8px; border:0.5px solid #E0E0E0; background:white; border-radius:8px; font-size:11px; cursor:pointer; font-family:inherit;">+1만</button>
+        <button type="button" onclick="calcQuick(50000)" style="flex:1; padding:8px; border:0.5px solid #E0E0E0; background:white; border-radius:8px; font-size:11px; cursor:pointer; font-family:inherit;">+5만</button>
+        <button type="button" onclick="calcQuick(100000)" style="flex:1; padding:8px; border:0.5px solid #E0E0E0; background:white; border-radius:8px; font-size:11px; cursor:pointer; font-family:inherit;">+10만</button>
+        <button type="button" onclick="calcQuick(500000)" style="flex:1; padding:8px; border:0.5px solid #E0E0E0; background:white; border-radius:8px; font-size:11px; cursor:pointer; font-family:inherit;">+50만</button>
       </div>
 
       <!-- 액션 버튼 -->
       <div style="display:flex; gap:8px; margin-top:14px;">
-        <button onclick="calcCancel()" style="flex:1; padding:14px; border:none; background:var(--bg-secondary); color:var(--text-secondary); border-radius:12px; font-size:14px; font-weight:600; cursor:pointer; font-family:inherit;">닫기</button>
+        <button type="button" onclick="calcCancel()" style="flex:1; padding:14px; border:none; background:var(--bg-secondary); color:var(--text-secondary); border-radius:12px; font-size:14px; font-weight:600; cursor:pointer; font-family:inherit;">닫기</button>
         ${standalone
-          ? `<button onclick="calcCopy()" style="flex:1; padding:14px; border:none; background:var(--bg-info); color:var(--text-info); border-radius:12px; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit;">📋 결과 복사</button>`
-          : `<button onclick="calcApply()" style="flex:1; padding:14px; border:none; background:var(--bg-info); color:var(--text-info); border-radius:12px; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit;">✅ 금액으로 적용</button>`
+          ? `<button type="button" onclick="calcCopy()" style="flex:1; padding:14px; border:none; background:var(--bg-info); color:var(--text-info); border-radius:12px; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit;">📋 결과 복사</button>`
+          : `<button type="button" onclick="calcApply()" style="flex:1; padding:14px; border:none; background:var(--bg-info); color:var(--text-info); border-radius:12px; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit;">✅ 금액으로 적용</button>`
         }
       </div>
     </div>
   `;
   document.body.appendChild(calcModal);
+
+  // 키보드 입력 처리
+  const calcInput = document.getElementById('calc-input');
+  setTimeout(() => {
+    calcInput?.focus();
+    calcEvaluate();
+  }, 100);
+
+  // Enter = 계산
+  calcInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      calcEquals();
+    } else if (e.key === 'Escape') {
+      calcCancel();
+    }
+  });
+}
+
+function calcInputChanged() {
+  calcEvaluate();
 }
 
 function calcCopy() {
@@ -6041,40 +6097,44 @@ function calcBtnStyle(bg, fg) {
 }
 
 function calcAppend(ch) {
-  const expr = document.getElementById('calc-expr');
-  let cur = expr.textContent || '0';
-  if (cur === '0' && /[0-9]/.test(ch)) cur = '';
-  cur += ch;
-  expr.textContent = cur;
+  const input = document.getElementById('calc-input');
+  input.value = (input.value || '') + ch;
+  input.focus();
   calcEvaluate();
 }
 
 function calcBack() {
-  const expr = document.getElementById('calc-expr');
-  const cur = (expr.textContent || '').slice(0, -1) || '0';
-  expr.textContent = cur;
+  const input = document.getElementById('calc-input');
+  input.value = (input.value || '').slice(0, -1);
+  input.focus();
   calcEvaluate();
 }
 
 function calcClear() {
-  document.getElementById('calc-expr').textContent = '0';
+  document.getElementById('calc-input').value = '';
   document.getElementById('calc-result').textContent = '0';
+  document.getElementById('calc-input').focus();
 }
 
 function calcQuick(amt) {
-  const expr = document.getElementById('calc-expr');
-  let cur = expr.textContent || '0';
-  if (cur === '0') cur = String(amt);
+  const input = document.getElementById('calc-input');
+  let cur = input.value || '';
+  if (!cur || cur === '0') cur = String(amt);
   else cur = cur + '+' + String(amt);
-  expr.textContent = cur;
+  input.value = cur;
+  input.focus();
   calcEvaluate();
 }
 
 function calcEvaluate() {
-  const expr = document.getElementById('calc-expr').textContent || '0';
+  const input = document.getElementById('calc-input');
+  const expr = input?.value || '0';
   try {
-    // 안전 평가 (숫자/연산자만)
     const clean = expr.replace(/[^0-9+\-*/.()% ]/g, '');
+    if (!clean) {
+      document.getElementById('calc-result').textContent = '0';
+      return;
+    }
     let result = Function('"use strict"; return (' + clean.replace(/(\d+)%/g, '($1/100)') + ')')();
     if (!isFinite(result)) result = 0;
     result = Math.round(result * 100) / 100;
@@ -6085,13 +6145,14 @@ function calcEvaluate() {
 }
 
 function calcEquals() {
-  const expr = document.getElementById('calc-expr').textContent || '0';
+  const input = document.getElementById('calc-input');
+  const expr = input?.value || '0';
   try {
     const clean = expr.replace(/[^0-9+\-*/.()% ]/g, '');
     let result = Function('"use strict"; return (' + clean.replace(/(\d+)%/g, '($1/100)') + ')')();
     if (!isFinite(result)) result = 0;
     result = Math.round(result);
-    document.getElementById('calc-expr').textContent = String(result);
+    input.value = String(result);
     document.getElementById('calc-result').textContent = result.toLocaleString();
   } catch (e) {
     showToast('계산 오류');
@@ -6168,6 +6229,7 @@ function openExpenseModal(forDateKey) {
           oninput="document.getElementById('amt-val').textContent = (Number(this.value) || 0).toLocaleString();" />
         <button onclick="openCalculator()" style="border:0.5px solid var(--border-tertiary); background:var(--bg-secondary); color:var(--text-primary); padding:0 14px; border-radius:var(--radius-md); font-size:18px; cursor:pointer; font-family:inherit;" title="계산기">🧮</button>
       </div>
+      ${quickAmtButtons('amt-input')}
 
       <div class="field">
         <div class="field-label">📅 날짜</div>
@@ -10843,6 +10905,7 @@ function renderAssetFormFields(type) {
           <input type="number" id="a-price" placeholder="0" />
         </div>
       </div>
+      ${quickAmtButtons('a-price')}
     `;
 
     if (type === '채권') {
@@ -10895,6 +10958,7 @@ function renderAssetFormFields(type) {
           <input type="number" id="a-price" placeholder="0" />
         </div>
       </div>
+      ${quickAmtButtons('a-price')}
       <div style="padding:10px 12px; background:var(--bg-info); border-radius:var(--radius-md); font-size:11px; color:var(--text-info); line-height:1.6;">
         💡 1돈 = 3.75g, 1냥 = 37.5g<br>
         실물 금이면 티커 비워두고 매입가 직접 입력
@@ -10917,6 +10981,7 @@ function renderAssetFormFields(type) {
           <input type="number" id="a-rate" placeholder="예: 3.5" step="0.01" />
         </div>
       </div>
+      ${quickAmtButtons('a-price')}
       <div class="field">
         <div class="field-label">만기일 (선택)</div>
         <input type="date" id="a-maturity" />
@@ -10935,6 +11000,7 @@ function renderAssetFormFields(type) {
         <div class="field-label">금액 (원)</div>
         <input type="number" id="a-price" placeholder="0" />
       </div>
+      ${quickAmtButtons('a-price')}
       <input type="hidden" id="a-qty" value="1" />
       <input type="hidden" id="a-ticker" value="" />
     `;
@@ -10957,6 +11023,7 @@ function renderAssetFormFields(type) {
         <div class="field-label">현재 납입 금액 (원)</div>
         <input type="number" id="a-price" placeholder="예: 500000" />
       </div>
+      ${quickAmtButtons('a-price')}
       <div class="field" style="display:flex; gap:8px;">
         <div style="flex:1;">
           <div class="field-label">납입 회차</div>
@@ -10988,6 +11055,7 @@ function renderAssetFormFields(type) {
         <div class="field-label">현재 시세 (원)</div>
         <input type="number" id="a-price" placeholder="예: 500000000" />
       </div>
+      ${quickAmtButtons('a-price')}
       <div class="field">
         <div class="field-label">매입가 (선택, 손익 계산용)</div>
         <input type="number" id="a-buyprice" placeholder="0" />
@@ -11008,6 +11076,7 @@ function renderAssetFormFields(type) {
           <input type="number" id="a-price" placeholder="0" />
         </div>
       </div>
+      ${quickAmtButtons('a-price')}
       <input type="hidden" id="a-ticker" value="" />
     `;
   }
@@ -11241,6 +11310,7 @@ function editAsset(id) {
               <input type="number" id="e-price" value="${a.price}" />
             </div>
           </div>
+          ${quickAmtButtons('e-price')}
           <div style="margin-top:6px;">
             <button onclick="addManualLot(${a.id})" style="border:none; background:rgba(94,92,230,0.12); color:#5E5CE6; padding:8px 14px; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">📋 매수 기록 시스템 사용</button>
             <div style="font-size:9px; color:var(--text-tertiary); margin-top:4px;">증권사별/날짜별로 매수 기록 관리하기</div>
@@ -11271,6 +11341,7 @@ function editAsset(id) {
             <input type="number" id="e-rate" value="${a.rate || ''}" step="0.01" />
           </div>
         </div>
+        ${quickAmtButtons('e-price')}
         <div class="field">
           <div class="field-label">만기 (선택)</div>
           <input type="text" id="e-maturity" value="${a.maturity || ''}" placeholder="예: 2027.01" />
@@ -11294,6 +11365,7 @@ function editAsset(id) {
             <input type="number" id="e-price" value="${a.price}" />
           </div>
         </div>
+        ${quickAmtButtons('e-price')}
         <input type="hidden" id="e-ticker" value="" />
         <div style="padding:10px; background:var(--bg-warning); border-radius:8px; font-size:10px; color:var(--text-warning); line-height:1.5;">
           💡 1돈 = 3.75g, 1냥 = 37.5g
@@ -11333,6 +11405,7 @@ function editAsset(id) {
             <input type="number" id="e-rate" value="${a.rate || ''}" step="0.01" />
           </div>
         </div>
+        ${quickAmtButtons('e-price')}
         <input type="hidden" id="e-qty" value="1" />
         <input type="hidden" id="e-ticker" value="" />
       `;
@@ -11360,6 +11433,7 @@ function editAsset(id) {
             <input type="number" id="e-rounds" value="${a.rounds || ''}" />
           </div>
         </div>
+        ${quickAmtButtons('e-price')}
         <div class="field">
           <div class="field-label">금리 % (선택)</div>
           <input type="number" id="e-rate" value="${a.rate || ''}" step="0.01" />
@@ -11377,6 +11451,7 @@ function editAsset(id) {
           <div class="field-label">금액</div>
           <input type="number" id="e-price" value="${a.price}" />
         </div>
+        ${quickAmtButtons('e-price')}
         <input type="hidden" id="e-qty" value="1" />
         <input type="hidden" id="e-ticker" value="" />
       `;
@@ -11390,6 +11465,7 @@ function editAsset(id) {
           <div class="field-label">현재 시세</div>
           <input type="number" id="e-price" value="${a.price}" />
         </div>
+        ${quickAmtButtons('e-price')}
         <div class="field">
           <div class="field-label">매입가 (선택)</div>
           <input type="number" id="e-buyprice" value="${a.buyprice || ''}" />
