@@ -3450,6 +3450,7 @@ function renderMoney() {
   header.innerHTML = `
     <h1>가계부</h1>
     <div class="header-actions">
+      <button onclick="openStandaloneCalculator()" aria-label="계산기"><i class="ti ti-calculator"></i></button>
       <button onclick="editLivingGoal()" aria-label="목표 생활비"><i class="ti ti-target"></i></button>
       <button onclick="openExpenseModal()" aria-label="추가"><i class="ti ti-plus"></i></button>
     </div>
@@ -5943,6 +5944,180 @@ function saveMonthlyIncomeQuick() {
   renderMoney();
 }
 
+// 독립 계산기 (헤더 버튼용 - 가계부 모달 없이도 사용)
+function openStandaloneCalculator() {
+  window._calcReturnTarget = null; // 적용 대상 없음 (복사용)
+  window._calcCurrentExpr = '';
+  openCalcModal(true);
+}
+
+// ===== 계산기 =====
+function openCalculator() {
+  window._calcReturnTarget = 'amt-input';
+  window._calcCurrentExpr = document.getElementById('amt-input')?.value || '';
+  openCalcModal(false);
+}
+
+function openCalcModal(standalone) {
+  const calcModal = document.createElement('div');
+  calcModal.id = 'calc-overlay';
+  calcModal.style.cssText = `
+    position:fixed; top:0; left:0; right:0; bottom:0;
+    background:rgba(0,0,0,0.5); z-index:9999;
+    display:flex; align-items:flex-end; justify-content:center;
+    animation:fadeIn 0.2s;
+  `;
+  calcModal.innerHTML = `
+    <div style="background:white; width:100%; max-width:500px; border-radius:20px 20px 0 0; padding:16px; max-height:80vh; animation:slideUp 0.25s;">
+      <div style="width:36px; height:4px; background:#D5D5D5; border-radius:2px; margin:0 auto 14px;"></div>
+
+      <!-- 표시창 -->
+      <div style="background:#F4F5F7; border-radius:12px; padding:18px; margin-bottom:14px; text-align:right; min-height:80px;">
+        <div id="calc-expr" style="font-size:14px; color:#888; line-height:1.4; min-height:18px; word-break:break-all;">${window._calcCurrentExpr || '0'}</div>
+        <div id="calc-result" style="font-size:32px; font-weight:700; color:#000; margin-top:6px; word-break:break-all;">${window._calcCurrentExpr || '0'}</div>
+      </div>
+
+      <!-- 버튼 그리드 -->
+      <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:8px;">
+        <button onclick="calcClear()" style="${calcBtnStyle('#FFEEEE', '#D14343')}">C</button>
+        <button onclick="calcBack()" style="${calcBtnStyle('#F4F5F7', '#000')}">⌫</button>
+        <button onclick="calcAppend('%')" style="${calcBtnStyle('#F4F5F7', '#5E5CE6')}">%</button>
+        <button onclick="calcAppend('/')" style="${calcBtnStyle('#5E5CE6', 'white')}">÷</button>
+
+        <button onclick="calcAppend('7')" style="${calcBtnStyle('white', '#000')}">7</button>
+        <button onclick="calcAppend('8')" style="${calcBtnStyle('white', '#000')}">8</button>
+        <button onclick="calcAppend('9')" style="${calcBtnStyle('white', '#000')}">9</button>
+        <button onclick="calcAppend('*')" style="${calcBtnStyle('#5E5CE6', 'white')}">×</button>
+
+        <button onclick="calcAppend('4')" style="${calcBtnStyle('white', '#000')}">4</button>
+        <button onclick="calcAppend('5')" style="${calcBtnStyle('white', '#000')}">5</button>
+        <button onclick="calcAppend('6')" style="${calcBtnStyle('white', '#000')}">6</button>
+        <button onclick="calcAppend('-')" style="${calcBtnStyle('#5E5CE6', 'white')}">−</button>
+
+        <button onclick="calcAppend('1')" style="${calcBtnStyle('white', '#000')}">1</button>
+        <button onclick="calcAppend('2')" style="${calcBtnStyle('white', '#000')}">2</button>
+        <button onclick="calcAppend('3')" style="${calcBtnStyle('white', '#000')}">3</button>
+        <button onclick="calcAppend('+')" style="${calcBtnStyle('#5E5CE6', 'white')}">+</button>
+
+        <button onclick="calcAppend('000')" style="${calcBtnStyle('#F4F5F7', '#000')}">000</button>
+        <button onclick="calcAppend('0')" style="${calcBtnStyle('white', '#000')}">0</button>
+        <button onclick="calcAppend('.')" style="${calcBtnStyle('white', '#000')}">.</button>
+        <button onclick="calcEquals()" style="${calcBtnStyle('#3F9F6B', 'white')}">=</button>
+      </div>
+
+      <!-- 빠른 입력 -->
+      <div style="display:flex; gap:6px; margin-top:10px; flex-wrap:wrap;">
+        <button onclick="calcQuick(10000)" style="flex:1; padding:8px; border:0.5px solid #E0E0E0; background:white; border-radius:8px; font-size:11px; cursor:pointer; font-family:inherit;">+1만</button>
+        <button onclick="calcQuick(50000)" style="flex:1; padding:8px; border:0.5px solid #E0E0E0; background:white; border-radius:8px; font-size:11px; cursor:pointer; font-family:inherit;">+5만</button>
+        <button onclick="calcQuick(100000)" style="flex:1; padding:8px; border:0.5px solid #E0E0E0; background:white; border-radius:8px; font-size:11px; cursor:pointer; font-family:inherit;">+10만</button>
+        <button onclick="calcQuick(500000)" style="flex:1; padding:8px; border:0.5px solid #E0E0E0; background:white; border-radius:8px; font-size:11px; cursor:pointer; font-family:inherit;">+50만</button>
+      </div>
+
+      <!-- 액션 버튼 -->
+      <div style="display:flex; gap:8px; margin-top:14px;">
+        <button onclick="calcCancel()" style="flex:1; padding:14px; border:none; background:var(--bg-secondary); color:var(--text-secondary); border-radius:12px; font-size:14px; font-weight:600; cursor:pointer; font-family:inherit;">닫기</button>
+        ${standalone
+          ? `<button onclick="calcCopy()" style="flex:1; padding:14px; border:none; background:var(--bg-info); color:var(--text-info); border-radius:12px; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit;">📋 결과 복사</button>`
+          : `<button onclick="calcApply()" style="flex:1; padding:14px; border:none; background:var(--bg-info); color:var(--text-info); border-radius:12px; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit;">✅ 금액으로 적용</button>`
+        }
+      </div>
+    </div>
+  `;
+  document.body.appendChild(calcModal);
+}
+
+function calcCopy() {
+  const result = document.getElementById('calc-result').textContent.replace(/,/g, '');
+  navigator.clipboard?.writeText(result).then(() => {
+    showToast(`📋 ${Number(result).toLocaleString()} 복사됨`);
+  }).catch(() => {
+    showToast(`결과: ${Number(result).toLocaleString()}`);
+  });
+  calcCancel();
+}
+
+function calcBtnStyle(bg, fg) {
+  return `padding:18px; border:none; background:${bg}; color:${fg}; border-radius:12px; font-size:18px; font-weight:600; cursor:pointer; font-family:inherit; ${bg === 'white' ? 'box-shadow:0 1px 2px rgba(0,0,0,0.05); border:0.5px solid #E5E5E5;' : ''}`;
+}
+
+function calcAppend(ch) {
+  const expr = document.getElementById('calc-expr');
+  let cur = expr.textContent || '0';
+  if (cur === '0' && /[0-9]/.test(ch)) cur = '';
+  cur += ch;
+  expr.textContent = cur;
+  calcEvaluate();
+}
+
+function calcBack() {
+  const expr = document.getElementById('calc-expr');
+  const cur = (expr.textContent || '').slice(0, -1) || '0';
+  expr.textContent = cur;
+  calcEvaluate();
+}
+
+function calcClear() {
+  document.getElementById('calc-expr').textContent = '0';
+  document.getElementById('calc-result').textContent = '0';
+}
+
+function calcQuick(amt) {
+  const expr = document.getElementById('calc-expr');
+  let cur = expr.textContent || '0';
+  if (cur === '0') cur = String(amt);
+  else cur = cur + '+' + String(amt);
+  expr.textContent = cur;
+  calcEvaluate();
+}
+
+function calcEvaluate() {
+  const expr = document.getElementById('calc-expr').textContent || '0';
+  try {
+    // 안전 평가 (숫자/연산자만)
+    const clean = expr.replace(/[^0-9+\-*/.()% ]/g, '');
+    let result = Function('"use strict"; return (' + clean.replace(/(\d+)%/g, '($1/100)') + ')')();
+    if (!isFinite(result)) result = 0;
+    result = Math.round(result * 100) / 100;
+    document.getElementById('calc-result').textContent = Number.isInteger(result) ? result.toLocaleString() : result.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  } catch (e) {
+    document.getElementById('calc-result').textContent = '...';
+  }
+}
+
+function calcEquals() {
+  const expr = document.getElementById('calc-expr').textContent || '0';
+  try {
+    const clean = expr.replace(/[^0-9+\-*/.()% ]/g, '');
+    let result = Function('"use strict"; return (' + clean.replace(/(\d+)%/g, '($1/100)') + ')')();
+    if (!isFinite(result)) result = 0;
+    result = Math.round(result);
+    document.getElementById('calc-expr').textContent = String(result);
+    document.getElementById('calc-result').textContent = result.toLocaleString();
+  } catch (e) {
+    showToast('계산 오류');
+  }
+}
+
+function calcApply() {
+  const result = document.getElementById('calc-result').textContent.replace(/,/g, '');
+  const val = Math.round(Number(result) || 0);
+  const targetId = window._calcReturnTarget || 'amt-input';
+  const target = document.getElementById(targetId);
+  if (target) {
+    target.value = val;
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  calcCancel();
+  showToast(`✅ ${val.toLocaleString()}원 적용`);
+}
+
+function calcCancel() {
+  const overlay = document.getElementById('calc-overlay');
+  if (overlay) overlay.remove();
+  delete window._calcReturnTarget;
+  delete window._calcCurrentExpr;
+}
+
 function openExpenseModal(forDateKey) {
   // forDateKey: YYYY-MM-DD string 또는 빈값
   const defaultDate = (typeof forDateKey === 'string' && forDateKey.length === 10)
@@ -5988,9 +6163,10 @@ function openExpenseModal(forDateKey) {
         <div class="num"><span id="amt-val">0</span><span>원</span></div>
       </div>
 
-      <div class="field">
-        <input type="number" id="amt-input" placeholder="금액을 입력하세요"
+      <div class="field" style="display:flex; gap:8px;">
+        <input type="number" id="amt-input" placeholder="금액을 입력하세요" style="flex:1;"
           oninput="document.getElementById('amt-val').textContent = (Number(this.value) || 0).toLocaleString();" />
+        <button onclick="openCalculator()" style="border:0.5px solid var(--border-tertiary); background:var(--bg-secondary); color:var(--text-primary); padding:0 14px; border-radius:var(--radius-md); font-size:18px; cursor:pointer; font-family:inherit;" title="계산기">🧮</button>
       </div>
 
       <div class="field">
