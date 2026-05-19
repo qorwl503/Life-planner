@@ -5772,6 +5772,17 @@ async function processAutoBuy(fixed) {
   newDates.forEach(d => {
     const dateStr = d.toISOString().split('T')[0];
 
+    // 중복 방지: 같은 fixed의 같은 날짜 lot가 이미 있으면 스킵
+    const existingLot = (asset.lots || []).find(lot =>
+      lot.autoBuy &&
+      lot.date === dateStr &&
+      lot.source === `🤖 ${fixed.name}`
+    );
+    if (existingLot) {
+      console.log(`⏸️ ${asset.name} ${dateStr} 이미 처리됨 (중복 방지)`);
+      return;
+    }
+
     // 청약/예적금/현금/부동산: 납입형 - 금액 그대로 누적 (qty=1, price=금액)
     const isDepositType = ['청약', '예적금', '현금', '부동산'].includes(asset.type);
 
@@ -11798,35 +11809,51 @@ function updateAsset(id) {
   if (buyprice) a.buyprice = buyprice; else delete a.buyprice;
   if (fxDiscount) a.fxDiscount = fxDiscount; else delete a.fxDiscount;
 
-  // 납입형 자산 (청약/예적금/현금/부동산)
+  // ⭐ 통합 룰: 사용자 입력값 = 오늘까지 모든 거 포함된 최종 상태
   const isDepositType = ['청약', '예적금', '현금', '부동산'].includes(newType);
+  const userInputPrice = Number(document.getElementById('e-price')?.value) || 0;
+  const userInputQty = Number(document.getElementById('e-qty')?.value) || 1;
+
+  // 기존 lots 모두 삭제 (입력값에 이미 다 포함됨)
+  a.lots = [];
+
   if (isDepositType) {
-    // 입력값 = 기존 잔액 (lot로 들어온 자동매수와 별개)
-    const userInputPrice = Number(document.getElementById('e-price')?.value) || 0;
     a.qty = 1;
+    a.price = userInputPrice;
     a.initialBalance = userInputPrice;
     if (newType === '청약') {
-      a.initialRounds = rounds; // 사용자 입력 회차 = 기존 회차
-    }
-
-    // lots 있으면 자동 매수분 + 기존 합산
-    if (a.lots && a.lots.length > 0) {
-      recalcAssetFromLots(a); // 위 함수가 initialBalance + lots 합산
-    } else {
-      // lots 없으면 입력값 그대로
-      a.price = userInputPrice;
-      if (newType === '청약') a.rounds = rounds;
+      a.rounds = rounds;
+      a.initialRounds = rounds;
     }
   } else {
-    // 주식/ETF/금/달러 등 - 기존 방식
-    a.qty = Number(document.getElementById('e-qty')?.value) || a.qty || 1;
-    a.price = Number(document.getElementById('e-price')?.value) || a.price;
-    if (rounds) a.rounds = rounds; else delete a.rounds;
-
-    if (a.lots && a.lots.length > 0) {
-      recalcAssetFromLots(a);
-    }
+    a.qty = userInputQty;
+    a.price = userInputPrice;
   }
+
+  // ⭐ 연결된 자동매수: 시작일이 과거면 → lastBuyDate = 오늘 (다음 매수일부터 추가)
+  // 시작일이 미래면 → lastBuyDate 그대로 (그 날부터 자동 추가)
+  const today = new Date();
+  const todayEnd = new Date(today);
+  todayEnd.setHours(23, 59, 59, 999);
+
+  (budget.fixed || []).forEach(f => {
+    if (f.autoBuy && f.assetInfo &&
+        f.assetInfo.name === a.name && f.assetInfo.type === a.type) {
+
+      const startDate = f.createdAt ? new Date(f.createdAt) : null;
+      const isStartPast = startDate && startDate <= today;
+
+      if (isStartPast) {
+        // 시작일 과거 → 입력값에 이미 반영됨 → 다음 매수일부터 추가
+        f.lastBuyDate = todayEnd.toISOString();
+        console.log(`📌 ${f.name} 시작일 과거 → lastBuyDate를 오늘로 (다음 매수일부터 자동 추가)`);
+      } else {
+        // 시작일 미래 → 그 날부터 자동 추가됨
+        delete f.lastBuyDate;
+        console.log(`📌 ${f.name} 시작일 미래 → 시작일부터 자동 추가 예정`);
+      }
+    }
+  });
 
   saveData();
   showToast('저장됨');
