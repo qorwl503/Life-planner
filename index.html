@@ -9303,29 +9303,60 @@ async function fetchMarketIndices() {
     return marketIndices;
   }
 
-  // 야후 티커 (한국/미국 지수 + 환율 + 금)
-  const tickers = {
+  const data = {};
+
+  // 네이버 우선 (실시간 등락률 정확)
+  const naverCodes = {
+    kospi: 'KOSPI',
+    kosdaq: 'KOSDAQ',
+    sp500: '.INX',
+    nasdaq: '.IXIC',
+    dow: '.DJI',
+  };
+
+  await Promise.all(Object.entries(naverCodes).map(async ([name, code]) => {
+    try {
+      const r = await fetchNaverIndex(code);
+      if (r) data[name] = r;
+    } catch (e) {}
+  }));
+
+  // 환율 - 네이버
+  try {
+    data.usdkrw = await fetchNaverExchange();
+  } catch (e) {}
+
+  // 야후 폴백 (네이버 실패 시)
+  const yahooFallback = {
     kospi: '^KS11',
     kosdaq: '^KQ11',
     sp500: '^GSPC',
     nasdaq: '^IXIC',
     dow: '^DJI',
     usdkrw: 'USDKRW=X',
-    gold: 'GC=F',         // 국제 금 선물
-    goldKrx: '411060.KS', // ACE KRX금현물 ETF
   };
-
-  const data = {};
-  await Promise.all(Object.entries(tickers).map(async ([name, t]) => {
+  await Promise.all(Object.entries(yahooFallback).map(async ([name, t]) => {
+    if (data[name]) return; // 이미 있으면 스킵
     try {
       data[name] = await fetchYahooPrice(t);
     } catch (e) {
-      console.error(`${name} (${t}) 조회 실패:`, e);
       data[name] = null;
     }
   }));
 
-  // 네이버 국내 금 시세 (g당 원) - 김프용
+  // 금 (국제 + KRX ETF) - 야후 사용
+  await Promise.all([
+    ['gold', 'GC=F'],         // 국제 금 선물 (USD/온스)
+    ['goldKrx', '411060.KS'], // ACE KRX금현물 ETF
+  ].map(async ([name, t]) => {
+    try {
+      data[name] = await fetchYahooPrice(t);
+    } catch (e) {
+      data[name] = null;
+    }
+  }));
+
+  // 네이버 국내 금 시세 (g당 원)
   try {
     data.goldDomestic = await fetchNaverGoldDomestic();
   } catch (e) {
@@ -9334,6 +9365,83 @@ async function fetchMarketIndices() {
 
   marketIndices = { ...data, time: Date.now() };
   return marketIndices;
+}
+
+// 네이버 시장 지수 (한국/미국)
+async function fetchNaverIndex(code) {
+  const target = `https://m.stock.naver.com/api/index/${code}/basic`;
+  const proxies = [
+    url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
+    url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
+    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+  ];
+
+  for (const proxyFn of proxies) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(proxyFn(target), { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (!res.ok) continue;
+
+      let text = await res.text();
+      try { const j = JSON.parse(text); if (j.contents) text = j.contents; } catch (e) {}
+
+      const data = JSON.parse(text);
+      const price = Number(String(data.closePrice || '').replace(/,/g, '')) || Number(data.now) || 0;
+      const change = Number(String(data.compareToPreviousClosePrice || '').replace(/,/g, '')) || Number(data.change) || 0;
+      const changePct = Number(data.fluctuationsRatio) || Number(data.changeRate) || 0;
+
+      if (!price) continue;
+
+      return {
+        price,
+        previousClose: price - change,
+        change,
+        changePct,
+        currency: code.startsWith('.') ? 'USD' : 'KRW',
+        time: Date.now(),
+      };
+    } catch (e) {
+      console.warn(`네이버 ${code} 실패:`, e.message);
+      continue;
+    }
+  }
+  return null;
+}
+
+// 네이버 환율 (USD/KRW)
+async function fetchNaverExchange() {
+  const target = 'https://m.stock.naver.com/api/marketindex/exchange/FX_USDKRW/basic';
+  const proxies = [
+    url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
+    url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
+    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+  ];
+
+  for (const proxyFn of proxies) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(proxyFn(target), { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (!res.ok) continue;
+
+      let text = await res.text();
+      try { const j = JSON.parse(text); if (j.contents) text = j.contents; } catch (e) {}
+
+      const data = JSON.parse(text);
+      const price = Number(String(data.closePrice || '').replace(/,/g, '')) || 0;
+      const change = Number(String(data.compareToPreviousClosePrice || '').replace(/,/g, '')) || 0;
+      const changePct = Number(data.fluctuationsRatio) || 0;
+
+      if (!price) continue;
+      return { price, previousClose: price - change, change, changePct, currency: 'KRW', time: Date.now() };
+    } catch (e) {
+      continue;
+    }
+  }
+  return null;
 }
 
 // 네이버 국내 금 시세 (g당 원)
