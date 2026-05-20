@@ -5491,21 +5491,54 @@ async function runAIStockAnalysis() {
   statusEl.innerHTML = `<div style="display:flex; align-items:center; justify-content:center; gap:8px;"><div class="spinner" style="width:14px; height:14px;"></div>"${stockName}" 분석 중...</div>`;
   resultEl.style.display = 'none';
 
-  const prompt = `너는 실전 경험이 풍부하고 트렌드에 빠삭한 주식 투자 전략가야.
-사용자가 '${stockName}' 주식의 투자 가치 분석을 요청했어.
-단순히 주가 차트만 보는 것이 아니라 '기업의 본질적인 가치와 향후 폭발적인 성장 가능성'에 집중해서 다음 세 가지를 4~5줄 이내로 핵심만 요약해 줘.
+  const prompt = `너는 15년차 주식 애널리스트야. 사용자가 '${stockName}' 종목 투자 분석을 요청했어.
 
-1. 비즈니스 모델 및 찐경쟁력: 이 회사는 정확히 뭘로 돈을 벌고, 남들이 쉽게 따라올 수 없는 독보적인 강점이 있는지?
-2. 성장 모멘텀: 향후 1~3년 내에 주가나 실적을 크게 퀀텀점프 시킬 만한 요인(신사업, 글로벌 트렌드, 수요 폭발 등)이 있는지?
-3. 투자 매력도 및 현실적 리스크: 현재 시점에서 포트폴리오에 담을 매력도를 1~10점으로 평가하고, 투자 시 가장 주의해야 할 현실적인 리스크 하나만 짚어줘.
+다음 6개 섹션으로 **전문적이고 구체적으로** 분석해줘. Markdown 형식 사용, 한국어로.
 
-답변은 초보자도 읽기 편하게 Markdown 형식으로 깔끔하게 정리해 줘. 한국어로 답변해.`;
+## 📊 1. 기업 개요 & 현재 사업
+- 회사명/티커, 시가총액, 섹터/산업
+- 현재 매출의 70% 이상을 차지하는 **주력 사업 부문** 구체적으로 (예: "AI 반도체 70%, 게이밍 GPU 20%, 데이터센터 10%")
+- 최근 분기 매출 / YoY 성장률
+
+## 🎯 2. 향후 사업 계획 & 신사업
+- **공식 발표된 로드맵** 위주로 1~3년 내 계획
+- 신제품, 신시장 진출, M&A, 투자 확대 등 구체적
+- 최근 IR/실적발표/CES 등에서 강조한 키워드
+
+## 💰 3. 핵심 밸류에이션 지표
+- PER (선행 PER 포함)
+- PBR
+- ROE
+- 배당수익률 / 배당성장률 (있는 경우)
+- 영업이익률, 부채비율
+- **업종 평균과 비교** (예: "PER 25.4 vs 반도체 평균 28.7 → 저평가")
+
+## 🚀 4. 성장 모멘텀 (1~3년)
+- 향후 주가/실적을 크게 견인할 **구체적 요인 3가지**
+- 시장 점유율 변화, 신제품 사이클, 규제 환경 등
+- 매출 추정치 / 컨센서스 (있으면)
+
+## ⚠️ 5. 투자 리스크 (점수 포함)
+- **리스크 점수: ?/10점** (1=매우 안전, 10=매우 위험)
+- 구체적 리스크 3가지 (재무, 시장, 규제 등)
+- 단기/중기 주의사항
+
+## 💎 6. 최종 투자 의견
+- **투자 매력도: ?/10점**
+- **목표가 의견** (적정 / 고평가 / 저평가)
+- 매수/관망/매도 한줄 의견
+- 적합한 투자자 타입 (성장주/배당주/가치주 추구자)
+
+---
+⚠️ 본 분석은 일반적인 정보 제공 목적이며, 모든 투자 책임은 본인에게 있습니다.
+
+답변은 친근하게 (반말 OK), 구체적 숫자/예시 포함, 추측은 "(추정)" 표시.`;
 
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${window.GEMINI_API_KEY}`;
     const body = {
       contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.4, maxOutputTokens: 3000 }
+      generationConfig: { temperature: 0.3, maxOutputTokens: 5000 }
     };
 
     const res = await fetch(url, {
@@ -9787,9 +9820,9 @@ async function fetchNaverGoldDomestic() {
     url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
   ];
 
-  // 네이버 marketindex JSON API - basic 사용
-  // M04020000 = 국내 금시세 (g당)
+  // 1순위: JSON API 여러 개 시도
   const targets = [
+    'https://m.stock.naver.com/front-api/v1/marketIndex/prices?category=metals&reutersCode=M04020000&page=1&pageSize=2',
     'https://api.stock.naver.com/marketindex/metals/M04020000/basic',
     'https://m.stock.naver.com/api/marketindex/metals/M04020000/basic',
   ];
@@ -9811,12 +9844,25 @@ async function fetchNaverGoldDomestic() {
 
         console.log('💰 네이버 국내 금 응답:', data);
 
+        // prices API: { result: [{closePrice}, ...] }
+        if (data.result && Array.isArray(data.result) && data.result.length >= 2) {
+          const today = data.result[0];
+          const yesterday = data.result[1];
+          const price = Number(String(today.closePrice || '').replace(/,/g, '')) || 0;
+          const prevPrice = Number(String(yesterday.closePrice || '').replace(/,/g, '')) || 0;
+          if (price > 50000 && price < 500000 && prevPrice > 0) {
+            const changePct = ((price - prevPrice) / prevPrice) * 100;
+            console.log(`✅ 국내 금 (prices): ${price}원/g, ${changePct.toFixed(2)}%`);
+            return { price, changePct };
+          }
+        }
+
+        // basic API: { closePrice, fluctuationsRatio }
         const price = Number(String(data.closePrice || '').replace(/,/g, '')) || 0;
-        const change = Number(String(data.compareToPreviousClosePrice || '').replace(/,/g, '')) || 0;
         const changePct = Number(data.fluctuationsRatio) || 0;
 
         if (price > 50000 && price < 500000) {
-          console.log(`✅ 국내 금: ${price}원/g, ${changePct}%`);
+          console.log(`✅ 국내 금 (basic): ${price}원/g, ${changePct}%`);
           return { price, changePct };
         }
       } catch (e) {
@@ -9825,7 +9871,7 @@ async function fetchNaverGoldDomestic() {
     }
   }
 
-  // 폴백: HTML 파싱
+  // 2순위: HTML 파싱 (가격 + 등락률 모두 정확히)
   const target = 'https://finance.naver.com/marketindex/goldDetail.naver';
   for (const proxyFn of proxies) {
     try {
@@ -9838,27 +9884,44 @@ async function fetchNaverGoldDomestic() {
       let html = await res.text();
       try { const j = JSON.parse(html); if (j.contents) html = j.contents; } catch (e) {}
 
+      // 가격: "no_today" 또는 "원/g" 패턴
       let priceMatch = html.match(/([0-9]{1,3}(?:,[0-9]{3})*\.?[0-9]*)\s*(?:원\s*\/\s*g|원\/g)/);
-      if (!priceMatch) {
+      let price = 0;
+      if (priceMatch) {
+        price = parseFloat(priceMatch[1].replace(/,/g, ''));
+      } else {
         priceMatch = html.match(/no_today[^<]*<em[^>]*>([\s\S]*?)<\/em>/);
         if (priceMatch) {
           const inner = priceMatch[1].replace(/<[^>]+>/g, '').replace(/\s/g, '');
-          priceMatch = inner.match(/([0-9]{1,3}(?:,[0-9]{3})*\.?[0-9]*)/);
+          const m = inner.match(/([0-9]{1,3}(?:,[0-9]{3})*\.?[0-9]*)/);
+          if (m) price = parseFloat(m[1].replace(/,/g, ''));
         }
       }
-      if (priceMatch) {
-        const price = parseFloat(priceMatch[1].replace(/,/g, ''));
-        if (price > 50000 && price < 500000) {
-          let changePct = 0;
-          const pctMatch = html.match(/등락률[^0-9-]*([-+]?[0-9.]+)/) ||
-                            html.match(/<em[^>]*class="rate"[^>]*>([-+]?[0-9.]+)%?</);
-          if (pctMatch) {
-            changePct = parseFloat(pctMatch[1]);
-            if (html.match(/class="down"|down_p|하락/)) changePct = -Math.abs(changePct);
+
+      if (!(price > 50000 && price < 500000)) continue;
+
+      // 등락률 추출 (여러 패턴)
+      let changePct = 0;
+      const patterns = [
+        /등락률[^0-9-+]*([+-]?[0-9.]+)/,
+        /<em[^>]*class="rate"[^>]*>([+-]?[0-9.]+)%?</,
+        /([+-]?[0-9.]+)\s*%\s*(?:전일대비|등락률|등락 비교)?/,
+        /전일대비[^0-9-+]*[▼▲]?([0-9.]+)[^0-9]*([0-9.]+)%/, // ▼1,065.21 -0.49%
+      ];
+      for (const p of patterns) {
+        const m = html.match(p);
+        if (m) {
+          changePct = parseFloat(m[m.length - 1]);
+          // 하락 표시
+          if (html.match(/no_down|class="down"|down_p|하락|▼/)) {
+            changePct = -Math.abs(changePct);
           }
-          return { price, changePct };
+          if (changePct !== 0) break;
         }
       }
+
+      console.log(`✅ 국내 금 (HTML): ${price}원/g, ${changePct}%`);
+      return { price, changePct };
     } catch (e) {
       continue;
     }
