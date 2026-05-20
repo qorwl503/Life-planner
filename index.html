@@ -9338,14 +9338,13 @@ async function fetchMarketIndices() {
     }
   }));
 
-  // 2) 야후 폴백 (네이버 실패한 것들만)
+  // 2) 야후 폴백 (네이버 실패한 것들만, 환율은 제외 - 야후가 부정확)
   const yahooFallback = {
     kospi: '^KS11',
     kosdaq: '^KQ11',
     sp500: '^GSPC',
     nasdaq: '^IXIC',
     dow: '^DJI',
-    usdkrw: 'USDKRW=X',
     goldKrx: '411060.KS',
     gold: 'GC=F', // 국제 금 - 야후만
   };
@@ -9474,11 +9473,10 @@ async function fetchNaverIndex(code) {
 
 // 네이버 환율 (USD/KRW)
 async function fetchNaverExchange() {
-  // N pay 증권이 실제로 사용하는 환율 API들
+  // basic API: { closePrice, fluctuationsRatio, ... } - 가장 단순
   const targets = [
-    'https://m.stock.naver.com/front-api/v1/marketIndex/prices?category=exchange&reutersCode=FX_USDKRW&page=1&pageSize=1',
     'https://api.stock.naver.com/marketindex/exchange/FX_USDKRW/basic',
-    'https://polling.finance.naver.com/api/realtime/marketindex/exchange/FX_USDKRW',
+    'https://m.stock.naver.com/api/marketindex/exchange/FX_USDKRW/basic',
   ];
 
   const proxies = [
@@ -9502,18 +9500,11 @@ async function fetchNaverExchange() {
         let data;
         try { data = JSON.parse(text); } catch (e) { continue; }
 
-        console.log('💱 네이버 환율 응답:', data);
+        console.log('💱 네이버 환율 basic 응답:', data);
 
-        // 다양한 응답 구조 지원
-        const item = data.result?.[0] || data.datas?.[0] || data.result || data;
-
-        const price = Number(String(item.closePrice || '').replace(/,/g, '')) || 0;
-
-        // 등락률: 네이버가 직접 제공하는 값 그대로
-        const changePct = Number(item.fluctuationsRatio) || 0;
-
-        // 등락액
-        const change = Number(String(item.compareToPreviousClosePrice || '').replace(/,/g, '')) || 0;
+        const price = Number(String(data.closePrice || '').replace(/,/g, '')) || 0;
+        const change = Number(String(data.compareToPreviousClosePrice || '').replace(/,/g, '')) || 0;
+        const changePct = Number(data.fluctuationsRatio) || 0;
 
         if (price > 1000 && price < 2000) {
           console.log(`✅ 네이버 환율: ${price}원, ${changePct}%`);
@@ -9524,6 +9515,40 @@ async function fetchNaverExchange() {
       }
     }
   }
+
+  // basic 실패 시 prices API 시도 (2일치 받아서 직접 계산)
+  const pricesTarget = 'https://api.stock.naver.com/marketindex/exchange/FX_USDKRW/prices?page=1&pageSize=2';
+
+  for (const proxyFn of proxies) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const res = await fetch(proxyFn(pricesTarget), { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (!res.ok) continue;
+
+      let text = await res.text();
+      try { const j = JSON.parse(text); if (j.contents) text = j.contents; } catch (e) {}
+
+      const items = JSON.parse(text);
+      console.log('💱 네이버 환율 prices 응답:', items);
+
+      if (!Array.isArray(items) || items.length < 2) continue;
+
+      const price = Number(String(items[0].closePrice || '').replace(/,/g, '')) || 0;
+      const prevPrice = Number(String(items[1].closePrice || '').replace(/,/g, '')) || 0;
+      if (!price || !prevPrice) continue;
+
+      const change = price - prevPrice;
+      const changePct = (change / prevPrice) * 100;
+
+      console.log(`✅ 네이버 환율 prices: ${price}원, ${changePct.toFixed(2)}%`);
+      return { price, previousClose: prevPrice, change, changePct, currency: 'KRW', time: Date.now() };
+    } catch (e) {
+      continue;
+    }
+  }
+
   return null;
 }
 
