@@ -4344,6 +4344,17 @@ function editFixed(id) {
           </div>
         </label>
 
+        <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; margin-bottom:12px; padding:10px; background:white; border-radius:8px;">
+          <input type="checkbox" id="ef-fractional" ${f.fractional?'checked':''} style="width:18px; height:18px; cursor:pointer; flex-shrink:0; margin-top:2px;" />
+          <div style="flex:1;">
+            <div style="font-size:11px; font-weight:600; color:var(--text-primary);">🔢 소수점 매매</div>
+            <div style="font-size:9px; color:var(--text-tertiary); margin-top:3px; line-height:1.5;">
+              ✅ <b>체크</b>: SPYM/SCHD 등 미국 ETF는 0.3주 같은 소수점 매수 가능<br>
+              ❌ <b>해제</b>: KODEX/TIGER 등 한국 ETF는 정수만 매수 (잔돈 남음)
+            </div>
+          </div>
+        </label>
+
         <div class="field">
           <div class="field-label">자산 종류</div>
           <div style="display:flex; gap:4px; flex-wrap:wrap;" id="ef-asset-type">
@@ -4595,6 +4606,8 @@ async function updateFixed(id) {
   const isInvest = catBtn.dataset.c === '투자';
   if (isInvest) {
     const autoBuy = document.getElementById('ef-autobuy')?.checked;
+    const fractional = !!document.getElementById('ef-fractional')?.checked;
+    f.fractional = fractional;
     const assetType = document.querySelector('#ef-asset-type .chip.active')?.dataset.t || '주식';
     const assetName = document.getElementById('ef-asset-name')?.value?.trim() || name;
     const assetTicker = document.getElementById('ef-asset-ticker')?.value?.trim() || '';
@@ -4998,6 +5011,17 @@ function openFixedAddModal() {
           </div>
         </label>
 
+        <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; margin-bottom:12px; padding:10px; background:white; border-radius:8px;">
+          <input type="checkbox" id="fx-fractional" style="width:18px; height:18px; cursor:pointer; flex-shrink:0; margin-top:2px;" />
+          <div style="flex:1;">
+            <div style="font-size:11px; font-weight:600; color:var(--text-primary);">🔢 소수점 매매</div>
+            <div style="font-size:9px; color:var(--text-tertiary); margin-top:3px; line-height:1.5;">
+              ✅ <b>체크</b>: SPYM/SCHD 등 미국 ETF는 0.3주 같은 소수점 매수 가능<br>
+              ❌ <b>해제</b>: KODEX/TIGER 등 한국 ETF는 정수만 매수 (잔돈 남음)
+            </div>
+          </div>
+        </label>
+
         <div class="field">
           <div class="field-label">자산 종류</div>
           <div style="display:flex; gap:4px; flex-wrap:wrap;" id="fx-asset-type">
@@ -5230,6 +5254,22 @@ function saveFixed() {
     ? new Date(startDateInput + 'T00:00:00').toISOString()
     : new Date().toISOString();
 
+  // 소수점 매매 옵션
+  const fractional = !!document.getElementById('fx-fractional')?.checked;
+
+  // ⭐ 시작 날짜 과거인 경우 → 오늘까지의 자동매수는 이미 반영된 걸로 간주
+  // → lastBuyDate = 오늘 - 1 (그 후 매수일부터 추가)
+  const today = new Date();
+  const startDate = new Date(createdAt);
+  let initLastBuyDate = null;
+  if (startDate <= today) {
+    // 시작일이 과거 → 오늘 자정 직전을 마지막 매수일로
+    const todayEnd = new Date(today);
+    todayEnd.setHours(23, 59, 59, 999);
+    initLastBuyDate = todayEnd.toISOString();
+    console.log(`📌 ${name} 시작일 과거 → 다음 매수일부터 자동 추가`);
+  }
+
   const newFixed = {
     id: Date.now(),
     name, amt, cat, icon,
@@ -5238,7 +5278,8 @@ function saveFixed() {
     paid: false,
     autoBuy: !!autoBuy,
     assetInfo,
-    lastBuyDate: null,
+    fractional, // 소수점 매매 여부
+    lastBuyDate: initLastBuyDate,
     createdAt, // 사용자 지정 시작 날짜
   };
   budget.fixed.push(newFixed);
@@ -5464,7 +5505,7 @@ async function runAIStockAnalysis() {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${window.GEMINI_API_KEY}`;
     const body = {
       contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.4, maxOutputTokens: 1200 }
+      generationConfig: { temperature: 0.4, maxOutputTokens: 3000 }
     };
 
     const res = await fetch(url, {
@@ -5888,7 +5929,13 @@ async function recalcAutoBuy(assetId, fixedId) {
 
   // 모든 발생일에 대해 lot 추가
   occurDates.forEach((d) => {
-    const newQty = fixed.amt / currPrice;
+    let newQty = fixed.amt / currPrice;
+    // 소수점 매매 X → 정수만 매수
+    if (!fixed.fractional) {
+      newQty = Math.floor(newQty); // 내림 (잔돈 남김)
+    }
+    if (newQty <= 0) return; // 한 주도 못 사는 경우 스킵
+
     addAssetLot(asset, {
       source: `🤖 ${fixed.name}`,
       qty: newQty,
@@ -5896,7 +5943,7 @@ async function recalcAutoBuy(assetId, fixedId) {
       date: d.toISOString().split('T')[0],
       fxDiscount: asset.fxDiscount || null,
       autoBuy: true,
-      note: '자동매수 (재계산)',
+      note: fixed.fractional ? '자동매수 (소수점)' : '자동매수 (정수)',
     });
   });
 
@@ -6058,8 +6105,16 @@ async function processAutoBuy(fixed) {
       }
       console.log(`💰 ${asset.name} 납입 lot 추가: ${dateStr}, ${fixed.amt.toLocaleString()}원, 총 ${asset.price.toLocaleString()}원${asset.type === '청약' ? `, ${asset.rounds}회차` : ''}`);
     } else if (currPrice > 0) {
-      // 주식/ETF/금/달러: 시세 알면 정확한 수량 계산 (소수점 매매 OK)
-      const newQty = fixed.amt / currPrice;
+      // 주식/ETF/금/달러: 시세 알면 정확한 수량 계산
+      let newQty = fixed.amt / currPrice;
+      // 소수점 매매 X → 정수만 매수
+      if (!fixed.fractional) {
+        newQty = Math.floor(newQty);
+      }
+      if (newQty <= 0) {
+        console.warn(`⚠️ ${asset.name} 정수 매수 불가 (한도 ${fixed.amt} / 시세 ${currPrice})`);
+        return;
+      }
       addAssetLot(asset, {
         source: `🤖 ${fixed.name}`,
         qty: newQty,
@@ -6067,9 +6122,9 @@ async function processAutoBuy(fixed) {
         date: dateStr,
         fxDiscount: asset.fxDiscount || null,
         autoBuy: true,
-        note: '자동매수',
+        note: fixed.fractional ? '자동매수 (소수점)' : '자동매수 (정수)',
       });
-      console.log(`✅ ${asset.name} lot 추가: ${dateStr}, ${newQty.toFixed(4)}주 @ ${currPrice}, 총 ${asset.qty}주`);
+      console.log(`✅ ${asset.name} lot 추가: ${dateStr}, ${newQty}주 @ ${currPrice} (${fixed.fractional?'소수점':'정수'}), 총 ${asset.qty}주`);
     } else {
       // 시세 모르면 추정 매수 (1주 + fixed.amt 평단가)
       addAssetLot(asset, {
@@ -9731,64 +9786,80 @@ async function fetchNaverGoldDomestic() {
     url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
     url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
   ];
-  const target = 'https://finance.naver.com/marketindex/goldDetail.naver';
 
+  // 네이버 marketindex JSON API - basic 사용
+  // M04020000 = 국내 금시세 (g당)
+  const targets = [
+    'https://api.stock.naver.com/marketindex/metals/M04020000/basic',
+    'https://m.stock.naver.com/api/marketindex/metals/M04020000/basic',
+  ];
+
+  for (const target of targets) {
+    for (const proxyFn of proxies) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
+        const res = await fetch(proxyFn(target), { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (!res.ok) continue;
+
+        let text = await res.text();
+        try { const j = JSON.parse(text); if (j.contents) text = j.contents; } catch (e) {}
+
+        let data;
+        try { data = JSON.parse(text); } catch (e) { continue; }
+
+        console.log('💰 네이버 국내 금 응답:', data);
+
+        const price = Number(String(data.closePrice || '').replace(/,/g, '')) || 0;
+        const change = Number(String(data.compareToPreviousClosePrice || '').replace(/,/g, '')) || 0;
+        const changePct = Number(data.fluctuationsRatio) || 0;
+
+        if (price > 50000 && price < 500000) {
+          console.log(`✅ 국내 금: ${price}원/g, ${changePct}%`);
+          return { price, changePct };
+        }
+      } catch (e) {
+        continue;
+      }
+    }
+  }
+
+  // 폴백: HTML 파싱
+  const target = 'https://finance.naver.com/marketindex/goldDetail.naver';
   for (const proxyFn of proxies) {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 4000);
-
       const res = await fetch(proxyFn(target), { signal: controller.signal });
       clearTimeout(timeoutId);
       if (!res.ok) continue;
 
       let html = await res.text();
-      // allorigins는 JSON 래핑됨
-      try {
-        const j = JSON.parse(html);
-        if (j.contents) html = j.contents;
-      } catch (e) {}
+      try { const j = JSON.parse(html); if (j.contents) html = j.contents; } catch (e) {}
 
-      // 네이버 국내 금 = "218,860.79원/g" 형식
-      // 1순위: "원/g" 텍스트 앞의 숫자 (가장 정확)
       let priceMatch = html.match(/([0-9]{1,3}(?:,[0-9]{3})*\.?[0-9]*)\s*(?:원\s*\/\s*g|원\/g)/);
-
       if (!priceMatch) {
-        // 2순위: no_today em 태그 (네이버 표준 현재가 위치)
         priceMatch = html.match(/no_today[^<]*<em[^>]*>([\s\S]*?)<\/em>/);
         if (priceMatch) {
-          // 안에 여러 span 있을 수 있어 숫자만 추출
           const inner = priceMatch[1].replace(/<[^>]+>/g, '').replace(/\s/g, '');
           priceMatch = inner.match(/([0-9]{1,3}(?:,[0-9]{3})*\.?[0-9]*)/);
         }
       }
-
-      if (!priceMatch) {
-        // 3순위: 6자리 가격 형식
-        priceMatch = html.match(/>([0-9]{3},[0-9]{3}\.[0-9]{2})</);
-      }
-
       if (priceMatch) {
         const price = parseFloat(priceMatch[1].replace(/,/g, ''));
-        console.log(`💰 네이버 국내 금: ${price}원/g`);
-
-        // 합리적 범위 - g당 가격 (2026년 약 21만원/g)
         if (price > 50000 && price < 500000) {
           let changePct = 0;
-          // 변동률 추출
           const pctMatch = html.match(/등락률[^0-9-]*([-+]?[0-9.]+)/) ||
                             html.match(/<em[^>]*class="rate"[^>]*>([-+]?[0-9.]+)%?</);
           if (pctMatch) {
             changePct = parseFloat(pctMatch[1]);
             if (html.match(/class="down"|down_p|하락/)) changePct = -Math.abs(changePct);
           }
-
           return { price, changePct };
         }
       }
-      return null;
     } catch (e) {
-      console.error('네이버 금 프록시 실패:', e);
       continue;
     }
   }
