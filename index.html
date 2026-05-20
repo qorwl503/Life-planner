@@ -9143,13 +9143,25 @@ async function fetchYahooPrice(ticker) {
 
       const meta = result.meta;
       const currentPrice = meta.regularMarketPrice;
-      // 전일 종가: regularMarketPreviousClose 우선
       const previousClose = meta.regularMarketPreviousClose || meta.chartPreviousClose || meta.previousClose;
       const currency = meta.currency || 'USD';
 
       if (!currentPrice) continue;
 
-      const changePct = previousClose > 0 ? ((currentPrice - previousClose) / previousClose) * 100 : 0;
+      // 야후가 직접 제공하는 등락률 우선 (가장 정확)
+      let changePct;
+      if (meta.regularMarketChangePercent != null) {
+        // 야후가 0~1 비율로 줄 수도, % 값으로 줄 수도 있음
+        const raw = Number(meta.regularMarketChangePercent);
+        changePct = Math.abs(raw) < 1 ? raw * 100 : raw;
+      } else if (previousClose > 0) {
+        // 계산 폴백
+        changePct = ((currentPrice - previousClose) / previousClose) * 100;
+      } else {
+        changePct = 0;
+      }
+
+      console.log(`📊 ${ticker}: 현재 ${currentPrice} / 전일 ${previousClose} / ${changePct.toFixed(2)}%`);
 
       const priceData = {
         ticker,
@@ -9344,11 +9356,31 @@ async function fetchMarketIndices() {
     }
   }));
 
-  // 금 (국제 + KRX ETF) - 야후 사용
-  await Promise.all([
-    ['gold', 'GC=F'],         // 국제 금 선물 (USD/온스)
-    ['goldKrx', '411060.KS'], // ACE KRX금현물 ETF
-  ].map(async ([name, t]) => {
+  // 국내 금 시세 (g당 원) - 네이버
+  try {
+    data.goldDomestic = await fetchNaverGoldDomestic();
+  } catch (e) {
+    data.goldDomestic = null;
+  }
+
+  // KRX 금 ETF (411060) - 네이버 우선
+  try {
+    const r = await fetchNaverDomesticStock('411060');
+    if (r) data.goldKrx = r;
+  } catch (e) {}
+
+  // 야후 폴백 (네이버 실패한 것들만)
+  const yahooFallback = {
+    kospi: '^KS11',
+    kosdaq: '^KQ11',
+    sp500: '^GSPC',
+    nasdaq: '^IXIC',
+    dow: '^DJI',
+    usdkrw: 'USDKRW=X',
+    goldKrx: '411060.KS',
+  };
+  await Promise.all(Object.entries(yahooFallback).map(async ([name, t]) => {
+    if (data[name]) return;
     try {
       data[name] = await fetchYahooPrice(t);
     } catch (e) {
@@ -9356,15 +9388,61 @@ async function fetchMarketIndices() {
     }
   }));
 
-  // 네이버 국내 금 시세 (g당 원)
+  // 국제 금 선물 - 야후만
   try {
-    data.goldDomestic = await fetchNaverGoldDomestic();
+    data.gold = await fetchYahooPrice('GC=F');
   } catch (e) {
-    data.goldDomestic = null;
+    data.gold = null;
   }
 
   marketIndices = { ...data, time: Date.now() };
   return marketIndices;
+}
+
+// 네이버 국내 종목 시세 (주식/ETF)
+async function fetchNaverDomesticStock(code) {
+  const target = `https://m.stock.naver.com/api/stock/${code}/basic`;
+  const proxies = [
+    url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
+    url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
+    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+  ];
+
+  for (const proxyFn of proxies) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(proxyFn(target), { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (!res.ok) continue;
+
+      let text = await res.text();
+      try { const j = JSON.parse(text); if (j.contents) text = j.contents; } catch (e) {}
+
+      const data = JSON.parse(text);
+      console.log(`📈 네이버 종목 ${code} 원본:`, data);
+
+      const price = Number(String(data.closePrice || '').replace(/,/g, '')) || 0;
+      const change = Number(String(data.compareToPreviousClosePrice || '').replace(/,/g, '')) || 0;
+      const changePct = Number(data.fluctuationsRatio) || 0;
+
+      if (!price) continue;
+      console.log(`✅ 네이버 ${code}: ${price}원, ${changePct}%`);
+
+      return {
+        ticker: code,
+        price,
+        previousClose: price - change,
+        changePct,
+        currency: 'KRW',
+        time: Date.now(),
+      };
+    } catch (e) {
+      console.warn(`네이버 종목 ${code} 실패:`, e.message);
+      continue;
+    }
+  }
+  return null;
 }
 
 // 네이버 시장 지수 (한국/미국)
