@@ -38,8 +38,11 @@ const firebaseConfig = {
   const auth = getAuth(app);
   const db = getFirestore(app);
 
-  // Firebase 키를 YouTube API 키로 직접 사용 (코드 박힌 공개 키, Firebase 프로젝트에 YouTube API 활성화 필요)
-  window.YOUTUBE_API_KEY = firebaseConfig.apiKey;
+  // YouTube Data API 키 — 별도 키 사용 권장
+  // localStorage에 youtube_api_key 가 있으면 그걸 쓰고, 없으면 Firebase 프로젝트 키로 폴백
+  // (같은 구글 클라우드 프로젝트에 YouTube Data API v3 가 활성화돼 있어야 폴백이 작동함)
+  window._fbApiKey = firebaseConfig.apiKey; // 폴백 참조용
+  window.YOUTUBE_API_KEY = localStorage.getItem('youtube_api_key') || firebaseConfig.apiKey;
 
   // Gemini AI API 키 — 사용자가 직접 입력 (localStorage)
   window.GEMINI_API_KEY = localStorage.getItem('gemini_api_key') || null;
@@ -1103,11 +1106,80 @@ function saveData() {
 }
 
 function saveLocal() {
+  const payload = { todos, budget, workoutLog, assets, settings, userChannels, economySites, challenges };
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      todos, budget, workoutLog, assets, settings, userChannels, economySites, challenges
-    }));
-  } catch(e) {}
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  } catch(e) {
+    // 🔧 용량 초과(QuotaExceededError) 시 대응
+    if (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014) {
+      console.warn('⚠️ localStorage 용량 초과 - 캐시 정리 후 재시도');
+
+      // 1단계: AI 캐시 등 비핵심 데이터 제거
+      try {
+        localStorage.removeItem('ai_cache_today');
+        localStorage.removeItem('ai_prewarm_date');
+      } catch (e2) {}
+
+      // 2단계: 그래도 안 되면 자동매수 lot 압축 (오래된 회차를 1개로 합침)
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+        console.log('✅ 캐시 정리 후 저장 성공');
+        return;
+      } catch (e3) {
+        compactAutoLots();
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+          console.log('✅ 자동매수 압축 후 저장 성공');
+          showToast('저장 공간 정리됨 (오래된 자동매수 기록 압축)');
+        } catch (e4) {
+          console.error('🚨 저장 최종 실패:', e4);
+          showToast('⚠️ 저장 공간 부족 - 클라우드 동기화를 권장해요');
+        }
+      }
+    } else {
+      console.error('저장 실패:', e);
+    }
+  }
+}
+
+// 🔧 자동매수 lot 압축: 1년 이상 지난 자동매수 기록을 연도별 1건으로 합침
+// (총 수량/금액은 그대로 유지 - 평균가 계산에 영향 없음)
+function compactAutoLots() {
+  const oneYearAgo = new Date();
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+  const cutoff = oneYearAgo.toISOString().split('T')[0];
+
+  assets.forEach(asset => {
+    if (!asset.lots || asset.lots.length < 30) return;
+
+    const oldAuto = asset.lots.filter(l => l.autoBuy && (l.date || '') < cutoff);
+    const keep = asset.lots.filter(l => !(l.autoBuy && (l.date || '') < cutoff));
+    if (oldAuto.length < 2) return;
+
+    // 연도별로 묶기
+    const byYear = {};
+    oldAuto.forEach(l => {
+      const yr = (l.date || '').slice(0, 4) || 'old';
+      if (!byYear[yr]) byYear[yr] = [];
+      byYear[yr].push(l);
+    });
+
+    Object.entries(byYear).forEach(([yr, lots]) => {
+      const totalQty = lots.reduce((s, l) => s + Number(l.qty || 0), 0);
+      const totalCost = lots.reduce((s, l) => s + Number(l.qty || 0) * Number(l.price || 0), 0);
+      keep.push({
+        id: Date.now() + Math.random(),
+        source: `${yr}년 자동매수 (${lots.length}회 합산)`,
+        qty: totalQty,
+        price: totalQty > 0 ? totalCost / totalQty : 0,
+        date: `${yr}-12-31`,
+        autoBuy: true,
+        note: `${lots.length}건 압축됨`,
+      });
+    });
+
+    asset.lots = keep;
+  });
 }
 
 function showSyncStatus() {
@@ -3787,6 +3859,7 @@ function renderMoney() {
     const totalExp = Object.values(catTotals).reduce((s, v) => s + v, 0);
     const catEntries = Object.entries(catTotals).sort((a, b) => b[1] - a[1]);
 
+  if (totalExp > 0) {
     // 카테고리별 색상
     const catColors = ['#FF6B6B', '#4ECDC4', '#FFD93D', '#6BCF7F', '#A78BFA', '#FF8E72', '#54A0FF', '#FB7185', '#34D399', '#FBBF24', '#A3A3A3'];
 
@@ -3860,6 +3933,7 @@ function renderMoney() {
         })()}
       </div>
     `;
+  } // end if (totalExp > 0)
   }
 
   // ===== 📅 월별 캘린더형 일별 합계 =====
@@ -4582,8 +4656,7 @@ async function updateFixed(id) {
   if (newStartDate) {
     const newCreatedAt = new Date(newStartDate + 'T00:00:00').toISOString();
     if (f.createdAt !== newCreatedAt) {
-      // 시작 날짜 변경 → 연결된 자산도 0으로 리셋
-      f.lastBuyDate = null;
+      const prevLastBuyDate = f.lastBuyDate; // 🔧 원래 값 보존용
       f.createdAt = newCreatedAt;
 
       if (f.assetInfo) {
@@ -4592,11 +4665,25 @@ async function updateFixed(id) {
           type: f.assetInfo.type,
           ticker: f.assetInfo.ticker,
         });
-        if (linkedAsset && confirm(`시작 날짜를 ${newStartDate}로 변경하셨어요.\n\n연결된 자산 "${linkedAsset.name}"을 0으로 리셋하고 새 시작 날짜부터 자동 재계산할까요?\n\n(취소하면 수량/평단가는 그대로 유지됩니다)`)) {
+        if (linkedAsset && confirm(`시작 날짜를 ${newStartDate}로 변경하셨어요.\n\n연결된 자산 "${linkedAsset.name}"을 0으로 리셋하고 새 시작 날짜부터 자동 재계산할까요?\n\n⚠️ 확인: 과거 자동매수분을 새로 계산해서 채웁니다 (자산이 0부터 재계산됨)\n❌ 취소: 현재 수량/평단가 유지, 앞으로의 회차만 추가`)) {
+          // 🔧 "확인" → 자동매수가 만든 lot만 제거하고 0부터 재계산, lastBuyDate 리셋
+          if (linkedAsset.lots) {
+            linkedAsset.lots = linkedAsset.lots.filter(lot => !lot.autoBuy);
+          }
           linkedAsset.qty = 0;
           linkedAsset.price = 0;
-          console.log(`🔄 ${linkedAsset.name} 리셋 + ${newStartDate}부터 재계산 예정`);
+          recalcAssetFromLots(linkedAsset); // 남은 수동/OCR lot 기준 재계산
+          f.lastBuyDate = null;
+          console.log(`🔄 ${linkedAsset.name} 자동매수 lot 제거 + ${newStartDate}부터 재계산 예정`);
+        } else {
+          // 🔧 "취소" → 과거 회차를 새로 만들면 중복되므로 lastBuyDate를 오늘로 고정
+          const todayEnd = new Date();
+          todayEnd.setHours(23, 59, 59, 999);
+          f.lastBuyDate = todayEnd.toISOString();
+          console.log(`⏭️ ${f.name} 자산 유지 → 과거 회차 생략, 다음 회차부터 추가`);
         }
+      } else {
+        f.lastBuyDate = prevLastBuyDate; // 자산 연결 없으면 원래대로
       }
     }
     f.createdAt = newCreatedAt;
@@ -5156,6 +5243,21 @@ function openFixedAddModal() {
         b.classList.add('active');
       });
     });
+
+    // 🔧 티커 입력 시 한국/미국 판별해 소수점 매매 자동 추천
+    const tickerInput = container.querySelector('#fx-asset-ticker');
+    const fracBox = document.getElementById('fx-fractional');
+    if (tickerInput && fracBox && tickerInput.type !== 'hidden') {
+      tickerInput.addEventListener('input', () => {
+        const t = tickerInput.value.trim().toUpperCase();
+        if (!t) return;
+        const isKorean = /\.(KS|KQ)$/.test(t) || /^\d{6}$/.test(t);
+        const isUS = /^[A-Z]{1,5}$/.test(t) && !isKorean;
+        // 한국 종목 → 정수 매수(해제), 미국 종목 → 소수점 매수(체크)
+        if (isKorean) fracBox.checked = false;
+        else if (isUS) fracBox.checked = true;
+      });
+    }
   }
 
   setTimeout(() => {
@@ -5257,17 +5359,42 @@ function saveFixed() {
   // 소수점 매매 옵션
   const fractional = !!document.getElementById('fx-fractional')?.checked;
 
-  // ⭐ 시작 날짜 과거인 경우 → 오늘까지의 자동매수는 이미 반영된 걸로 간주
-  // → lastBuyDate = 오늘 - 1 (그 후 매수일부터 추가)
+  // ⭐ 시작일이 과거인 경우 중복 방지 처리
+  // 자동매수 대상 자산이 "이미 존재하고 보유분이 있으면" → 과거분은 이미 반영된 것으로 간주
   const today = new Date();
   const startDate = new Date(createdAt);
   let initLastBuyDate = null;
-  if (startDate <= today) {
-    // 시작일이 과거 → 오늘 자정 직전을 마지막 매수일로
-    const todayEnd = new Date(today);
-    todayEnd.setHours(23, 59, 59, 999);
-    initLastBuyDate = todayEnd.toISOString();
-    console.log(`📌 ${name} 시작일 과거 → 다음 매수일부터 자동 추가`);
+
+  if (startDate < today) {
+    // 시작일이 과거 → 이 자산에 기존 보유분이 있는지 확인
+    let existingHolding = false;
+    if (autoBuy && assetInfo) {
+      const existAsset = findMatchingAsset({
+        name: assetInfo.name, type: assetInfo.type, ticker: assetInfo.ticker,
+      });
+      if (existAsset && (Number(existAsset.qty) > 0 || (existAsset.lots && existAsset.lots.length > 0))) {
+        existingHolding = true;
+      }
+    }
+
+    if (existingHolding) {
+      // 🔧 이미 보유분 있음 → 과거 자동매수를 만들면 중복 → 다음 회차부터만
+      const todayEnd = new Date(today);
+      todayEnd.setHours(23, 59, 59, 999);
+      initLastBuyDate = todayEnd.toISOString();
+      console.log(`📌 ${name} - 기존 보유 자산 발견 → 과거분 생략(중복방지), 다음 회차부터 추가`);
+    } else {
+      // 🔧 새 자산이거나 보유분 없음 → 사용자에게 과거분 소급 여부 확인
+      const applyPast = confirm(`자동매수 시작일이 과거(${startDateInput})로 설정됐어요.\n\n⚠️ 확인: 시작일부터 오늘까지의 과거 자동매수분을 모두 채웁니다.\n❌ 취소: 오늘 이후 회차부터만 자동매수합니다.\n\n(이미 자산에 과거 매수분을 입력하셨다면 '취소'를 누르세요)`);
+      if (!applyPast) {
+        const todayEnd = new Date(today);
+        todayEnd.setHours(23, 59, 59, 999);
+        initLastBuyDate = todayEnd.toISOString();
+        console.log(`📌 ${name} - 사용자 선택: 과거분 생략, 다음 회차부터`);
+      } else {
+        console.log(`📌 ${name} - 사용자 선택: 과거분 소급 적용`);
+      }
+    }
   }
 
   const newFixed = {
@@ -5286,7 +5413,10 @@ function saveFixed() {
 
   // 자동매수 활성화 시 → 즉시 자산 등록 (없으면)
   if (autoBuy && assetInfo) {
-    const existing = assets.find(a => a.name === assetInfo.name && a.type === assetInfo.type);
+    // 🔧 티커 우선 매칭 - 이름이 미묘하게 달라도 같은 티커면 같은 자산
+    const existing = findMatchingAsset({
+      name: assetInfo.name, type: assetInfo.type, ticker: assetInfo.ticker,
+    });
     if (!existing) {
       assets.push({
         id: Date.now() + 1,
@@ -5298,6 +5428,9 @@ function saveFixed() {
         price: 0,
         note: `🤖 자동매수: ${cycle === 'monthly' ? '매월' : cycle === 'weekly' ? '매주' : '격주'} ${amt.toLocaleString()}원`,
       });
+    } else if (!existing.ticker && assetInfo.ticker) {
+      // 기존 자산에 티커가 없으면 채워줌 (이후 매칭 정확도 ↑)
+      existing.ticker = assetInfo.ticker;
     }
   }
 
@@ -5725,6 +5858,7 @@ function addAssetLot(asset, lot) {
     date: lot.date || new Date().toISOString().split('T')[0],
     fxDiscount: lot.fxDiscount || null,
     autoBuy: !!lot.autoBuy,
+    fixedId: lot.fixedId || null, // 🔧 어떤 자동매수(고정지출)가 만든 lot인지 - 이름 변경에 강함
     note: lot.note || '',
   });
   recalcAssetFromLots(asset);
@@ -5860,6 +5994,33 @@ function deleteLot(assetId, lotId) {
   setTimeout(() => editAsset(assetId), 50);
 }
 
+// 🔧 수동 매수 기록 더보기 (5건씩 추가 표시)
+function showMoreLots(assetId) {
+  if (!window._lotShownCount) window._lotShownCount = {};
+  const current = window._lotShownCount[assetId] || 5;
+  window._lotShownCount[assetId] = current + 5;
+  // 모달 다시 그리기
+  closeModal();
+  setTimeout(() => editAsset(assetId), 50);
+}
+
+// 🔧 수동 매수 기록 접기
+function collapseLots(assetId) {
+  if (!window._lotShownCount) window._lotShownCount = {};
+  window._lotShownCount[assetId] = 5;
+  closeModal();
+  setTimeout(() => editAsset(assetId), 50);
+}
+
+// 🔧 자동매수 회차별 상세 펼치기/접기 (모달 안 닫고 토글만)
+function toggleAutoLotDetail(assetId) {
+  const detail = document.getElementById(`auto-lot-detail-${assetId}`);
+  if (detail) {
+    detail.style.display = detail.style.display === 'none' ? 'block' : 'none';
+  }
+}
+
+
 async function recalcAutoBuy(assetId, fixedId) {
   const asset = assets.find(a => a.id === assetId);
   const fixed = budget.fixed.find(f => f.id === fixedId);
@@ -5937,19 +6098,20 @@ async function recalcAutoBuy(assetId, fixedId) {
       cursor.setMonth(cursor.getMonth() + 1);
     }
   } else {
-    while (cursor <= now) {
-      if (cursor.getDay() === Number(fixed.dow)) {
-        occurDates.push(new Date(cursor));
-      }
-      cursor.setDate(cursor.getDate() + 1);
+    // 🔧 주간/격주: 시작일 기준 7일/14일 간격 (processAutoBuy와 동일 로직)
+    const stepDays = cycle === 'biweekly' ? 14 : 7;
+    const targetDow = Number(fixed.dow);
+    const anchor = new Date(start);
+    anchor.setHours(0, 0, 0, 0);
+    while (anchor.getDay() !== targetDow) {
+      anchor.setDate(anchor.getDate() + 1);
     }
-    if (cycle === 'biweekly') {
-      const filtered = [];
-      occurDates.forEach((d, i) => {
-        if (i % 2 === 0) filtered.push(d);
-      });
-      occurDates.length = 0;
-      occurDates.push(...filtered);
+    const c = new Date(anchor);
+    let guard = 0;
+    while (c <= now && guard < 1000) {
+      occurDates.push(new Date(c));
+      c.setDate(c.getDate() + stepDays);
+      guard++;
     }
   }
 
@@ -5973,9 +6135,10 @@ async function recalcAutoBuy(assetId, fixedId) {
       source: `🤖 ${fixed.name}`,
       qty: newQty,
       price: currPrice,
-      date: d.toISOString().split('T')[0],
+      date: dateKey(d.getFullYear(), d.getMonth(), d.getDate()),
       fxDiscount: asset.fxDiscount || null,
       autoBuy: true,
+      fixedId: fixed.id,
       note: fixed.fractional ? '자동매수 (소수점)' : '자동매수 (정수)',
     });
   });
@@ -6023,28 +6186,32 @@ async function processAutoBuy(fixed) {
     const d = new Date(year, month, targetDay);
     if (d <= now && d >= startDate) occurDates.push(d);
   } else {
+    // 🔧 주간/격주: "이번 달 0,2,4번째" 방식은 달 경계에서 14일 주기가 깨짐
+    // → 시작일 기준으로 7일(주간)/14일(격주) 간격을 직접 누적해서 생성
     if (isNaN(Number(fixed.dow))) {
       console.warn(`⚠️ ${fixed.name} - 요일 없음 (dow=${fixed.dow})`);
       return;
     }
-    for (let d = 1; d <= daysInMonth; d++) {
-      const dt = new Date(year, month, d);
-      dt.setHours(0, 0, 0, 0);
-      // createdAt 이후 + 오늘까지 + 해당 요일만
-      if (dt.getDay() === Number(fixed.dow) && dt <= now && dt >= startDate) {
-        occurDates.push(dt);
-      }
+    const stepDays = cycle === 'biweekly' ? 14 : 7;
+    const targetDow = Number(fixed.dow);
+
+    // 시작일 이후(포함) 첫 번째 '해당 요일'을 기준점으로 잡음
+    const anchor = new Date(startDate);
+    anchor.setHours(0, 0, 0, 0);
+    while (anchor.getDay() !== targetDow) {
+      anchor.setDate(anchor.getDate() + 1);
     }
-    if (cycle === 'biweekly') {
-      const filtered = [];
-      occurDates.forEach((d, i) => {
-        if (i % 2 === 0) filtered.push(d);
-      });
-      occurDates.length = 0;
-      occurDates.push(...filtered);
+
+    // 기준점부터 today까지 stepDays 간격으로 전부 생성 (과거 누락분 포함)
+    const cursor = new Date(anchor);
+    let guard = 0; // 무한루프 방지
+    while (cursor <= now && guard < 1000) {
+      occurDates.push(new Date(cursor));
+      cursor.setDate(cursor.getDate() + stepDays);
+      guard++;
     }
   }
-  console.log(`📅 ${fixed.name} - 이번 달 발생일 ${occurDates.length}회:`, occurDates.map(d => d.toLocaleDateString()));
+  console.log(`📅 ${fixed.name} - 발생일 ${occurDates.length}회:`, occurDates.map(d => d.toLocaleDateString()));
 
   // 마지막 처리 날짜 이후의 회차만 처리
   const lastBuyDate = fixed.lastBuyDate ? new Date(fixed.lastBuyDate) : null;
@@ -6106,14 +6273,20 @@ async function processAutoBuy(fixed) {
   }
   console.log(`💰 ${asset.name} 시세: ${currPrice.toLocaleString()}원`);
 
+  const skippedDates = []; // 🔧 시세 조회 실패로 건너뛴 회차 (lastBuyDate 갱신 제외용)
+  const addedDates = [];   // 🔧 실제로 lot이 추가된 회차 (토스트 카운트용)
   newDates.forEach(d => {
-    const dateStr = d.toISOString().split('T')[0];
+    // 🔧 toISOString()은 UTC 기준이라 한국(UTC+9)에서 하루 밀림 → 로컬 기준으로 변환
+    const dateStr = dateKey(d.getFullYear(), d.getMonth(), d.getDate());
 
-    // 중복 방지: 같은 fixed의 같은 날짜 lot가 이미 있으면 스킵
+    // 🔧 중복 방지: 같은 자동매수(fixedId)의 같은 날짜 lot이 이미 있으면 스킵
+    // (이름 기반 매칭은 자동매수 이름을 바꾸면 뚫리므로 fixedId 우선)
     const existingLot = (asset.lots || []).find(lot =>
       lot.autoBuy &&
       lot.date === dateStr &&
-      lot.source === `🤖 ${fixed.name}`
+      (lot.fixedId != null
+        ? lot.fixedId === fixed.id
+        : lot.source === `🤖 ${fixed.name}`) // fixedId 없는 옛 lot 하위호환
     );
     if (existingLot) {
       console.log(`⏸️ ${asset.name} ${dateStr} 이미 처리됨 (중복 방지)`);
@@ -6130,12 +6303,14 @@ async function processAutoBuy(fixed) {
         price: fixed.amt,
         date: dateStr,
         autoBuy: true,
+        fixedId: fixed.id,
         note: '자동 납입',
       });
       // 청약은 회차도 ++
       if (asset.type === '청약') {
         asset.rounds = (asset.rounds || 0) + 1;
       }
+      addedDates.push(d);
       console.log(`💰 ${asset.name} 납입 lot 추가: ${dateStr}, ${fixed.amt.toLocaleString()}원, 총 ${asset.price.toLocaleString()}원${asset.type === '청약' ? `, ${asset.rounds}회차` : ''}`);
     } else if (currPrice > 0) {
       // 주식/ETF/금/달러: 시세 알면 정확한 수량 계산
@@ -6155,28 +6330,38 @@ async function processAutoBuy(fixed) {
         date: dateStr,
         fxDiscount: asset.fxDiscount || null,
         autoBuy: true,
+        fixedId: fixed.id,
         note: fixed.fractional ? '자동매수 (소수점)' : '자동매수 (정수)',
       });
+      addedDates.push(d);
       console.log(`✅ ${asset.name} lot 추가: ${dateStr}, ${newQty}주 @ ${currPrice} (${fixed.fractional?'소수점':'정수'}), 총 ${asset.qty}주`);
     } else {
-      // 시세 모르면 추정 매수 (1주 + fixed.amt 평단가)
-      addAssetLot(asset, {
-        source: `🤖 ${fixed.name} (시세 추정)`,
-        qty: 1,
-        price: fixed.amt,
-        date: dateStr,
-        autoBuy: true,
-        note: '시세 추정 - 수동 정리 필요',
-      });
-      console.warn(`⚠️ ${asset.name} 시세 모름 - 1주 추가 (수동 정리 필요)`);
+      // 🔧 시세를 못 받으면 부정확한 "1주 추정"을 만들지 않고 이 회차는 건너뜀
+      // (lastBuyDate를 갱신하지 않으므로 다음 점검 때 다시 시도됨)
+      console.warn(`⚠️ ${asset.name} ${dateStr} 시세 조회 실패 - 이번 회차 건너뜀 (다음에 재시도)`);
+      skippedDates.push(d);
+      return;
     }
   });
 
-  fixed.lastBuyDate = newDates[newDates.length - 1].toISOString();
+  // 🔧 시세 실패로 건너뛴 회차는 lastBuyDate에서 제외 → 다음 점검 때 재처리
+  // (중복·정수불가로 스킵된 건 이미 처리됐거나 처리 불가이므로 lastBuyDate는 정상 전진)
+  const lastValidDate = newDates.filter(d => !skippedDates.includes(d));
+
+  if (lastValidDate.length === 0) {
+    console.log(`⏸️ ${fixed.name} - 진행 가능한 회차 없음`);
+    if (skippedDates.length > 0) {
+      showToast(`⚠️ ${fixed.name} 시세 조회 실패 - 잠시 후 자동 재시도`);
+    }
+    return;
+  }
+  fixed.lastBuyDate = lastValidDate[lastValidDate.length - 1].toISOString();
   saveData();
 
-  if (newDates.length > 0) {
-    showToast(`🤖 ${fixed.name} ${newDates.length}회 자동매수 처리됨`);
+  if (addedDates.length > 0) {
+    showToast(`🤖 ${fixed.name} ${addedDates.length}회 자동매수 처리됨`);
+  } else if (skippedDates.length > 0) {
+    showToast(`⚠️ ${fixed.name} 시세 조회 실패 - 잠시 후 자동 재시도`);
   }
 }
 
@@ -7001,14 +7186,20 @@ async function processAssetCapture(input) {
    - 달러: USD 금액 (예: 1250)
    - 예적금/청약/현금/부동산: 보통 1 (단일 자산)
 
-2. **price (가격)**: 정수 원화
-   - 주식/ETF: 1주당 평균 매입가 (70000 등)
+2. **price (가격)**: 화면에 보이는 1주당(또는 단위당) 평균 매입가 숫자 그대로
+   - 주식/ETF: 1주당 평균 매입가 — 화면에 보이는 숫자 그대로 (환산하지 말 것)
    - 금: g당 매입가 (218860 등)
    - 달러: 평균 매수 환율 (1380 등)
    - 예적금: 현재 잔액 (5000000 등)
    - 부동산: 현재 시세 (800000000 등)
 
-3. **ticker**: 종목 코드 (있으면)
+3. **priceCurrency (매입가 통화)**: 주식/ETF/펀드만 — price가 어떤 통화인지
+   - 화면에 $, USD, 달러 표시가 있거나 미국 종목이면 → "USD"
+   - 원, 원화이거나 한국 종목이면 → "KRW"
+   - 애매하면 한국 종목은 "KRW", 미국 종목은 "USD"
+   - ⚠️ 절대 직접 환산하지 말 것 — 화면 숫자를 그대로 두고 통화만 표시
+
+4. **ticker**: 종목 코드 (있으면)
    - 한국 주식/ETF: 6자리 숫자 (005930, 379810)
    - 미국: 영문 (SPY, AAPL, QQQ)
    - 금/예적금/청약/현금/부동산: 보통 없음 → ""
@@ -7018,9 +7209,9 @@ async function processAssetCapture(input) {
 
 📤 출력 (JSON만):
 {"items":[
-  {"type":"주식","name":"삼성전자","qty":10,"price":70000,"ticker":"005930"},
-  {"type":"ETF","name":"TIGER 미국S&P500","qty":9,"price":27360,"ticker":"360750"},
-  {"type":"ETF","name":"SPYM","qty":2.5234,"price":85000,"ticker":"SPYM"},
+  {"type":"주식","name":"삼성전자","qty":10,"price":70000,"priceCurrency":"KRW","ticker":"005930"},
+  {"type":"ETF","name":"TIGER 미국S&P500","qty":9,"price":27360,"priceCurrency":"KRW","ticker":"360750"},
+  {"type":"주식","name":"애플","qty":3,"price":195.4,"priceCurrency":"USD","ticker":"AAPL"},
   {"type":"금","name":"신한 골드뱅킹","qty":3.75,"price":218860,"ticker":""},
   {"type":"예적금","name":"토스 정기예금","qty":1,"price":5000000,"ticker":""},
   {"type":"청약","name":"KB 주택청약","qty":1,"price":1500000,"ticker":""}
@@ -7119,18 +7310,26 @@ function openAssetReviewModal(items) {
       const qtyStr = Number.isInteger(q) ? q.toLocaleString() : q.toFixed(4).replace(/\.?0+$/, '');
       const hasExisting = !!it._existingId;
       const existing = hasExisting ? assets.find(a => a.id === it._existingId) : null;
+      // 🔧 달러 매입가는 $ 표시, 원화는 원 표시
+      const isUSD = it.priceCurrency === 'USD';
+      const priceStr = isUSD
+        ? `$${Number(it.price || 0).toLocaleString()}`
+        : `${Number(it.price || 0).toLocaleString()}원`;
+      const totalStr = isUSD
+        ? `$${(q * Number(it.price || 0)).toLocaleString()} (저장 시 원화 환산)`
+        : `${Math.round(q * Number(it.price || 0)).toLocaleString()}원`;
 
       return `
       <div style="padding:10px; border:0.5px solid var(--border-tertiary); border-radius:10px; margin-bottom:8px;">
         <div style="display:flex; align-items:center; gap:8px;">
           <input type="checkbox" id="ar-${i}" ${it._checked ? 'checked' : ''} onchange="window._assetReviewItems[${i}]._checked = this.checked;" style="width:18px; height:18px; cursor:pointer; flex-shrink:0;" />
           <div style="flex:1; min-width:0;">
-            <div style="font-size:13px; font-weight:600;">${it.name}</div>
+            <div style="font-size:13px; font-weight:600;">${it.name}${isUSD ? ' <span style="font-size:9px; color:var(--text-info); font-weight:500;">💵 달러</span>' : ''}</div>
             <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">
-              ${it.type} · ${qtyStr}주 × ${Number(it.price || 0).toLocaleString()}원
+              ${it.type} · ${qtyStr}주 × ${priceStr}
             </div>
             <div style="font-size:10px; color:var(--text-secondary); margin-top:1px;">
-              = <b>${Math.round(q * Number(it.price || 0)).toLocaleString()}원</b>
+              = <b>${totalStr}</b>
             </div>
           </div>
         </div>
@@ -7192,14 +7391,30 @@ function saveAssetReviewItems() {
 
   let addedCount = 0;
   let mergedCount = 0;
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayKey(); // 🔧 UTC 밀림 방지
 
+  // 🔧 달러 매입가가 하나라도 있으면 환율 받아둠 (원화 환산용)
+  const hasUSD = selected.some(it => it.priceCurrency === 'USD');
+  let usdRate = null;
+
+  const doSave = (rate) => {
+  const newlyCreated = []; // 🔧 이번 저장에서 새로 만든 자산 추적 (캡처 내 중복 합산용)
   selected.forEach(it => {
     const rawQty = Number(it.qty);
     const qty = isFinite(rawQty) ? parseFloat(rawQty.toFixed(4)) : 1;
-    const price = Math.round(Number(it.price)) || 0;
+    let price = Number(it.price) || 0;
     const type = it.type || '주식';
     const name = it.name || '이름없음';
+
+    // 🔧 달러 매입가 → 원화 환산 (lot은 항상 원화로 저장)
+    let priceNote = '';
+    if (it.priceCurrency === 'USD' && rate) {
+      const usdPrice = price;
+      price = Math.round(price * rate);
+      priceNote = ` ($${usdPrice} × ${Math.round(rate)})`;
+    } else {
+      price = Math.round(price);
+    }
 
     if (it._action === 'merge' && it._existingId) {
       // 기존 자산에 lot 추가 (합산)
@@ -7212,12 +7427,33 @@ function saveAssetReviewItems() {
           date: today,
           fxDiscount: existing.fxDiscount || null,
           autoBuy: false,
-          note: '캡처 합산',
+          note: '캡처 합산' + priceNote,
         });
         if (!existing.ticker && it.ticker) existing.ticker = it.ticker;
         mergedCount++;
       }
     } else {
+      // 🔧 신규 처리 전: 이번 캡처에서 방금 만든 같은 종목이 있는지 확인
+      // (한 캡처에 "SPY 키움 3주 / SPY 토스 5주"처럼 같은 종목 여러 줄 → 자산 1개로 합산)
+      const normT = (t) => (t || '').toUpperCase().replace(/\.(KS|KQ|KQI)$/, '').trim();
+      const dupNew = newlyCreated.find(a => {
+        if (it._action === 'new' && it._existingId) return false; // 일부러 별도 자산이면 합치지 않음
+        const sameTicker = normT(a.ticker) && normT(a.ticker) === normT(it.ticker);
+        const sameNameType = a.name === name && a.type === type;
+        return sameTicker || sameNameType;
+      });
+      if (dupNew) {
+        // 방금 만든 자산에 lot만 추가
+        addAssetLot(dupNew, {
+          source: `📸 OCR ${today}`,
+          qty,
+          price,
+          date: today,
+          autoBuy: false,
+          note: '캡처 추가' + priceNote,
+        });
+        return;
+      }
       // 새 자산 (신규)
       const newAsset = {
         id: Date.now() + Math.random(),
@@ -7229,14 +7465,17 @@ function saveAssetReviewItems() {
         memo: '',
         lots: [],
       };
+      // 🔧 lot은 원화로 환산됐으므로 자산 자체는 원화 기준
+      if (['주식','ETF','펀드'].includes(type)) newAsset.priceCurrency = 'KRW';
       assets.push(newAsset);
+      newlyCreated.push(newAsset);
       addAssetLot(newAsset, {
         source: `📸 OCR ${today}`,
         qty,
         price,
         date: today,
         autoBuy: false,
-        note: '캡처 추가',
+        note: '캡처 추가' + priceNote,
       });
       addedCount++;
     }
@@ -7253,6 +7492,19 @@ function saveAssetReviewItems() {
   renderAsset();
   delete window._assetReviewItems;
   delete window._renderAssetReview;
+  };
+
+  // 달러 항목이 있으면 환율 먼저 받고, 없으면 바로 저장
+  if (hasUSD) {
+    showToast('💱 환율 확인 중...');
+    getUSDKRW().then(rate => {
+      doSave(rate || 1380);
+    }).catch(() => {
+      doSave(1380); // 환율 실패 시 폴백
+    });
+  } else {
+    doSave(null);
+  }
 }
 
 async function processCardCapture(input) {
@@ -9408,12 +9660,11 @@ async function fetchYahooPrice(ticker) {
 
       if (!currentPrice) continue;
 
-      // 야후가 직접 제공하는 등락률 우선 (가장 정확)
+      // 🔧 야후의 regularMarketChangePercent는 항상 % 단위 (0.5 = 0.5%)
+      // 기존 "abs<1이면 비율로 보고 ×100" 로직은 등락 ±1% 미만 종목을 100배로 뻥튀기했음
       let changePct;
       if (meta.regularMarketChangePercent != null) {
-        // 야후가 0~1 비율로 줄 수도, % 값으로 줄 수도 있음
-        const raw = Number(meta.regularMarketChangePercent);
-        changePct = Math.abs(raw) < 1 ? raw * 100 : raw;
+        changePct = Number(meta.regularMarketChangePercent);
       } else if (previousClose > 0) {
         // 계산 폴백
         changePct = ((currentPrice - previousClose) / previousClose) * 100;
@@ -9512,14 +9763,20 @@ async function fetchAssetLive(asset) {
 
     krwPrice = priceData.price * buyRate;
 
-    // 매입가가 너무 크면 → 이미 원화 총액으로 입력한 듯, 수량으로 나눔
-    if (krwAvgPrice > 1000000 && Number(asset.qty) > 0) {
-      krwAvgPrice = krwAvgPrice / Number(asset.qty);
-    } else if (krwAvgPrice < 10000) {
-      // 매입가가 작으면 → 달러 단위로 입력했다고 보고 환율 곱함
+    // 🔧 매입가 통화: 추측하지 않고 priceCurrency 필드로 명확히 판단
+    if (asset.priceCurrency === 'USD') {
+      // 달러 단위 1주당 매입가 → 매수 환율로 원화 환산
       krwAvgPrice = krwAvgPrice * buyRate;
+    } else if (asset.priceCurrency === 'KRW') {
+      // 원화 단위 1주당 매입가 → 그대로 사용
+    } else {
+      // priceCurrency 없는 옛날 자산 → 기존 추측 로직 (하위호환)
+      if (krwAvgPrice > 1000000 && Number(asset.qty) > 0) {
+        krwAvgPrice = krwAvgPrice / Number(asset.qty);
+      } else if (krwAvgPrice < 10000) {
+        krwAvgPrice = krwAvgPrice * buyRate;
+      }
     }
-    // 그 외 (1만~100만) → 이미 원화 1주당 가격, 그대로 사용
   }
 
   const krwValue = Number(asset.qty) * krwPrice;
@@ -9731,18 +9988,59 @@ async function fetchNaverIndex(code) {
   return null;
 }
 
-// 네이버 환율 (USD/KRW)
+// 네이버 환율 (USD/KRW) - 네이버 모바일/PC 페이지가 실제 사용하는 엔드포인트 사용
 async function fetchNaverExchange() {
-  // basic API: { closePrice, fluctuationsRatio, ... } - 가장 단순
-  const targets = [
-    'https://api.stock.naver.com/marketindex/exchange/FX_USDKRW/basic',
-    'https://m.stock.naver.com/api/marketindex/exchange/FX_USDKRW/basic',
-  ];
-
   const proxies = [
     url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
     url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+  ];
+
+  // 🔧 우선순위 1: polling/quotes API (네이버가 실시간 표시에 사용하는 엔드포인트)
+  // 이게 모바일 페이지의 실제 표시값과 일치함
+  const realtimeTarget = 'https://polling.finance.naver.com/api/realtime?query=SERVICE_RECENT_INDEX:FX_USDKRW';
+
+  for (const proxyFn of proxies) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const res = await fetch(proxyFn(realtimeTarget), { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (!res.ok) continue;
+
+      let text = await res.text();
+      try { const j = JSON.parse(text); if (j.contents) text = j.contents; } catch (e) {}
+
+      let data;
+      try { data = JSON.parse(text); } catch (e) { continue; }
+
+      console.log('💱 네이버 환율 realtime 응답:', data);
+
+      // 응답 구조: { result: { areas: [{ datas: [{ nv, cv, cr, rf }] }] } }
+      const item = data?.result?.areas?.[0]?.datas?.[0];
+      if (item) {
+        const price = Number(item.nv) / 100 || 0; // nv는 100배 스케일 (예: 150480 = 1504.80)
+        const change = Number(item.cv) / 100 || 0;
+        const changePct = Number(item.cr) || 0;
+        const rf = String(item.rf); // 1=상승, 2=하락, 5=보합
+
+        if (price > 1000 && price < 2000) {
+          // 부호 보정
+          const signedChange = rf === '2' || rf === '5' && change < 0 ? -Math.abs(change) : (rf === '1' ? Math.abs(change) : change);
+          const signedPct = rf === '2' ? -Math.abs(changePct) : (rf === '1' ? Math.abs(changePct) : changePct);
+          console.log(`✅ 네이버 환율 realtime: ${price}원, ${signedPct}%`);
+          return { price, previousClose: price - signedChange, change: signedChange, changePct: signedPct, currency: 'KRW', time: Date.now() };
+        }
+      }
+    } catch (e) {
+      continue;
+    }
+  }
+
+  // 우선순위 2: basic API (종가 기반 - 폴백)
+  const targets = [
+    'https://api.stock.naver.com/marketindex/exchange/FX_USDKRW/basic',
+    'https://m.stock.naver.com/api/marketindex/exchange/FX_USDKRW/basic',
   ];
 
   for (const target of targets) {
@@ -9764,10 +10062,13 @@ async function fetchNaverExchange() {
 
         const price = Number(String(data.closePrice || '').replace(/,/g, '')) || 0;
         const change = Number(String(data.compareToPreviousClosePrice || '').replace(/,/g, '')) || 0;
-        const changePct = Number(data.fluctuationsRatio) || 0;
+        let changePct = Number(data.fluctuationsRatio) || 0;
+
+        // 🔧 부호 보정: fluctuationsRatio가 양수만 주는 경우 → change의 부호 따라감
+        if (change < 0 && changePct > 0) changePct = -changePct;
 
         if (price > 1000 && price < 2000) {
-          console.log(`✅ 네이버 환율: ${price}원, ${changePct}%`);
+          console.log(`✅ 네이버 환율 basic: ${price}원, ${changePct}%`);
           return { price, previousClose: price - change, change, changePct, currency: 'KRW', time: Date.now() };
         }
       } catch (e) {
@@ -9776,7 +10077,7 @@ async function fetchNaverExchange() {
     }
   }
 
-  // basic 실패 시 prices API 시도 (2일치 받아서 직접 계산)
+  // 우선순위 3: prices API (2일치 받아 직접 계산)
   const pricesTarget = 'https://api.stock.naver.com/marketindex/exchange/FX_USDKRW/prices?page=1&pageSize=2';
 
   for (const proxyFn of proxies) {
@@ -11068,6 +11369,16 @@ function openAIKeyModal() {
         5. 무료 또는 본인 Pro 구독 사용 가능
       </div>
 
+      <!-- 🔧 YouTube Data API 키 (선택) -->
+      <div class="field" style="margin-bottom:14px;">
+        <div class="field-label">YouTube Data API 키 <span style="font-size:9px; color:var(--text-tertiary);">(선택)</span></div>
+        <input type="password" id="yt-key-input" placeholder="비워두면 기본 키 사용" value="${localStorage.getItem('youtube_api_key') || ''}" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:monospace;" />
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:6px; line-height:1.5;">
+          유튜브 영상 검색 전용 키예요. 비워두면 기본 키로 작동하지만, "일일 한도 초과"가 자주 뜨면 본인 키를 따로 넣어주세요.<br>
+          <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color:var(--text-info); text-decoration:underline;">Google Cloud Console</a>에서 발급 → YouTube Data API v3 활성화 필요
+        </div>
+      </div>
+
       ${currentKey ? `
         <button onclick="deleteAIKey()" style="width:100%; padding:12px; border:none; border-radius:var(--radius-md); background:var(--bg-danger); color:var(--text-danger); font-size:13px; font-weight:500; cursor:pointer; font-family:inherit;">
           <i class="ti ti-trash" style="font-size:14px; vertical-align:-2px;"></i> 키 삭제
@@ -11079,6 +11390,24 @@ function openAIKeyModal() {
 }
 
 async function saveAIKey() {
+  // 🔧 YouTube 키 저장 (선택 - 비워두면 기본 키 사용)
+  const ytKeyInput = document.getElementById('yt-key-input');
+  if (ytKeyInput) {
+    const ytKey = ytKeyInput.value.trim();
+    if (ytKey) {
+      if (!ytKey.startsWith('AIza')) {
+        showToast('YouTube 키 형식이 올바르지 않아요 (AIza로 시작)');
+        return;
+      }
+      localStorage.setItem('youtube_api_key', ytKey);
+      window.YOUTUBE_API_KEY = ytKey;
+    } else {
+      // 비우면 기본 키로 폴백
+      localStorage.removeItem('youtube_api_key');
+      window.YOUTUBE_API_KEY = window._fbApiKey || window.YOUTUBE_API_KEY;
+    }
+  }
+
   const key = document.getElementById('ai-key-input').value.trim();
   if (!key) {
     if (window.GEMINI_API_KEY) {
@@ -11791,6 +12120,15 @@ function renderAssetFormFields(type) {
           <input type="number" id="a-price" placeholder="0" />
         </div>
       </div>
+      ${type !== '채권' ? `
+      <div class="field" id="a-price-currency-row">
+        <div class="field-label">매입가 통화 <span style="font-size:9px; color:var(--text-tertiary);">(미국 주식은 달러)</span></div>
+        <div style="display:flex; gap:4px;" id="a-price-currency">
+          <button type="button" class="chip active" data-cur="KRW">원화 (원)</button>
+          <button type="button" class="chip" data-cur="USD">달러 ($)</button>
+        </div>
+      </div>
+      ` : ''}
       ${quickAmtButtons('a-price')}
     `;
 
@@ -11990,6 +12328,13 @@ function renderAssetFormFields(type) {
       b.classList.add('active');
     });
   });
+  // 🔧 매입가 통화 선택 (원화/달러)
+  document.querySelectorAll('#a-price-currency .chip').forEach(b => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('#a-price-currency .chip').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+    });
+  });
 }
 
 function getNamePlaceholder(type) {
@@ -12040,6 +12385,8 @@ function saveAsset() {
   const price = Number(document.getElementById('a-price')?.value);
   const note = document.getElementById('a-note')?.value?.trim() || '';
   const region = document.querySelector('#aregion-grid .chip.active')?.dataset.r || '국내';
+  // 🔧 매입가 통화 (원화/달러) - 없으면 원화 기본
+  const priceCurrency = document.querySelector('#a-price-currency .chip.active')?.dataset.cur || 'KRW';
 
   // 부동산, 채권, 예적금 등 추가 필드
   const propType = document.querySelector('#aproptype-grid .chip.active')?.dataset.p || '';
@@ -12056,6 +12403,7 @@ function saveAsset() {
 
   const asset = { id: Date.now(), name, ticker, type, region, qty, price, note };
   // 타입별 추가 정보
+  if (['주식','ETF','펀드'].includes(type)) asset.priceCurrency = priceCurrency;
   if (propType) asset.propType = propType;
   if (subType) asset.subType = subType;
   if (maturity) asset.maturity = maturity;
@@ -12170,9 +12518,54 @@ function editAsset(id) {
               <div style="font-size:11px; font-weight:600; color:#5E5CE6;">📋 매수 기록 ${lots.length}건</div>
               <button onclick="addManualLot(${a.id})" style="border:none; background:#5E5CE6; color:white; padding:4px 10px; border-radius:999px; font-size:10px; font-weight:600; cursor:pointer; font-family:inherit;">+ 추가</button>
             </div>
-            <div style="max-height:180px; overflow-y:auto;">
-              ${lots.slice().sort((x, y) => (y.date || '').localeCompare(x.date || '')).map(lot => {
-                const isAuto = lot.autoBuy;
+            ${(() => {
+              // 🔧 자동매수와 수동 기록 분리
+              const autoLots = lots.filter(l => l.autoBuy);
+              const manualLots = lots.filter(l => !l.autoBuy)
+                .sort((x, y) => (y.date || '').localeCompare(x.date || ''));
+
+              let lotHtml = `<div style="max-height:280px; overflow-y:auto;">`;
+
+              // ── 자동매수: 회차 + 평균가로 묶어서 1줄 요약 ──
+              if (autoLots.length > 0) {
+                const autoQty = autoLots.reduce((s, l) => s + Number(l.qty || 0), 0);
+                const autoCost = autoLots.reduce((s, l) => s + Number(l.qty || 0) * Number(l.price || 0), 0);
+                const autoAvg = autoQty > 0 ? autoCost / autoQty : 0;
+                const autoDates = autoLots.map(l => l.date).filter(Boolean).sort();
+                const firstDate = autoDates[0] || '';
+                const lastDate = autoDates[autoDates.length - 1] || '';
+
+                lotHtml += `<div style="padding:10px 12px; background:linear-gradient(135deg, rgba(94,92,230,0.1), rgba(94,92,230,0.04)); border-radius:8px; margin-bottom:6px; border:0.5px solid rgba(94,92,230,0.25);">
+                  <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div style="font-weight:700; font-size:11px; color:#5E5CE6;">🤖 자동매수 ${autoLots.length}회차</div>
+                    <div style="font-weight:700; font-size:11px;">${Math.round(autoCost).toLocaleString()}원</div>
+                  </div>
+                  <div style="font-size:9px; color:var(--text-tertiary); margin-top:3px;">
+                    ${firstDate}${lastDate && lastDate !== firstDate ? ` ~ ${lastDate}` : ''} · ${autoQty.toFixed(4).replace(/\.?0+$/, '')}주 · 평균 ${Math.round(autoAvg).toLocaleString()}원
+                  </div>
+                  <button onclick="toggleAutoLotDetail(${a.id})" style="margin-top:6px; border:none; background:transparent; color:#5E5CE6; font-size:9px; cursor:pointer; font-family:inherit; padding:0; text-decoration:underline;">회차별 상세 보기 ▾</button>
+                  <div id="auto-lot-detail-${a.id}" style="display:none; margin-top:6px; padding-top:6px; border-top:0.5px dashed rgba(94,92,230,0.25);">
+                    ${autoLots.slice().sort((x, y) => (y.date || '').localeCompare(x.date || '')).map((lot, idx) => `
+                      <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 0; font-size:9px;">
+                        <span style="color:var(--text-tertiary);">${lot.date} · ${Number(lot.qty).toFixed(4).replace(/\.?0+$/, '')}주 × ${Number(lot.price).toLocaleString()}원</span>
+                        <span style="display:flex; gap:4px; align-items:center;">
+                          <span>${Math.round(lot.qty * lot.price).toLocaleString()}원</span>
+                          <button onclick="editLot(${a.id}, '${lot.id}')" style="border:none; background:transparent; color:var(--text-tertiary); padding:2px; cursor:pointer; font-family:inherit; font-size:11px;">✏️</button>
+                          <button onclick="deleteLot(${a.id}, '${lot.id}')" style="border:none; background:transparent; color:var(--text-danger); padding:2px; cursor:pointer; font-family:inherit; font-size:11px;">🗑️</button>
+                        </span>
+                      </div>
+                    `).join('')}
+                  </div>
+                </div>`;
+              }
+
+              // ── 수동 기록: 개별 표시 (5개씩 더보기) ──
+              const LOT_PAGE_SIZE = 5;
+              const isLargeList = manualLots.length > LOT_PAGE_SIZE;
+              const shownCount = window._lotShownCount?.[a.id] || LOT_PAGE_SIZE;
+              const visibleManual = isLargeList ? manualLots.slice(0, shownCount) : manualLots;
+
+              lotHtml += visibleManual.map(lot => {
                 return `<div style="padding:8px 10px; background:white; border-radius:6px; margin-bottom:5px; display:flex; align-items:center; gap:8px; font-size:11px;">
                   <div style="flex:1; min-width:0;">
                     <div style="font-weight:600;">${lot.source}</div>
@@ -12185,8 +12578,24 @@ function editAsset(id) {
                   <button onclick="editLot(${a.id}, '${lot.id}')" style="border:none; background:transparent; color:var(--text-tertiary); padding:4px; cursor:pointer; font-family:inherit; font-size:14px;">✏️</button>
                   <button onclick="deleteLot(${a.id}, '${lot.id}')" style="border:none; background:transparent; color:var(--text-danger); padding:4px; cursor:pointer; font-family:inherit; font-size:14px;">🗑️</button>
                 </div>`;
-              }).join('')}
-            </div>
+              }).join('');
+              lotHtml += `</div>`;
+
+              // 수동 기록 더보기 / 접기 버튼
+              if (isLargeList) {
+                const remaining = manualLots.length - shownCount;
+                if (remaining > 0) {
+                  lotHtml += `<button onclick="showMoreLots(${a.id})" style="width:100%; margin-top:6px; padding:8px; border:0.5px dashed rgba(94,92,230,0.4); background:transparent; color:#5E5CE6; border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
+                    ▼ 수동 기록 ${remaining}건 더 보기
+                  </button>`;
+                } else if (shownCount > LOT_PAGE_SIZE) {
+                  lotHtml += `<button onclick="collapseLots(${a.id})" style="width:100%; margin-top:6px; padding:8px; border:0.5px dashed rgba(94,92,230,0.4); background:transparent; color:var(--text-secondary); border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
+                    ▲ 접기
+                  </button>`;
+                }
+              }
+              return lotHtml;
+            })()}
             <div style="margin-top:8px; padding-top:8px; border-top:0.5px solid rgba(94,92,230,0.2); display:flex; justify-content:space-between; font-size:11px;">
               <span style="color:var(--text-secondary);">총 합계 (자동 계산)</span>
               <span style="font-weight:700; color:#5E5CE6;">${Number(a.qty).toFixed(4).replace(/\.?0+$/, '')}주 평균 ${Number(a.price).toLocaleString()}원</span>
@@ -12218,8 +12627,15 @@ function editAsset(id) {
               <input type="number" id="e-qty" value="${a.qty || 1}" step="0.0001" />
             </div>
             <div style="flex:1;">
-              <div class="field-label">평균 매입가 (원)</div>
+              <div class="field-label">평균 매입가</div>
               <input type="number" id="e-price" value="${a.price}" />
+            </div>
+          </div>
+          <div class="field" id="e-price-currency-row">
+            <div class="field-label">매입가 통화 <span style="font-size:9px; color:var(--text-tertiary);">(미국 주식은 달러)</span></div>
+            <div style="display:flex; gap:4px;" id="e-price-currency">
+              <button type="button" class="chip ${a.priceCurrency === 'USD' ? '' : 'active'}" data-cur="KRW">원화 (원)</button>
+              <button type="button" class="chip ${a.priceCurrency === 'USD' ? 'active' : ''}" data-cur="USD">달러 ($)</button>
             </div>
           </div>
           ${quickAmtButtons('e-price')}
@@ -12401,6 +12817,13 @@ function editAsset(id) {
         b.classList.add('active');
       });
     });
+    // 🔧 매입가 통화 클릭
+    container.querySelectorAll('#e-price-currency .chip').forEach(b => {
+      b.addEventListener('click', () => {
+        container.querySelectorAll('#e-price-currency .chip').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+      });
+    });
   }
 
   setTimeout(() => {
@@ -12441,6 +12864,14 @@ function updateAsset(id) {
   if (subType) a.subType = subType; else delete a.subType;
   if (buyprice) a.buyprice = buyprice; else delete a.buyprice;
   if (fxDiscount) a.fxDiscount = fxDiscount; else delete a.fxDiscount;
+
+  // 🔧 매입가 통화 (주식/ETF/펀드만, 통화 선택 UI가 있을 때만 갱신)
+  const curBtn = document.querySelector('#e-price-currency .chip.active');
+  if (curBtn && ['주식','ETF','펀드'].includes(newType)) {
+    a.priceCurrency = curBtn.dataset.cur;
+  } else if (!['주식','ETF','펀드'].includes(newType)) {
+    delete a.priceCurrency;
+  }
 
   // ⭐ 통합 룰: 사용자 입력값 = 오늘까지 모든 거 포함된 최종 상태
   const isDepositType = ['청약', '예적금', '현금', '부동산'].includes(newType);
@@ -12580,7 +13011,18 @@ function openAddModal() {
   modal.classList.add('show');
 }
 
-function closeModal() { modal.classList.remove('show'); }
+function closeModal() {
+  modal.classList.remove('show');
+  // 🔧 메모리 누수 방지: 닫힘 애니메이션(약 300ms) 후 내부 DOM 정리
+  // → 모달 안의 이벤트 리스너가 붙은 요소들이 GC 대상이 됨
+  clearTimeout(window._modalCleanupT);
+  window._modalCleanupT = setTimeout(() => {
+    // 닫는 사이 다시 열렸으면(show 클래스 있음) 정리하지 않음
+    if (!modal.classList.contains('show')) {
+      modal.innerHTML = '';
+    }
+  }, 320);
+}
 modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
 
 // PWA 안내 (iOS Safari에서 standalone 모드가 아니면 표시)
@@ -12795,6 +13237,20 @@ if (window._fb) {
   initAuth();
 } else {
   window.addEventListener('firebase-ready', initAuth);
+  // 🔧 Firebase SDK 로드 실패(네트워크 차단 등) 시 무한 대기 방지
+  setTimeout(() => {
+    if (!window._fb) {
+      console.error('Firebase SDK 로드 실패 - 10초 타임아웃');
+      const authScreen = document.getElementById('auth-screen');
+      if (authScreen) {
+        authScreen.classList.remove('hidden');
+        const errBox = document.createElement('div');
+        errBox.style.cssText = 'margin:16px; padding:14px; background:#FCEBEB; color:#C0392B; border-radius:10px; font-size:13px; line-height:1.6; text-align:center;';
+        errBox.innerHTML = '⚠️ 서버 연결에 실패했어요.<br>네트워크 상태를 확인하고 새로고침해 주세요.';
+        authScreen.appendChild(errBox);
+      }
+    }
+  }, 10000);
 }
 
 // 엔터키로 로그인
