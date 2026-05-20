@@ -9124,7 +9124,7 @@ async function fetchYahooPrice(ticker) {
   for (const proxy of proxies) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8초 타임아웃
+      const timeoutId = setTimeout(() => controller.abort(), 4000); // 8초 타임아웃
 
       const res = await fetch(proxy.url, { signal: controller.signal });
       clearTimeout(timeoutId);
@@ -9317,59 +9317,28 @@ async function fetchMarketIndices() {
 
   const data = {};
 
-  // 네이버 우선 (실시간 등락률 정확)
-  const naverCodes = {
-    kospi: 'KOSPI',
-    kosdaq: 'KOSDAQ',
-    sp500: '.INX',
-    nasdaq: '.IXIC',
-    dow: '.DJI',
-  };
+  // 1) 네이버 시도 (모두 병렬) - 4초 안에 안 오면 폴백
+  const naverCalls = [
+    ['kospi', () => fetchNaverIndex('KOSPI')],
+    ['kosdaq', () => fetchNaverIndex('KOSDAQ')],
+    ['sp500', () => fetchNaverIndex('.INX')],
+    ['nasdaq', () => fetchNaverIndex('.IXIC')],
+    ['dow', () => fetchNaverIndex('.DJI')],
+    ['usdkrw', () => fetchNaverExchange()],
+    ['goldDomestic', () => fetchNaverGoldDomestic()],
+    ['goldKrx', () => fetchNaverDomesticStock('411060')],
+  ];
 
-  await Promise.all(Object.entries(naverCodes).map(async ([name, code]) => {
+  await Promise.all(naverCalls.map(async ([name, fn]) => {
     try {
-      const r = await fetchNaverIndex(code);
+      const r = await fn();
       if (r) data[name] = r;
-    } catch (e) {}
-  }));
-
-  // 환율 - 네이버
-  try {
-    data.usdkrw = await fetchNaverExchange();
-  } catch (e) {}
-
-  // 야후 폴백 (네이버 실패 시)
-  const yahooFallback = {
-    kospi: '^KS11',
-    kosdaq: '^KQ11',
-    sp500: '^GSPC',
-    nasdaq: '^IXIC',
-    dow: '^DJI',
-    usdkrw: 'USDKRW=X',
-  };
-  await Promise.all(Object.entries(yahooFallback).map(async ([name, t]) => {
-    if (data[name]) return; // 이미 있으면 스킵
-    try {
-      data[name] = await fetchYahooPrice(t);
     } catch (e) {
-      data[name] = null;
+      // 실패해도 폴백으로 처리
     }
   }));
 
-  // 국내 금 시세 (g당 원) - 네이버
-  try {
-    data.goldDomestic = await fetchNaverGoldDomestic();
-  } catch (e) {
-    data.goldDomestic = null;
-  }
-
-  // KRX 금 ETF (411060) - 네이버 우선
-  try {
-    const r = await fetchNaverDomesticStock('411060');
-    if (r) data.goldKrx = r;
-  } catch (e) {}
-
-  // 야후 폴백 (네이버 실패한 것들만)
+  // 2) 야후 폴백 (네이버 실패한 것들만)
   const yahooFallback = {
     kospi: '^KS11',
     kosdaq: '^KQ11',
@@ -9378,7 +9347,9 @@ async function fetchMarketIndices() {
     dow: '^DJI',
     usdkrw: 'USDKRW=X',
     goldKrx: '411060.KS',
+    gold: 'GC=F', // 국제 금 - 야후만
   };
+
   await Promise.all(Object.entries(yahooFallback).map(async ([name, t]) => {
     if (data[name]) return;
     try {
@@ -9387,13 +9358,6 @@ async function fetchMarketIndices() {
       data[name] = null;
     }
   }));
-
-  // 국제 금 선물 - 야후만
-  try {
-    data.gold = await fetchYahooPrice('GC=F');
-  } catch (e) {
-    data.gold = null;
-  }
 
   marketIndices = { ...data, time: Date.now() };
   return marketIndices;
@@ -9411,7 +9375,7 @@ async function fetchNaverDomesticStock(code) {
   for (const proxyFn of proxies) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
       const res = await fetch(proxyFn(target), { signal: controller.signal });
       clearTimeout(timeoutId);
       if (!res.ok) continue;
@@ -9420,14 +9384,11 @@ async function fetchNaverDomesticStock(code) {
       try { const j = JSON.parse(text); if (j.contents) text = j.contents; } catch (e) {}
 
       const data = JSON.parse(text);
-      console.log(`📈 네이버 종목 ${code} 원본:`, data);
-
       const price = Number(String(data.closePrice || '').replace(/,/g, '')) || 0;
       const change = Number(String(data.compareToPreviousClosePrice || '').replace(/,/g, '')) || 0;
       const changePct = Number(data.fluctuationsRatio) || 0;
 
       if (!price) continue;
-      console.log(`✅ 네이버 ${code}: ${price}원, ${changePct}%`);
 
       return {
         ticker: code,
@@ -9438,7 +9399,6 @@ async function fetchNaverDomesticStock(code) {
         time: Date.now(),
       };
     } catch (e) {
-      console.warn(`네이버 종목 ${code} 실패:`, e.message);
       continue;
     }
   }
@@ -9462,7 +9422,7 @@ async function fetchNaverIndex(code) {
   for (const proxyFn of proxies) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
       const res = await fetch(proxyFn(target), { signal: controller.signal });
       clearTimeout(timeoutId);
       if (!res.ok) {
@@ -9524,7 +9484,7 @@ async function fetchNaverExchange() {
   for (const proxyFn of proxies) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
       const res = await fetch(proxyFn(target), { signal: controller.signal });
       clearTimeout(timeoutId);
       if (!res.ok) continue;
@@ -9567,7 +9527,7 @@ async function fetchNaverGoldDomestic() {
   for (const proxyFn of proxies) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
 
       const res = await fetch(proxyFn(target), { signal: controller.signal });
       clearTimeout(timeoutId);
