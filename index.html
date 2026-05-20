@@ -9474,42 +9474,54 @@ async function fetchNaverIndex(code) {
 
 // 네이버 환율 (USD/KRW)
 async function fetchNaverExchange() {
-  const target = 'https://api.stock.naver.com/marketindex/exchange/FX_USDKRW/basic';
+  // N pay 증권이 실제로 사용하는 환율 API들
+  const targets = [
+    'https://m.stock.naver.com/front-api/v1/marketIndex/prices?category=exchange&reutersCode=FX_USDKRW&page=1&pageSize=1',
+    'https://api.stock.naver.com/marketindex/exchange/FX_USDKRW/basic',
+    'https://polling.finance.naver.com/api/realtime/marketindex/exchange/FX_USDKRW',
+  ];
+
   const proxies = [
     url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
     url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
   ];
 
-  for (const proxyFn of proxies) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
-      const res = await fetch(proxyFn(target), { signal: controller.signal });
-      clearTimeout(timeoutId);
-      if (!res.ok) continue;
+  for (const target of targets) {
+    for (const proxyFn of proxies) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
+        const res = await fetch(proxyFn(target), { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (!res.ok) continue;
 
-      let text = await res.text();
-      try { const j = JSON.parse(text); if (j.contents) text = j.contents; } catch (e) {}
+        let text = await res.text();
+        try { const j = JSON.parse(text); if (j.contents) text = j.contents; } catch (e) {}
 
-      const data = JSON.parse(text);
-      console.log(`💱 네이버 환율 원본:`, data);
+        let data;
+        try { data = JSON.parse(text); } catch (e) { continue; }
 
-      const price = Number(String(data.closePrice || '').replace(/,/g, ''))
-                  || Number(data.now)
-                  || 0;
-      const change = Number(String(data.compareToPreviousClosePrice || '').replace(/,/g, ''))
-                   || Number(data.change)
-                   || 0;
-      const changePct = Number(data.fluctuationsRatio)
-                      || Number(data.changeRate)
-                      || 0;
+        console.log('💱 네이버 환율 응답:', data);
 
-      if (!price) continue;
-      console.log(`✅ 네이버 환율: ${price}, ${changePct}%`);
-      return { price, previousClose: price - change, change, changePct, currency: 'KRW', time: Date.now() };
-    } catch (e) {
-      continue;
+        // 다양한 응답 구조 지원
+        const item = data.result?.[0] || data.datas?.[0] || data.result || data;
+
+        const price = Number(String(item.closePrice || '').replace(/,/g, '')) || 0;
+
+        // 등락률: 네이버가 직접 제공하는 값 그대로
+        const changePct = Number(item.fluctuationsRatio) || 0;
+
+        // 등락액
+        const change = Number(String(item.compareToPreviousClosePrice || '').replace(/,/g, '')) || 0;
+
+        if (price > 1000 && price < 2000) {
+          console.log(`✅ 네이버 환율: ${price}원, ${changePct}%`);
+          return { price, previousClose: price - change, change, changePct, currency: 'KRW', time: Date.now() };
+        }
+      } catch (e) {
+        continue;
+      }
     }
   }
   return null;
