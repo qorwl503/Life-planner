@@ -9369,7 +9369,12 @@ async function fetchMarketIndices() {
 
 // 네이버 시장 지수 (한국/미국)
 async function fetchNaverIndex(code) {
-  const target = `https://m.stock.naver.com/api/index/${code}/basic`;
+  // 해외 지수는 api.stock.naver.com 사용
+  const isOverseas = code.startsWith('.');
+  const target = isOverseas
+    ? `https://api.stock.naver.com/index/${code}/basic`
+    : `https://m.stock.naver.com/api/index/${code}/basic`;
+
   const proxies = [
     url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
@@ -9382,28 +9387,47 @@ async function fetchNaverIndex(code) {
       const timeoutId = setTimeout(() => controller.abort(), 8000);
       const res = await fetch(proxyFn(target), { signal: controller.signal });
       clearTimeout(timeoutId);
-      if (!res.ok) continue;
+      if (!res.ok) {
+        console.warn(`네이버 ${code} HTTP ${res.status}`);
+        continue;
+      }
 
       let text = await res.text();
       try { const j = JSON.parse(text); if (j.contents) text = j.contents; } catch (e) {}
 
       const data = JSON.parse(text);
-      const price = Number(String(data.closePrice || '').replace(/,/g, '')) || Number(data.now) || 0;
-      const change = Number(String(data.compareToPreviousClosePrice || '').replace(/,/g, '')) || Number(data.change) || 0;
-      const changePct = Number(data.fluctuationsRatio) || Number(data.changeRate) || 0;
+      console.log(`📈 네이버 ${code} 원본:`, data);
 
-      if (!price) continue;
+      const price = Number(String(data.closePrice || '').replace(/,/g, ''))
+                  || Number(data.now)
+                  || Number(data.tradePrice)
+                  || 0;
+      const change = Number(String(data.compareToPreviousClosePrice || '').replace(/,/g, ''))
+                   || Number(data.change)
+                   || Number(data.signedChange)
+                   || 0;
+      const changePct = Number(data.fluctuationsRatio)
+                      || Number(data.changeRate)
+                      || Number(data.signedChangeRate)
+                      || 0;
+
+      if (!price) {
+        console.warn(`네이버 ${code} 가격 없음`, data);
+        continue;
+      }
+
+      console.log(`✅ 네이버 ${code}: ${price}, ${changePct}%`);
 
       return {
         price,
         previousClose: price - change,
         change,
         changePct,
-        currency: code.startsWith('.') ? 'USD' : 'KRW',
+        currency: isOverseas ? 'USD' : 'KRW',
         time: Date.now(),
       };
     } catch (e) {
-      console.warn(`네이버 ${code} 실패:`, e.message);
+      console.warn(`네이버 ${code} 프록시 실패:`, e.message);
       continue;
     }
   }
@@ -9412,7 +9436,7 @@ async function fetchNaverIndex(code) {
 
 // 네이버 환율 (USD/KRW)
 async function fetchNaverExchange() {
-  const target = 'https://m.stock.naver.com/api/marketindex/exchange/FX_USDKRW/basic';
+  const target = 'https://api.stock.naver.com/marketindex/exchange/FX_USDKRW/basic';
   const proxies = [
     url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
@@ -9431,11 +9455,20 @@ async function fetchNaverExchange() {
       try { const j = JSON.parse(text); if (j.contents) text = j.contents; } catch (e) {}
 
       const data = JSON.parse(text);
-      const price = Number(String(data.closePrice || '').replace(/,/g, '')) || 0;
-      const change = Number(String(data.compareToPreviousClosePrice || '').replace(/,/g, '')) || 0;
-      const changePct = Number(data.fluctuationsRatio) || 0;
+      console.log(`💱 네이버 환율 원본:`, data);
+
+      const price = Number(String(data.closePrice || '').replace(/,/g, ''))
+                  || Number(data.now)
+                  || 0;
+      const change = Number(String(data.compareToPreviousClosePrice || '').replace(/,/g, ''))
+                   || Number(data.change)
+                   || 0;
+      const changePct = Number(data.fluctuationsRatio)
+                      || Number(data.changeRate)
+                      || 0;
 
       if (!price) continue;
+      console.log(`✅ 네이버 환율: ${price}, ${changePct}%`);
       return { price, previousClose: price - change, change, changePct, currency: 'KRW', time: Date.now() };
     } catch (e) {
       continue;
