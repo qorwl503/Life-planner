@@ -4423,8 +4423,8 @@ function editFixed(id) {
           <div style="flex:1;">
             <div style="font-size:11px; font-weight:600; color:var(--text-primary);">🔢 소수점 매매</div>
             <div style="font-size:9px; color:var(--text-tertiary); margin-top:3px; line-height:1.5;">
-              ✅ <b>체크</b>: SPYM/SCHD 등 미국 ETF는 0.3주 같은 소수점 매수 가능<br>
-              ❌ <b>해제</b>: KODEX/TIGER 등 한국 ETF는 정수만 매수 (잔돈 남음)
+              ✅ <b>체크</b>: 0.3주처럼 소수점 단위로 매수 (소수점 매매로 적립 중일 때)<br>
+              ❌ <b>해제</b>: 정수 단위로만 매수 (1주, 2주 — 잔돈은 남김)
             </div>
           </div>
         </label>
@@ -5103,8 +5103,8 @@ function openFixedAddModal() {
           <div style="flex:1;">
             <div style="font-size:11px; font-weight:600; color:var(--text-primary);">🔢 소수점 매매</div>
             <div style="font-size:9px; color:var(--text-tertiary); margin-top:3px; line-height:1.5;">
-              ✅ <b>체크</b>: SPYM/SCHD 등 미국 ETF는 0.3주 같은 소수점 매수 가능<br>
-              ❌ <b>해제</b>: KODEX/TIGER 등 한국 ETF는 정수만 매수 (잔돈 남음)
+              ✅ <b>체크</b>: 0.3주처럼 소수점 단위로 매수 (소수점 매매로 적립 중일 때)<br>
+              ❌ <b>해제</b>: 정수 단위로만 매수 (1주, 2주 — 잔돈은 남김)
             </div>
           </div>
         </label>
@@ -5243,21 +5243,6 @@ function openFixedAddModal() {
         b.classList.add('active');
       });
     });
-
-    // 🔧 티커 입력 시 한국/미국 판별해 소수점 매매 자동 추천
-    const tickerInput = container.querySelector('#fx-asset-ticker');
-    const fracBox = document.getElementById('fx-fractional');
-    if (tickerInput && fracBox && tickerInput.type !== 'hidden') {
-      tickerInput.addEventListener('input', () => {
-        const t = tickerInput.value.trim().toUpperCase();
-        if (!t) return;
-        const isKorean = /\.(KS|KQ)$/.test(t) || /^\d{6}$/.test(t);
-        const isUS = /^[A-Z]{1,5}$/.test(t) && !isKorean;
-        // 한국 종목 → 정수 매수(해제), 미국 종목 → 소수점 매수(체크)
-        if (isKorean) fracBox.checked = false;
-        else if (isUS) fracBox.checked = true;
-      });
-    }
   }
 
   setTimeout(() => {
@@ -7224,12 +7209,18 @@ async function processAssetCapture(input) {
 - 수량 반올림 금지
 - ETF는 type="ETF" (주식 X)
 - 금은 단위 g로 환산
-- JSON 외 다른 글자 추가 금지`;
+- JSON 외 다른 글자 추가 금지
+
+💡 price는 반드시 "1주당(단위당) 단가":
+- 화면에 평가금액(총액)과 수량만 있으면 → price = 평가금액 ÷ 수량 으로 계산해서 1주당 단가를 넣을 것
+- 화면에 매입단가/평균단가가 직접 있으면 → 그 값을 그대로 price에 (총액 넣지 말 것)
+- 예: "평가금액 2,800,000원 / 보유 100주" → price=28000 (2800000÷100), qty=100
+- ⚠️ price에 총액을 넣으면 안 됨 (앱이 price×qty로 또 곱해서 100배가 됨)`;
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${window.GEMINI_API_KEY}`;
     const body = {
       contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64 } }] }],
-      generationConfig: { temperature: 0.1, maxOutputTokens: 2000 }
+      generationConfig: { temperature: 0.1, maxOutputTokens: 8000 }
     };
 
     const res = await fetch(url, {
@@ -7243,13 +7234,24 @@ async function processAssetCapture(input) {
 
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     console.log('🤖 Gemini OCR 원본 응답:', text);
+
+    // 🔧 응답이 잘렸는지 확인 (MAX_TOKENS로 끝나면 JSON 불완전)
+    const finishReason = data.candidates?.[0]?.finishReason;
+    if (finishReason === 'MAX_TOKENS') {
+      throw new Error('한 번에 너무 많은 종목이에요. 화면을 나눠서 캡처해주세요 (한 번에 5~8개 권장)');
+    }
+
     let jsonStr = text.trim().replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
     let parsed;
     try { parsed = JSON.parse(jsonStr); }
     catch (e) {
       const match = jsonStr.match(/\{[\s\S]*\}/);
-      if (match) parsed = JSON.parse(match[0]);
-      else throw new Error('JSON 파싱 실패');
+      if (match) {
+        try { parsed = JSON.parse(match[0]); }
+        catch (e2) { throw new Error('인식 결과를 읽지 못했어요. 더 선명한 캡처로 다시 시도해주세요'); }
+      } else {
+        throw new Error('인식 결과가 비어있어요. 자산 목록이 보이는 화면을 캡처해주세요');
+      }
     }
     console.log('📊 파싱된 자산:', parsed.items);
     parsed.items?.forEach((it, i) => {
@@ -8938,11 +8940,14 @@ async function askGemini(prompt, options = {}) {
           if (!res.ok) {
             const errData = await res.json().catch(() => null);
             if (res.status === 429) {
+              // 🔧 한도초과 → 1회 재시도 후, 그래도 안 되면 다음 모델로 폴백
               if (attempt < maxRetries) {
                 await new Promise(r => setTimeout(r, 2000));
                 continue;
               }
-              return { error: '429: AI 호출 한도 도달. 잠시 후 다시 시도해주세요.' };
+              console.warn(`⚠️ ${model} 한도초과(429) → 다음 모델 시도`);
+              lastError = '429: AI 호출 한도 도달';
+              break; // 안쪽 attempt 루프 탈출 → 바깥 for가 다음 모델 시도
             }
             lastError = `${res.status}: ${errData?.error?.message || '오류'}`;
             break; 
@@ -10151,8 +10156,10 @@ async function fetchNaverGoldDomestic() {
           const yesterday = data.result[1];
           const price = Number(String(today.closePrice || '').replace(/,/g, '')) || 0;
           const prevPrice = Number(String(yesterday.closePrice || '').replace(/,/g, '')) || 0;
-          if (price > 50000 && price < 500000 && prevPrice > 0) {
-            const changePct = ((price - prevPrice) / prevPrice) * 100;
+          if (price > 50000 && price < 500000 && prevPrice > 50000) {
+            let changePct = ((price - prevPrice) / prevPrice) * 100;
+            // 🔧 금 하루 등락 ±20% 초과는 비현실적 → 0으로 처리
+            if (!isFinite(changePct) || Math.abs(changePct) > 20) changePct = 0;
             console.log(`✅ 국내 금 (prices): ${price}원/g, ${changePct.toFixed(2)}%`);
             return { price, changePct };
           }
@@ -10160,7 +10167,8 @@ async function fetchNaverGoldDomestic() {
 
         // basic API: { closePrice, fluctuationsRatio }
         const price = Number(String(data.closePrice || '').replace(/,/g, '')) || 0;
-        const changePct = Number(data.fluctuationsRatio) || 0;
+        let changePct = Number(data.fluctuationsRatio) || 0;
+        if (!isFinite(changePct) || Math.abs(changePct) > 20) changePct = 0;
 
         if (price > 50000 && price < 500000) {
           console.log(`✅ 국내 금 (basic): ${price}원/g, ${changePct}%`);
@@ -10201,23 +10209,30 @@ async function fetchNaverGoldDomestic() {
 
       if (!(price > 50000 && price < 500000)) continue;
 
-      // 등락률 추출 (여러 패턴)
+      // 등락률 추출 — 전일대비 영역에서만 추출 (순도 99.99% 등 오인 방지)
       let changePct = 0;
       const patterns = [
-        /등락률[^0-9-+]*([+-]?[0-9.]+)/,
-        /<em[^>]*class="rate"[^>]*>([+-]?[0-9.]+)%?</,
-        /([+-]?[0-9.]+)\s*%\s*(?:전일대비|등락률|등락 비교)?/,
-        /전일대비[^0-9-+]*[▼▲]?([0-9.]+)[^0-9]*([0-9.]+)%/, // ▼1,065.21 -0.49%
+        // 전일대비 + 변동액 + 변동률 묶음 (가장 신뢰도 높음): ▼1,065.21 -0.49%
+        /전일대비[\s\S]{0,80}?([+-]?[0-9]+\.[0-9]+)\s*%/,
+        // class="rate" 같은 등락률 전용 요소
+        /class="[^"]*(?:rate|fluc)[^"]*"[^>]*>\s*([+-]?[0-9]+\.[0-9]+)\s*%?/,
+        /등락률[\s\S]{0,40}?([+-]?[0-9]+\.[0-9]+)/,
       ];
       for (const p of patterns) {
         const m = html.match(p);
         if (m) {
-          changePct = parseFloat(m[m.length - 1]);
-          // 하락 표시
-          if (html.match(/no_down|class="down"|down_p|하락|▼/)) {
-            changePct = -Math.abs(changePct);
+          const v = parseFloat(m[1]);
+          // 🔧 금 하루 등락이 ±20%를 넘는 건 비현실적 → 순도(99.99%) 등 오인으로 판단해 버림
+          if (isFinite(v) && Math.abs(v) <= 20) {
+            changePct = v;
+            // 하락 표시 보정 (전일대비 영역 근처에 ▼/down이 있을 때만)
+            const ctxMatch = html.match(/전일대비[\s\S]{0,80}/);
+            const ctx = ctxMatch ? ctxMatch[0] : html.slice(0, 2000);
+            if (/no_down|class="[^"]*down|▼|하락/.test(ctx)) {
+              changePct = -Math.abs(changePct);
+            }
+            break;
           }
-          if (changePct !== 0) break;
         }
       }
 
