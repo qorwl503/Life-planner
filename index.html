@@ -1074,10 +1074,28 @@ if (document.body) {
 }
 
 // Firebase에 저장 (디바운스 적용)
-function saveData() {
+function saveData(immediate = false) {
   saveLocal();
 
   if (!currentUser || !window._fb) return;
+
+  // 🔧 immediate=true → 디바운스 없이 즉시 Firebase 저장 (합치기/삭제 등 중요 변경)
+  if (immediate) {
+    if (saveTimer) clearTimeout(saveTimer);
+    (async () => {
+      try {
+        const { doc, setDoc, db } = window._fb;
+        await setDoc(doc(db, 'users', currentUser.uid), {
+          todos, budget, workoutLog, assets, settings, userChannels, economySites, challenges,
+          updatedAt: Date.now()
+        });
+        showSyncStatus();
+      } catch (e) {
+        console.error('즉시 저장 실패:', e);
+      }
+    })();
+    return;
+  }
 
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
@@ -4387,7 +4405,7 @@ function deleteSelectedFixed() {
 
   budget.fixed = budget.fixed.filter(f => !sel.includes(f.id));
   window._fixedSelected = [];
-  saveData();
+  saveData(true);
   showToast(`${sel.length}개 고정지출 삭제됨`);
   renderMoney();
 }
@@ -8191,7 +8209,7 @@ function renderAsset() {
         </div>`;
       }
 
-      assets.forEach(a => {
+      assets.forEach((a, assetIdx) => {
         const live = liveAssetData[a.id];
         const v = live?.hasLive && live.krwValue ? live.krwValue : Number(a.qty) * Number(a.price);
         const badge = a.type[0];
@@ -8238,8 +8256,8 @@ function renderAsset() {
         }
 
         const editing = !!window._assetEditMode;
-        const isSel = (window._assetSelected || []).includes(a.id);
-        html += `<div class="hold-row" onclick="${editing ? `toggleAssetSelect(${a.id})` : `editAsset(${a.id})`}" style="${editing && isSel ? 'background:var(--bg-info);' : ''}">
+        const isSel = (window._assetSelected || []).includes(assetIdx);
+        html += `<div class="hold-row" onclick="${editing ? `toggleAssetSelect(${assetIdx})` : `editAsset(${a.id})`}" style="${editing && isSel ? 'background:var(--bg-info);' : ''}">
           ${editing ? `<div style="width:22px; height:22px; border-radius:6px; border:2px solid ${isSel ? 'var(--text-info)' : 'var(--border-tertiary)'}; background:${isSel ? 'var(--text-info)' : 'transparent'}; display:flex; align-items:center; justify-content:center; flex-shrink:0; color:white; font-size:13px;">${isSel ? '✓' : ''}</div>` : ''}
           <div style="width:38px; height:38px; border-radius:8px; background:var(--bg-secondary); color:var(--text-primary); display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600;">${badge}</div>
           <div style="flex:1; min-width:0;">
@@ -13004,41 +13022,53 @@ function updateAsset(id) {
 }
 
 // ===== 자산 편집 모드 (일괄 삭제 / 합치기) =====
+// 🔧 id 중복(OCR 동시생성 등)에 안전하도록 배열 인덱스로 선택 추적
 function toggleAssetEditMode() {
   window._assetEditMode = !window._assetEditMode;
   window._assetSelected = [];
+  if (window._assetEditMode) fixDuplicateAssetIds();
   renderAsset();
 }
 
-function toggleAssetSelect(id) {
+function fixDuplicateAssetIds() {
+  const seen = new Set();
+  let fixed = 0;
+  assets.forEach(a => {
+    if (a.id == null || seen.has(a.id)) {
+      a.id = Date.now() + Math.floor(Math.random() * 1000000) + fixed;
+      fixed++;
+    }
+    seen.add(a.id);
+  });
+  if (fixed > 0) {
+    console.log(`🔧 중복/누락된 자산 id ${fixed}개 수정됨`);
+    saveData(true);
+  }
+}
+
+function toggleAssetSelect(idx) {
   if (!window._assetSelected) window._assetSelected = [];
-  const i = window._assetSelected.indexOf(id);
+  const i = window._assetSelected.indexOf(idx);
   if (i >= 0) window._assetSelected.splice(i, 1);
-  else window._assetSelected.push(id);
+  else window._assetSelected.push(idx);
   renderAsset();
 }
 
 function deleteSelectedAssets() {
   const sel = window._assetSelected || [];
   if (sel.length === 0) return;
-  const names = sel.map(id => assets.find(a => a.id === id)?.name).filter(Boolean);
-  if (!confirm(`선택한 ${sel.length}개 자산을 삭제할까요?\n\n${names.join(', ')}\n\n⚠️ 연결된 자동매수도 함께 정리됩니다.`)) return;
+  const targetAssets = sel.map(idx => assets[idx]).filter(Boolean);
+  if (targetAssets.length === 0) return;
+  const names = targetAssets.map(a => a.name);
+  if (!confirm(`선택한 ${targetAssets.length}개 자산을 삭제할까요?\n\n${names.join(', ')}\n\n⚠️ 자산만 삭제됩니다. 연결된 자동매수(고정지출)는 그대로 유지돼요.`)) return;
 
-  sel.forEach(id => {
-    const asset = assets.find(a => a.id === id);
-    if (!asset) return;
-    // 연결된 자동매수 고정지출 제거
-    if (budget.fixed) {
-      budget.fixed = budget.fixed.filter(f =>
-        !(f.autoBuy && f.assetInfo && f.assetInfo.name === asset.name && f.assetInfo.type === asset.type)
-      );
-    }
-  });
-  assets = assets.filter(a => !sel.includes(a.id));
+  // 🔧 객체 참조로 제거 - 자동매수는 건드리지 않음
+  const targetSet = new Set(targetAssets);
+  assets = assets.filter(a => !targetSet.has(a));
 
   window._assetSelected = [];
-  saveData();
-  showToast(`${sel.length}개 자산 삭제됨`);
+  saveData(true);
+  showToast(`${targetAssets.length}개 자산 삭제됨`);
   renderAsset();
 }
 
@@ -13048,7 +13078,11 @@ function mergeSelectedAssets() {
     showToast('합칠 자산을 2개 이상 선택해주세요');
     return;
   }
-  const targets = sel.map(id => assets.find(a => a.id === id)).filter(Boolean);
+  const targets = sel.map(idx => assets[idx]).filter(Boolean);
+  if (targets.length < 2) {
+    showToast('합칠 자산을 다시 선택해주세요');
+    return;
+  }
 
   // 종류가 다르면 합치기 위험 → 경고
   const types = [...new Set(targets.map(a => a.type))];
@@ -13064,30 +13098,34 @@ function mergeSelectedAssets() {
 
   if (!confirm(`${targets.length}개 자산을 "${base.name}" 하나로 합칠까요?\n\n${names.join(' + ')}\n\n→ 모든 매수 기록이 합산되고, 나머지는 삭제됩니다.`)) return;
 
-  // 모든 자산의 lot을 base로 모음
-  if (!base.lots) base.lots = [];
-  // base에 lot이 없으면 기존 수량을 lot으로 변환 (보존)
-  if (base.lots.length === 0 && Number(base.qty) > 0) {
-    base.lots.push({
-      id: Date.now() + Math.random(),
-      source: '기존 보유분', qty: Number(base.qty), price: Number(base.price),
-      date: todayKey(), autoBuy: false, note: '합치기 전 보유분',
-    });
-  }
+  // 🔧 합쳐진 결과를 담을 새 lot 배열을 처음부터 구성 (기존 배열 직접 수정 X)
+  const mergedLots = [];
 
-  rest.forEach(other => {
-    if (other.lots && other.lots.length > 0) {
-      other.lots.forEach(lot => base.lots.push({ ...lot, id: Date.now() + Math.random() }));
-    } else if (Number(other.qty) > 0) {
-      base.lots.push({
+  targets.forEach((asset, idx) => {
+    const isBase = idx === 0;
+    if (asset.lots && asset.lots.length > 0) {
+      // lot이 있으면 그대로 가져옴 (id는 새로 부여해 충돌 방지)
+      asset.lots.forEach(lot => {
+        mergedLots.push({ ...lot, id: Date.now() + Math.random() });
+      });
+    } else if (Number(asset.qty) > 0) {
+      // lot이 없으면 현재 수량/평단가를 lot 1개로 변환
+      mergedLots.push({
         id: Date.now() + Math.random(),
-        source: `${other.name} (합침)`, qty: Number(other.qty), price: Number(other.price),
-        date: todayKey(), autoBuy: false, note: '합치기로 통합됨',
+        source: isBase ? '기존 보유분' : `${asset.name} (합침)`,
+        qty: Number(asset.qty),
+        price: Number(asset.price),
+        date: todayKey(),
+        autoBuy: false,
+        note: isBase ? '합치기 전 보유분' : '합치기로 통합됨',
       });
     }
-    // 티커 없으면 채워줌
-    if (!base.ticker && other.ticker) base.ticker = other.ticker;
-    // 연결된 자동매수를 base로 재연결
+    // 티커 채우기
+    if (!base.ticker && asset.ticker) base.ticker = asset.ticker;
+  });
+
+  // 합쳐지는 자산들의 자동매수를 base로 재연결
+  rest.forEach(other => {
     if (budget.fixed) {
       budget.fixed.forEach(f => {
         if (f.autoBuy && f.assetInfo && f.assetInfo.name === other.name && f.assetInfo.type === other.type) {
@@ -13098,16 +13136,18 @@ function mergeSelectedAssets() {
     }
   });
 
+  // base에 합쳐진 lot 적용 후 재계산
+  base.lots = mergedLots;
   recalcAssetFromLots(base);
 
-  // 나머지 자산 제거
-  const restIds = rest.map(a => a.id);
-  assets = assets.filter(a => !restIds.includes(a.id));
+  // 🔧 나머지 자산을 객체 참조로 제거 (id 중복에 안전)
+  const restSet = new Set(rest);
+  assets = assets.filter(a => !restSet.has(a));
 
   window._assetSelected = [];
   window._assetEditMode = false;
-  saveData();
-  showToast(`${targets.length}개 자산이 "${base.name}"으로 합쳐졌어요`);
+  saveData(true); // 🔧 즉시 저장 (다른 기기 동기화 충돌 방지)
+  showToast(`"${base.name}" 합치기 완료 (${base.qty}주)`);
   renderAsset();
 }
 
@@ -13120,33 +13160,28 @@ function deleteAsset(id) {
     f.autoBuy && f.assetInfo && f.assetInfo.name === asset.name && f.assetInfo.type === asset.type
   );
 
-  // 연결된 자산 투자 지출 찾기 - linkedAssetName 또는 memo
+  // 연결된 자산 투자 지출 찾기
   const linkedExpenses = (budget.expenses || []).filter(e =>
     e.type !== 'income' && e.cat === asset.type &&
     (e.linkedAssetName === asset.name || (!e.linkedAssetName && e.memo === asset.name))
   );
 
-  let msg = `"${asset.name}" 자산을 삭제할까요?`;
-  if (linkedFixed.length > 0 || linkedExpenses.length > 0) {
-    msg += `\n\n연결된 항목:`;
-    if (linkedFixed.length > 0) msg += `\n- 자동매수 ${linkedFixed.length}개`;
-    if (linkedExpenses.length > 0) msg += `\n- 매수 기록 ${linkedExpenses.length}개`;
-    msg += `\n\n이 항목도 함께 삭제됩니다.`;
-  }
-
-  if (!confirm(msg)) return;
+  if (!confirm(`"${asset.name}" 자산을 삭제할까요?`)) return;
 
   // 자산 삭제
   assets = assets.filter(x => x.id !== id);
 
-  // 연결된 자동매수 삭제
+  // 🔧 연결된 자동매수가 있으면 별도로 물어봄 (자산만 지우고 자동매수는 유지 가능)
   if (linkedFixed.length > 0) {
-    budget.fixed = budget.fixed.filter(f =>
-      !(f.autoBuy && f.assetInfo && f.assetInfo.name === asset.name && f.assetInfo.type === asset.type)
-    );
+    const alsoDeleteAuto = confirm(`연결된 자동매수가 ${linkedFixed.length}개 있어요.\n\n⚠️ 확인: 자동매수 설정도 함께 삭제\n❌ 취소: 자동매수는 그대로 두기 (자산만 삭제)`);
+    if (alsoDeleteAuto) {
+      budget.fixed = budget.fixed.filter(f =>
+        !(f.autoBuy && f.assetInfo && f.assetInfo.name === asset.name && f.assetInfo.type === asset.type)
+      );
+    }
   }
 
-  // 연결된 지출 삭제
+  // 연결된 지출은 자산과 함께 정리 (기록이라 자산 없으면 의미 없음)
   if (linkedExpenses.length > 0) {
     const expIds = new Set(linkedExpenses.map(e => e.id));
     budget.expenses = budget.expenses.filter(e => !expIds.has(e.id));
