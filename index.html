@@ -10128,7 +10128,8 @@ async function fetchNaverExchange() {
   return null;
 }
 
-// 네이버 국내 금 시세 (g당 원) - 네이버 marketindex 위젯이 쓰는 API에서 가격·등락률 그대로 사용
+// 네이버 국내 금 시세 (g당 원) - m.stock.naver.com/marketindex/metals/M04020000 가 쓰는 API
+// 화면에 보이는 가격·등락률을 그대로 사용 (계산 안 함)
 async function fetchNaverGoldDomestic() {
   const proxies = [
     url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
@@ -10140,7 +10141,7 @@ async function fetchNaverGoldDomestic() {
     for (const proxyFn of proxies) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 4000);
+        const timeoutId = setTimeout(() => controller.abort(), 4500);
         const res = await fetch(proxyFn(target), { signal: controller.signal });
         clearTimeout(timeoutId);
         if (!res.ok) continue;
@@ -10152,56 +10153,78 @@ async function fetchNaverGoldDomestic() {
     return null;
   };
 
-  // 화면에 보이는 값을 그대로 주는 필드 추출 (계산하지 않음)
-  // 네이버 응답 공통 필드: closePrice(현재가), fluctuationsRatio(등락률),
-  //   compareToPreviousClosePrice(변동액), compareToPreviousPrice.code / risingFalling(방향)
-  const extract = (obj) => {
-    if (!obj) return null;
-    const price = Number(String(obj.closePrice ?? obj.nv ?? '').replace(/,/g, '')) || 0;
-    if (!(price > 50000 && price < 500000)) return null;
+  // 응답 객체에서 가격/등락률/방향을 넓게 탐색 (필드명이 엔드포인트마다 달라서)
+  const pick = (obj) => {
+    if (!obj || typeof obj !== 'object') return null;
+    const num = (v) => Number(String(v ?? '').replace(/,/g, ''));
 
-    let changePct = Number(obj.fluctuationsRatio ?? obj.cr) || 0;
-    const changeVal = Number(String(obj.compareToPreviousClosePrice ?? obj.cv ?? '').replace(/,/g, ''));
+    // 가격 후보 필드
+    const priceCands = [obj.closePrice, obj.nowVal, obj.nv, obj.currentPrice, obj.price, obj.amount];
+    let price = 0;
+    for (const c of priceCands) {
+      const n = num(c);
+      if (n > 50000 && n < 500000) { price = n; break; }
+    }
+    if (!price) return null;
 
-    // 방향: risingFalling(2=하락,5=하락보합) 또는 변동액 부호
+    // 등락률 후보
+    let changePct = num(obj.fluctuationsRatio ?? obj.changeRate ?? obj.cr ?? obj.rate);
+    if (!isFinite(changePct)) changePct = 0;
+
+    // 방향: risingFalling/rf (2,3=하락), 또는 변동액 부호
+    const changeVal = num(obj.compareToPreviousClosePrice ?? obj.changeVal ?? obj.cv);
     const rf = String(obj.risingFalling ?? obj.rf ?? obj?.compareToPreviousPrice?.code ?? '');
     const isDown = rf === '2' || rf === '3' || (isFinite(changeVal) && changeVal < 0);
-    if (isDown) changePct = -Math.abs(changePct);
-    else if (changePct !== 0) changePct = Math.abs(changePct);
+    if (changePct !== 0) changePct = isDown ? -Math.abs(changePct) : Math.abs(changePct);
 
-    if (!isFinite(changePct)) changePct = 0;
+    // 비현실적 값 차단
+    if (Math.abs(changePct) > 30) changePct = 0;
     return { price, changePct };
   };
 
-  // 1순위: marketindex 금 basic API (화면 위젯이 쓰는 것 - 등락률 직접 제공)
-  for (const target of [
+  // 응답이 배열/중첩이어도 첫 유효 객체를 찾음
+  const dig = (data) => {
+    if (!data) return null;
+    let r = pick(data);
+    if (r) return r;
+    // 흔한 중첩 경로들
+    const nests = [data.result, data.datas, data.data,
+      data?.result?.[0], data?.datas?.[0],
+      Array.isArray(data) ? data[0] : null];
+    for (const n of nests) {
+      if (Array.isArray(n)) { for (const it of n) { r = pick(it); if (r) return r; } }
+      else { r = pick(n); if (r) return r; }
+    }
+    return null;
+  };
+
+  // 시도할 엔드포인트들 (순서대로)
+  const targets = [
     'https://api.stock.naver.com/marketindex/metals/M04020000/basic',
     'https://m.stock.naver.com/api/marketindex/metals/M04020000/basic',
-  ]) {
+    'https://api.stock.naver.com/marketindex/metals/M04020000/prices?page=1&pageSize=2',
+    'https://m.stock.naver.com/api/marketindex/metals/M04020000/prices?page=1&pageSize=2',
+  ];
+
+  for (const target of targets) {
     const text = await fetchVia(target);
     if (!text) continue;
     try {
       const data = JSON.parse(text);
-      console.log('💰 네이버 금 basic 응답:', data);
-      const r = extract(data);
-      if (r) { console.log(`✅ 국내 금 (basic): ${r.price}원/g, ${r.changePct}%`); return r; }
-    } catch (e) {}
-  }
-
-  // 2순위: prices API (배열 첫 항목에 등락률 포함)
-  const pricesText = await fetchVia('https://m.stock.naver.com/front-api/v1/marketIndex/prices?category=metals&reutersCode=M04020000&page=1&pageSize=2');
-  if (pricesText) {
-    try {
-      const data = JSON.parse(pricesText);
-      console.log('💰 네이버 금 prices 응답:', data);
-      const arr = data.result || data;
-      if (Array.isArray(arr) && arr.length >= 1) {
-        const r = extract(arr[0]);
-        if (r) { console.log(`✅ 국내 금 (prices): ${r.price}원/g, ${r.changePct}%`); return r; }
+      const r = dig(data);
+      if (r) {
+        console.log(`✅ 국내 금: ${r.price.toLocaleString()}원/g, ${r.changePct}% (${target})`);
+        return r;
+      } else {
+        // 진단용: 어떤 응답이 왔는지 확인 가능하게
+        console.warn('⚠️ 국내 금 - 가격 필드 못 찾음:', target, JSON.stringify(data).slice(0, 400));
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn('⚠️ 국내 금 - JSON 파싱 실패:', target);
+    }
   }
 
+  console.error('❌ 국내 금 시세 조회 실패 - 모든 엔드포인트 실패');
   return null;
 }
 
