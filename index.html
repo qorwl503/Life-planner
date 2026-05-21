@@ -7307,10 +7307,17 @@ async function processAssetCapture(input) {
    - 부동산: 현재 시세 (800000000 등)
 
 3. **priceCurrency (매입가 통화)**: 주식/ETF/펀드만 — price가 어떤 통화인지
-   - 화면에 $, USD, 달러 표시가 있거나 미국 종목이면 → "USD"
+   - ⭐ 화면에 "원화 평균단가", "원화 매입가", "원화 평균매입가" 같은 원화 기준 단가가 보이면
+     → 그 원화 숫자를 price에, priceCurrency="KRW" (이게 가장 정확함! 환율 불필요)
+   - 달러 단가($, USD)만 보이면 → 그 달러 숫자를 price에, priceCurrency="USD"
    - 원, 원화이거나 한국 종목이면 → "KRW"
    - 애매하면 한국 종목은 "KRW", 미국 종목은 "USD"
    - ⚠️ 절대 직접 환산하지 말 것 — 화면 숫자를 그대로 두고 통화만 표시
+
+3-1. **avgBuyRate (평균 매입 환율)**: 미국 주식/ETF에서 priceCurrency가 "USD"일 때만
+   - 화면에 "평균 매입 환율", "매입환율", "평균환율", "환율" 같은 항목이 보이면 그 숫자 (예: 1330.5)
+   - 화면 어디에도 환율이 안 보이면 이 필드는 넣지 말 것 (생략)
+   - priceCurrency가 "KRW"이면 이 필드 불필요 (생략)
 
 4. **ticker**: 종목 코드 (있으면)
    - 한국 주식/ETF: 6자리 숫자 (005930, 379810)
@@ -7324,7 +7331,7 @@ async function processAssetCapture(input) {
 {"items":[
   {"type":"주식","name":"삼성전자","qty":10,"price":70000,"priceCurrency":"KRW","ticker":"005930"},
   {"type":"ETF","name":"TIGER 미국S&P500","qty":9,"price":27360,"priceCurrency":"KRW","ticker":"360750"},
-  {"type":"주식","name":"애플","qty":3,"price":195.4,"priceCurrency":"USD","ticker":"AAPL"},
+  {"type":"주식","name":"애플","qty":3,"price":195.4,"priceCurrency":"USD","avgBuyRate":1342,"ticker":"AAPL"},
   {"type":"금","name":"신한 골드뱅킹","qty":3.75,"price":218860,"ticker":""},
   {"type":"예적금","name":"토스 정기예금","qty":1,"price":5000000,"ticker":""},
   {"type":"청약","name":"KB 주택청약","qty":1,"price":1500000,"ticker":""}
@@ -7489,6 +7496,23 @@ function openAssetReviewModal(items) {
           </div>
         </div>
 
+        ${isUSD ? `
+          <div style="margin-top:8px; padding:8px; background:var(--bg-info); border-radius:8px;">
+            <div style="font-size:10px; color:var(--text-info); font-weight:600; margin-bottom:4px;">
+              💱 평균 매입 환율 (원/$)
+            </div>
+            <input type="number" step="0.01" placeholder="${Number(it.avgBuyRate) > 0 ? '' : '비우면 오늘 환율로 환산'}"
+              value="${Number(it.avgBuyRate) > 0 ? it.avgBuyRate : ''}"
+              oninput="window._assetReviewItems[${i}].avgBuyRate = Number(this.value) || 0;"
+              style="width:100%; padding:6px 8px; border:1px solid var(--border-secondary); border-radius:6px; font-size:12px; font-family:inherit;" />
+            <div style="font-size:9px; color:var(--text-info); margin-top:3px; line-height:1.5;">
+              ${Number(it.avgBuyRate) > 0
+                ? '✅ 캡처에서 매입 환율을 읽었어요. 틀리면 수정하세요.'
+                : '⚠️ 캡처에 환율이 없었어요. 증권사 화면의 평균 매입 환율을 넣으면 수익률이 정확해져요. (모르면 비워두기)'}
+            </div>
+          </div>
+        ` : ''}
+
         ${hasExisting ? `
           ${(() => {
             // 티커가 서로 다른데 매칭된 경우 → 강한 경고
@@ -7573,11 +7597,14 @@ function saveAssetReviewItems() {
     const name = it.name || '이름없음';
 
     // 🔧 달러 매입가 → 원화 환산 (lot은 항상 원화로 저장)
+    //    OCR이 화면에서 평균 매입 환율을 읽었으면 그 환율로, 못 읽었으면 오늘 환율로 폴백
     let priceNote = '';
     if (it.priceCurrency === 'USD' && rate) {
       const usdPrice = price;
-      price = Math.round(price * rate);
-      priceNote = ` ($${usdPrice} × ${Math.round(rate)})`;
+      const ocrRate = Number(it.avgBuyRate) || 0;
+      const useRate = ocrRate > 0 ? ocrRate : rate;
+      price = Math.round(price * useRate);
+      priceNote = ` ($${usdPrice} × ${Math.round(useRate)}${ocrRate > 0 ? ' 매입환율' : ' 오늘환율'})`;
     } else {
       price = Math.round(price);
     }
@@ -7596,6 +7623,11 @@ function saveAssetReviewItems() {
           note: '캡처 합산' + priceNote,
         });
         if (!existing.ticker && it.ticker) existing.ticker = it.ticker;
+        // 🔧 lot은 모두 원화로 환산 저장됨 → 자산도 원화 기준으로 정정 (이중 환산 방지)
+        if (['주식','ETF','펀드'].includes(existing.type)) {
+          existing.priceCurrency = 'KRW';
+          delete existing.avgBuyRate;
+        }
         mergedCount++;
       }
     } else {
@@ -8320,9 +8352,14 @@ function renderAsset() {
           const profitColor = profitPct >= 0 ? 'var(--text-danger)' : 'var(--text-info)';
           // 수익률이 -90% 이하 또는 +500% 이상이면 평단가 입력 오류로 간주 → 표시 X
           const showProfit = profitPct > -90 && profitPct < 500;
+          // 달러 단가인데 평균 매입 환율이 없으면 → 환차손익 빠진 수익률 (안내)
+          const fxWarn = live.fxRateMissing
+            ? `<span style="color:var(--text-warning); font-size:9px;" title="평균 매입 환율 미입력 — 환차손익이 빠져 증권사 수익률과 다를 수 있어요. 자산 수정에서 입력하세요.">⚠️ 환율</span>`
+            : '';
           priceInfo = `<div style="font-size:10px; display:flex; gap:8px; justify-content:flex-end; margin-top:2px;">
             <span style="color:${changeColor};">오늘 ${changePct >= 0 ? '▲' : '▼'}${Math.abs(changePct).toFixed(2)}%</span>
             ${showProfit ? `<span style="color:${profitColor};">수익 ${profitPct >= 0 ? '+' : ''}${profitPct.toFixed(1)}%</span>` : `<span style="color:var(--text-tertiary);" title="평단가 확인 필요">수익 -</span>`}
+            ${fxWarn}
           </div>`;
         } else if (live?.error) {
           priceInfo = `<div style="font-size:10px; color:var(--text-danger);">시세 조회 실패</div>`;
@@ -10028,34 +10065,49 @@ async function fetchAssetLive(asset) {
     const effectiveSpread = baseSpread * (1 - fxDiscount / 100);
     const buyRate = marketRate * (1 + effectiveSpread);
 
-    krwPrice = priceData.price * buyRate;
+    // 🔧 평가금액(현재 가치)은 매수 스프레드를 끼우지 않고 시장환율로 환산
+    //    (증권사 평가금액 = 매매기준율 기준. 매수 스프레드는 살 때만 발생)
+    krwPrice = priceData.price * marketRate;
 
-    // 🔧 매입가 통화: 추측하지 않고 priceCurrency 필드로 명확히 판단
+    // 🔧 매입원가 환산 - 핵심: 환차손익을 살리려면 '매수 시점 환율'을 써야 함
+    //    avgBuyRate(평균 매입 환율)가 입력돼 있으면 그걸로 원가 고정 → 증권사 수익률과 일치
+    const avgBuyRate = Number(asset.avgBuyRate) || 0;
     if (asset.priceCurrency === 'USD') {
-      // 달러 단위 1주당 매입가 → 매수 환율로 원화 환산
-      krwAvgPrice = krwAvgPrice * buyRate;
+      if (avgBuyRate > 0) {
+        // 달러 단가 × 사용자가 입력한 평균 매입 환율 = 실제 매입원가(원화)
+        krwAvgPrice = krwAvgPrice * avgBuyRate;
+      } else {
+        // 매입 환율 미입력 → 매수 스프레드 포함 오늘 환율로 폴백 (환차손익 미반영, 안내 필요)
+        krwAvgPrice = krwAvgPrice * buyRate;
+      }
     } else if (asset.priceCurrency === 'KRW') {
-      // 원화 단위 1주당 매입가 → 그대로 사용
+      // 원화 단위 매입가 → 그대로 사용 (매수 시점 환율이 이미 녹아 있음)
     } else {
       // priceCurrency 없는 옛날 자산 → 기존 추측 로직 (하위호환)
       if (krwAvgPrice > 1000000 && Number(asset.qty) > 0) {
         krwAvgPrice = krwAvgPrice / Number(asset.qty);
       } else if (krwAvgPrice < 10000) {
-        krwAvgPrice = krwAvgPrice * buyRate;
+        krwAvgPrice = krwAvgPrice * (avgBuyRate > 0 ? avgBuyRate : buyRate);
       }
     }
   }
 
   const krwValue = Number(asset.qty) * krwPrice;
   const profitPct = krwAvgPrice > 0 ? ((krwPrice - krwAvgPrice) / krwAvgPrice) * 100 : 0;
+  // 매입원가 환율 정보가 없어 환차손익이 빠졌는지 여부 (UI 안내용)
+  const fxRateMissing = priceData.currency === 'USD'
+    && asset.priceCurrency === 'USD'
+    && !(Number(asset.avgBuyRate) > 0);
 
   return {
     currentPrice: priceData.price,
     krwPrice,
+    krwAvgPrice,
     krwValue,
     changePct: priceData.changePct,
     profitPct,
     currency: priceData.currency,
+    fxRateMissing,
     hasLive: true,
   };
 }
@@ -12481,6 +12533,14 @@ function renderAssetFormFields(type) {
           <button type="button" class="chip" data-cur="USD">달러 ($)</button>
         </div>
       </div>
+      <div class="field" id="a-avgrate-row" style="display:none;">
+        <div class="field-label">평균 매입 환율 (원/$) <span style="font-size:9px; color:var(--text-tertiary);">(증권사 화면 그대로)</span></div>
+        <input type="number" id="a-avgrate" placeholder="예: 1330" step="0.01" />
+        <div style="font-size:9px; color:var(--text-tertiary); margin-top:3px; line-height:1.5;">
+          💱 달러 단가로 입력할 때, 매수 당시 평균 환율을 넣으면 <b>환차손익까지 정확히</b> 계산돼요.<br>
+          비워두면 오늘 환율로 계산돼 증권사 수익률과 차이가 날 수 있어요.
+        </div>
+      </div>
       ` : ''}
       ${quickAmtButtons('a-price')}
     `;
@@ -12686,6 +12746,9 @@ function renderAssetFormFields(type) {
     b.addEventListener('click', () => {
       document.querySelectorAll('#a-price-currency .chip').forEach(x => x.classList.remove('active'));
       b.classList.add('active');
+      // 달러 선택 시에만 평균 매입 환율 입력란 표시
+      const avgRow = document.getElementById('a-avgrate-row');
+      if (avgRow) avgRow.style.display = b.dataset.cur === 'USD' ? 'block' : 'none';
     });
   });
 }
@@ -12740,6 +12803,8 @@ function saveAsset() {
   const region = document.querySelector('#aregion-grid .chip.active')?.dataset.r || '국내';
   // 🔧 매입가 통화 (원화/달러) - 없으면 원화 기본
   const priceCurrency = document.querySelector('#a-price-currency .chip.active')?.dataset.cur || 'KRW';
+  // 🔧 평균 매입 환율 (달러 단가로 입력했을 때만 의미 있음)
+  const avgBuyRate = Number(document.getElementById('a-avgrate')?.value) || 0;
 
   // 부동산, 채권, 예적금 등 추가 필드
   const propType = document.querySelector('#aproptype-grid .chip.active')?.dataset.p || '';
@@ -12756,7 +12821,10 @@ function saveAsset() {
 
   const asset = { id: Date.now(), name, ticker, type, region, qty, price, note };
   // 타입별 추가 정보
-  if (['주식','ETF','펀드'].includes(type)) asset.priceCurrency = priceCurrency;
+  if (['주식','ETF','펀드'].includes(type)) {
+    asset.priceCurrency = priceCurrency;
+    if (priceCurrency === 'USD' && avgBuyRate > 0) asset.avgBuyRate = avgBuyRate;
+  }
   if (propType) asset.propType = propType;
   if (subType) asset.subType = subType;
   if (maturity) asset.maturity = maturity;
@@ -13005,6 +13073,14 @@ function editAsset(id) {
             본인 증권사 환전우대율 (없으면 비워두기)
           </div>
         </div>
+        <div class="field">
+          <div class="field-label">💵 평균 매입 환율 (원/$) <span style="font-size:9px; color:var(--text-tertiary);">(달러 단가일 때만)</span></div>
+          <input type="number" id="e-avgrate" value="${a.avgBuyRate || ''}" placeholder="예: 1330" step="0.01" />
+          <div style="font-size:9px; color:var(--text-tertiary); margin-top:3px; line-height:1.5;">
+            증권사 화면의 평균 매입 환율을 넣으면 <b>환차손익까지 정확히</b> 계산돼요.<br>
+            비워두면 오늘 환율로 계산돼 실제 수익률과 차이가 날 수 있어요.
+          </div>
+        </div>
       `;
     } else if (type === '채권') {
       h = `
@@ -13211,6 +13287,7 @@ function updateAsset(id) {
   const subType = document.querySelector('#e-subtype .chip.active')?.dataset.s || '';
   const buyprice = Number(document.getElementById('e-buyprice')?.value) || 0;
   const fxDiscount = Number(document.getElementById('e-fx-discount')?.value) || 0;
+  const avgBuyRate = Number(document.getElementById('e-avgrate')?.value) || 0;
 
   if (rate) a.rate = rate; else delete a.rate;
   if (maturity) a.maturity = maturity; else delete a.maturity;
@@ -13224,6 +13301,12 @@ function updateAsset(id) {
     a.priceCurrency = curBtn.dataset.cur;
   } else if (!['주식','ETF','펀드'].includes(newType)) {
     delete a.priceCurrency;
+  }
+  // 🔧 평균 매입 환율 — 달러 단가 자산에서만 의미. 환차손익 정확 계산용
+  if (avgBuyRate > 0 && a.priceCurrency === 'USD') {
+    a.avgBuyRate = avgBuyRate;
+  } else {
+    delete a.avgBuyRate;
   }
 
   // ⭐ 통합 룰: 사용자 입력값 = 오늘까지 모든 거 포함된 최종 상태
