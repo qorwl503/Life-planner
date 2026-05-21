@@ -6344,6 +6344,30 @@ async function processAutoBuy(fixed) {
   }
   console.log(`💰 ${asset.name} 시세: ${currPrice.toLocaleString()}원`);
 
+  // 🔧 과거 회차의 정확한 매입가를 위해 과거 종가 맵을 미리 받아둠
+  // (기존엔 모든 회차를 '오늘 시세'로 저장 → 매입가=현재가 → 수익률 0% 버그)
+  let histMap = null;
+  let histIsUSD = false;
+  let buyRateForHist = 1;
+  if (asset.ticker && asset.type !== '금') {
+    try {
+      let histTicker = asset.ticker;
+      // 한국 종목 티커 보정 (.KS)
+      if (/^\d{6}$/.test(histTicker)) histTicker = histTicker + '.KS';
+      histMap = await fetchYahooHistorical(histTicker);
+      // 미국 종목이면 과거 종가가 달러 → 원화 환산 필요
+      if (live?.currency === 'USD') {
+        histIsUSD = true;
+        const marketRate = await getUSDKRW();
+        const fxDiscount = Number(asset.fxDiscount) || 0;
+        const effectiveSpread = 0.0175 * (1 - fxDiscount / 100);
+        buyRateForHist = marketRate * (1 + effectiveSpread);
+      }
+    } catch (e) {
+      console.warn('과거 종가 로드 실패:', e);
+    }
+  }
+
   const skippedDates = []; // 🔧 시세 조회 실패로 건너뛴 회차 (lastBuyDate 갱신 제외용)
   const addedDates = [];   // 🔧 실제로 lot이 추가된 회차 (토스트 카운트용)
   newDates.forEach(d => {
@@ -6384,20 +6408,30 @@ async function processAutoBuy(fixed) {
       addedDates.push(d);
       console.log(`💰 ${asset.name} 납입 lot 추가: ${dateStr}, ${fixed.amt.toLocaleString()}원, 총 ${asset.price.toLocaleString()}원${asset.type === '청약' ? `, ${asset.rounds}회차` : ''}`);
     } else if (currPrice > 0) {
-      // 주식/ETF/금/달러: 시세 알면 정확한 수량 계산
-      let newQty = fixed.amt / currPrice;
+      // 🔧 그 회차 날짜의 실제 종가를 매입가로 사용 (없으면 현재 시세로 폴백)
+      let lotPrice = currPrice;
+      const histClose = getHistPriceOn(histMap, dateStr);
+      if (histClose != null) {
+        lotPrice = histIsUSD ? histClose * buyRateForHist : histClose;
+        console.log(`  📅 ${dateStr} 과거 종가 적용: ${Math.round(lotPrice).toLocaleString()}원`);
+      } else {
+        console.log(`  📅 ${dateStr} 과거 종가 없음 → 현재 시세 사용`);
+      }
+
+      // 시세 알면 정확한 수량 계산
+      let newQty = fixed.amt / lotPrice;
       // 소수점 매매 X → 정수만 매수
       if (!fixed.fractional) {
         newQty = Math.floor(newQty);
       }
       if (newQty <= 0) {
-        console.warn(`⚠️ ${asset.name} 정수 매수 불가 (한도 ${fixed.amt} / 시세 ${currPrice})`);
+        console.warn(`⚠️ ${asset.name} 정수 매수 불가 (한도 ${fixed.amt} / 시세 ${lotPrice})`);
         return;
       }
       addAssetLot(asset, {
         source: `🤖 ${fixed.name}`,
         qty: newQty,
-        price: currPrice,
+        price: Math.round(lotPrice),
         date: dateStr,
         fxDiscount: asset.fxDiscount || null,
         autoBuy: true,
@@ -6405,7 +6439,7 @@ async function processAutoBuy(fixed) {
         note: fixed.fractional ? '자동매수 (소수점)' : '자동매수 (정수)',
       });
       addedDates.push(d);
-      console.log(`✅ ${asset.name} lot 추가: ${dateStr}, ${newQty}주 @ ${currPrice} (${fixed.fractional?'소수점':'정수'}), 총 ${asset.qty}주`);
+      console.log(`✅ ${asset.name} lot 추가: ${dateStr}, ${newQty}주 @ ${Math.round(lotPrice)} (${fixed.fractional?'소수점':'정수'}), 총 ${asset.qty}주`);
     } else {
       // 🔧 시세를 못 받으면 부정확한 "1주 추정"을 만들지 않고 이 회차는 건너뜀
       // (lastBuyDate를 갱신하지 않으므로 다음 점검 때 다시 시도됨)
@@ -9859,6 +9893,72 @@ async function fetchYahooPrice(ticker) {
   }
 
   console.error(`${ticker}: 모든 프록시 실패`);
+  return null;
+}
+
+// 🔧 특정 날짜의 과거 종가 조회 (자동매수 과거 회차의 매입가용)
+// dateStrList의 각 날짜에 가장 가까운 거래일 종가를 { 'YYYY-MM-DD': price } 로 반환
+const histPriceCache = {}; // ticker별 일별 종가 캐시
+async function fetchYahooHistorical(ticker) {
+  if (!ticker) return null;
+  if (histPriceCache[ticker] && Date.now() - histPriceCache[ticker].time < 6 * 60 * 60 * 1000) {
+    return histPriceCache[ticker].map;
+  }
+
+  // 최근 1년치 일별 종가
+  const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=1y`;
+  const proxies = [
+    { url: `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(yahooUrl)}`, parse: async (r) => JSON.parse((await r.json()).contents) },
+    { url: `https://api.allorigins.win/get?url=${encodeURIComponent(yahooUrl)}`, parse: async (r) => JSON.parse((await r.json()).contents) },
+    { url: `https://corsproxy.io/?${encodeURIComponent(yahooUrl)}`, parse: async (r) => r.json() },
+  ];
+
+  for (const proxy of proxies) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(proxy.url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (!res.ok) continue;
+
+      const data = await proxy.parse(res);
+      const result = data.chart?.result?.[0];
+      if (!result || !result.timestamp) continue;
+
+      const timestamps = result.timestamp;
+      const closes = result.indicators?.quote?.[0]?.close || [];
+
+      // 날짜(YYYY-MM-DD) → 종가 맵 생성
+      const map = {};
+      timestamps.forEach((ts, i) => {
+        if (closes[i] == null) return;
+        const d = new Date(ts * 1000);
+        const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        map[key] = closes[i];
+      });
+
+      histPriceCache[ticker] = { map, time: Date.now() };
+      console.log(`📈 ${ticker} 과거 종가 ${Object.keys(map).length}일치 로드`);
+      return map;
+    } catch (e) {
+      continue;
+    }
+  }
+  console.warn(`${ticker}: 과거 종가 조회 실패`);
+  return null;
+}
+
+// 과거 종가 맵에서 특정 날짜에 가장 가까운(그 이전) 거래일 종가 찾기
+function getHistPriceOn(histMap, dateStr) {
+  if (!histMap) return null;
+  if (histMap[dateStr] != null) return histMap[dateStr];
+  // 해당 날짜가 휴장일이면 그 이전 가장 가까운 거래일 찾기 (최대 7일 역추적)
+  const d = new Date(dateStr + 'T00:00:00');
+  for (let i = 1; i <= 7; i++) {
+    d.setDate(d.getDate() - 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    if (histMap[key] != null) return histMap[key];
+  }
   return null;
 }
 
