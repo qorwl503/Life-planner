@@ -5478,7 +5478,7 @@ function saveFixed() {
         name: assetInfo.name,
         ticker: assetInfo.ticker,
         type: assetInfo.type,
-        region: '국내',
+        region: guessAssetRegion(assetInfo.name, assetInfo.ticker, assetInfo.priceCurrency),
         qty: 0,
         price: 0,
         note: `🤖 자동매수: ${cycle === 'monthly' ? '매월' : cycle === 'weekly' ? '매주' : '격주'} ${amt.toLocaleString()}원`,
@@ -7970,7 +7970,7 @@ function saveExpense() {
           name: invName,
           ticker,
           type: cat,
-          region: '국내',
+          region: guessAssetRegion(invName, ticker, null),
           qty: 0,
           price: 0,
           note: memo || '가계부에서 자동 추가',
@@ -11492,6 +11492,44 @@ async function loadAIAssetCoach(total, byType, expected1Y, expected3Y, expected1
   const monthlySaving = settings.savingsGoal || 0;
   const userAge = settings.age || '미입력';
 
+  // ★ 세분류된 현재 자산 배분 (국내주식/미국주식/채권/금/현금) — ETF·미국 자산 정확 인식
+  const bk = getAllocationBuckets();
+  const bkCash = bk.cash + bk.dollar;
+  const bpct = (v) => total > 0 ? ((v / total) * 100) : 0;
+  const currentAlloc = {
+    stockKr: bpct(bk.stockKr), stockUs: bpct(bk.stockUs),
+    bonds: bpct(bk.bonds), gold: bpct(bk.gold), cash: bpct(bkCash),
+  };
+  const detailSummary =
+    `- 국내주식: ${bk.stockKr.toLocaleString()}원 (${currentAlloc.stockKr.toFixed(1)}%)\n` +
+    `- 미국·해외주식: ${bk.stockUs.toLocaleString()}원 (${currentAlloc.stockUs.toFixed(1)}%)\n` +
+    `- 채권: ${bk.bonds.toLocaleString()}원 (${currentAlloc.bonds.toFixed(1)}%)\n` +
+    `- 금: ${bk.gold.toLocaleString()}원 (${currentAlloc.gold.toFixed(1)}%)\n` +
+    `- 현금성(예적금·현금·달러): ${bkCash.toLocaleString()}원 (${currentAlloc.cash.toFixed(1)}%)` +
+    (bk.other > 0 ? `\n- 기타: ${bk.other.toLocaleString()}원 (${bpct(bk.other).toFixed(1)}%)` : '');
+
+  // ★ 사용자가 설정한 목표 자산 배분 (있을 때만)
+  const target = settings.allocation || null;
+  let targetSummary = '(사용자가 목표 배분을 아직 설정하지 않음)';
+  let gapSummary = '';
+  if (target) {
+    targetSummary =
+      `- 국내주식 ${target.stockKr}% / 미국·해외주식 ${target.stockUs}% / ` +
+      `채권 ${target.bonds}% / 금 ${target.gold}% / 현금성 ${target.cash}%`;
+    const gap = (label, cur, tgt) => {
+      const d = cur - tgt;
+      if (Math.abs(d) < 3) return `- ${label}: 목표에 거의 맞음 (현재 ${cur.toFixed(0)}% / 목표 ${tgt}%)`;
+      return `- ${label}: ${d > 0 ? '목표보다 ' + d.toFixed(0) + '%p 많음(초과)' : '목표보다 ' + Math.abs(d).toFixed(0) + '%p 부족'} (현재 ${cur.toFixed(0)}% / 목표 ${tgt}%)`;
+    };
+    gapSummary = [
+      gap('국내주식', currentAlloc.stockKr, target.stockKr),
+      gap('미국·해외주식', currentAlloc.stockUs, target.stockUs),
+      gap('채권', currentAlloc.bonds, target.bonds),
+      gap('금', currentAlloc.gold, target.gold),
+      gap('현금성', currentAlloc.cash, target.cash),
+    ].join('\n');
+  }
+
   const prompt = `한국 개인 투자자를 위한 자산관리 AI 코치입니다. 사용자의 포트폴리오를 종합 분석하고 *맞춤형* 조언을 제공해주세요.
 
 ## 사용자 정보
@@ -11499,9 +11537,14 @@ async function loadAIAssetCoach(total, byType, expected1Y, expected3Y, expected1
 - 월 소득: ${monthlyIncome.toLocaleString()}원
 - 월 저축 가능액: ${monthlySaving.toLocaleString()}원
 
-## 현재 자산 (총 ${total.toLocaleString()}원)
-${typeSummary || '(미등록)'}
+## 현재 자산 — 자산군별 세부 배분 (총 ${total.toLocaleString()}원)
+${detailSummary}
+(참고: 'ETF'로 등록된 자산은 위 분류에서 이미 미국/국내/채권/금으로 나뉘어 반영됨)
 
+## 사용자가 설정한 목표 자산 배분
+${targetSummary}
+
+${target ? `## 목표 대비 현재 차이 (이 차이를 바탕으로 조언할 것)\n${gapSummary}\n` : ''}
 ## 미래 시뮬레이션
 - 1년 후 예상: ${expected1Y.toLocaleString()}원
 - 3년 후: ${expected3Y.toLocaleString()}원
@@ -11512,15 +11555,18 @@ ${typeSummary || '(미등록)'}
 다음 형식으로 분석해주세요. 마크다운 사용. 본인 *실제 자산 데이터* 기반으로:
 
 **📊 포트폴리오 진단**
-(현재 자산 비중의 강점과 약점 1~2문장)
+(현재 자산 비중의 강점과 약점 1~2문장. 미국·해외주식 비중이 이미 있으면 그 사실을 인정하고 언급할 것)
 
 **⚠️ 주의해야 할 점**
 (가장 큰 리스크 또는 약점 1~2문장)
 
 **💎 추천 방향**
-(다음 단계에 무엇을 해야 할지 1~2문장, 구체적 자산군 카테고리)
+(${target ? '위 "목표 대비 현재 차이"를 기준으로, 부족한 자산군은 더 담고 초과한 자산군은 비중을 줄이는 방향으로' : '다음 단계에 무엇을 해야 할지'} 1~2문장, 구체적 자산군 카테고리)
 
-⚠️ 일반론 X, 본인 데이터에 맞춰서. 구체적 종목명 추천 금지 (자산군만). 친근한 톤. 끝에 작은 글씨로 "투자 책임은 본인" 표기.`;
+⚠️ 중요 규칙:
+- 사용자가 이미 보유 중인 자산군(예: 미국·해외주식 비중이 0%가 아니면)을 "새로 시작하라"고 말하지 말 것. 이미 하고 있으면 "유지" 또는 "비중 조정"으로 표현.
+- 목표 배분이 설정돼 있으면 일반론이 아니라 반드시 목표와 현재의 차이에 맞춰 조언.
+- 구체적 종목명 추천 금지 (자산군만). 친근한 톤. 끝에 작은 글씨로 "투자 책임은 본인" 표기.`;
 
   // askGemini 호출을 _aiInFlight에 등록 (탭 이동에도 결과 추적)
   const callPromise = askGemini(prompt, { useCache: true, cacheKey });
@@ -11869,28 +11915,84 @@ function saveAllocation() {
   render();
 }
 
+// ★ 자산명/티커/통화로 국내·해외(미국 등) 자동 추정
+function guessAssetRegion(name, ticker, cur) {
+  const n = (name || '').toLowerCase();
+  const t = (ticker || '').toLowerCase();
+  if ((cur || '').toUpperCase() === 'USD') return '해외';
+  if (/미국|s&p|sp500|s&p500|나스닥|nasdaq|qqq|spy|voo|vti|vt |다우|dow|글로벌|선진국|러셀|russell|미국채|미국배당|반도체|소부장|필라델피아/.test(n)) return '해외';
+  if (/\.ks$|\.kq$/.test(t) || /^\d{6}/.test(t)) return '국내';
+  if (/코스피|코스닥|kospi|kosdaq|국내|한국|코리아/.test(n)) return '국내';
+  if (t.length > 0 && /^[a-z]{1,5}$/.test(t)) return '해외'; // 알파벳 티커 → 미국 상장 추정
+  return '국내';
+}
+
+// ★ 자산 분류 헬퍼 — 자산을 표준 버킷으로 분류
+// 반환값: 'stockKr' | 'stockUs' | 'bonds' | 'gold' | 'cash' | 'dollar' | 'other'
+// ETF / 펀드는 이름·티커·통화 기반으로 미국/국내/채권/금을 자동 판별 (region 명시값 우선)
+function classifyAssetBucket(a) {
+  const type = a.type || '';
+  const name = (a.name || '').toLowerCase();
+  const ticker = (a.ticker || '').toLowerCase();
+  const cur = (a.priceCurrency || '').toUpperCase();
+
+  // 단순 타입
+  if (type === '금') return 'gold';
+  if (type === '채권') return 'bonds';
+  if (type === '예적금' || type === '현금' || type === '청약') return 'cash';
+  if (type === '달러') return 'dollar';
+  if (type === '부동산') return 'other';
+
+  // 주식 / ETF / 펀드 → 미국 vs 국내 + 채권/금 ETF 구분
+  if (type === '주식' || type === 'ETF' || type === '펀드') {
+    // 채권형 ETF/펀드
+    if (/채권|국채|회사채|크레딧|bond|treasury|회사채|tips|만기매칭|종합채/.test(name)) return 'bonds';
+    // 금 ETF/펀드
+    if (/(^|[^가-힣])금([^가-힣]|$)|골드|gold|krx금/.test(name)) return 'gold';
+
+    // 미국/해외 판별
+    const isUsByName = /미국|s&p|sp500|s&p500|나스닥|nasdaq|qqq|spy|voo|vti|vt |다우|dow|미국채|러셀|russell|글로벌|선진국|필라델피아|반도체 ?soxx|미국배당/.test(name);
+    const isUsByTicker = /^(spy|qqq|voo|vti|vt|dia|schd|jepi|jepq|soxx|smh|tlt|ief|gld|iau)$/.test(ticker)
+      || (ticker.length > 0 && /^[a-z]{1,5}$/.test(ticker) && !/\.ks$|\.kq$/.test(ticker));
+    const isUsByCur = cur === 'USD';
+    const isUsByRegion = a.region === '해외' || a.region === '미국';
+    const isKrByRegion = a.region === '국내';
+    const isKrByTicker = /\.ks$|\.kq$/.test(ticker) || /^\d{6}/.test(ticker);
+
+    // region이 '해외'로 명시됐거나, 이름/티커/통화가 미국을 가리키면 미국
+    if (isUsByRegion || isUsByName || isUsByCur || (isUsByTicker && !isKrByTicker)) return 'stockUs';
+    return 'stockKr';
+  }
+  return 'other';
+}
+
+// 자산 1개의 원화 평가액
+function assetKrwValue(a) {
+  const live = liveAssetData[a.id];
+  if (live?.hasLive && live.krwValue) return live.krwValue;
+  return Number(a.qty || 0) * Number(a.price || 0);
+}
+
+// 전체 자산을 표준 버킷별 합계로 — AI 코치 / 자산플랜 공용
+function getAllocationBuckets() {
+  const b = { stockKr: 0, stockUs: 0, bonds: 0, gold: 0, cash: 0, dollar: 0, other: 0 };
+  (assets || []).forEach(a => {
+    b[classifyAssetBucket(a)] += assetKrwValue(a);
+  });
+  return b;
+}
+
 // ★ 자산 플랜 탭
 function renderAssetPlan(total, byType) {
-  // 자산별 비중 계산 (세분화)
-  // 국내주식 / 미국주식 / 채권 / 금 / 예적금/현금 / 기타
-  const stockKr = assets.filter(a => (a.type === '주식' || a.type === '펀드') && a.region !== '해외').reduce((s, a) => {
-    const live = liveAssetData[a.id];
-    return s + (live?.hasLive && live.krwValue ? live.krwValue : Number(a.qty) * Number(a.price));
-  }, 0);
-  const stockUs = assets.filter(a => (a.type === '주식' || a.type === '펀드') && a.region === '해외').reduce((s, a) => {
-    const live = liveAssetData[a.id];
-    return s + (live?.hasLive && live.krwValue ? live.krwValue : Number(a.qty) * Number(a.price));
-  }, 0);
-  const bonds = assets.filter(a => a.type === '채권').reduce((s, a) => {
-    const live = liveAssetData[a.id];
-    return s + (live?.hasLive && live.krwValue ? live.krwValue : Number(a.qty) * Number(a.price));
-  }, 0);
-  const gold = assets.filter(a => a.type === '금').reduce((s, a) => {
-    const live = liveAssetData[a.id];
-    return s + (live?.hasLive && live.krwValue ? live.krwValue : Number(a.qty) * Number(a.price));
-  }, 0);
-  const cash = ((byType['예적금'] || 0) + (byType['현금'] || 0));
-  const other = total - stockKr - stockUs - bonds - gold - cash;
+  // 자산별 비중 계산 (세분화) — ETF 포함, 미국/국내 자동 판별
+  const _bk = getAllocationBuckets();
+  const stockKr = _bk.stockKr;
+  const stockUs = _bk.stockUs;
+  const bonds = _bk.bonds;
+  const gold = _bk.gold;
+  // 현금에는 예적금/현금/청약 + 달러(외화현금) 포함
+  const cash = _bk.cash + _bk.dollar;
+  const other = Math.max(0, total - stockKr - stockUs - bonds - gold - cash);
 
   const pct = (v) => total > 0 ? ((v / total) * 100) : 0;
 
