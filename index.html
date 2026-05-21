@@ -3835,10 +3835,21 @@ function renderMoney() {
       <span style="font-size:14px; font-weight:600;">고정지출 ${budget.fixed.length}개</span>
       <span style="font-size:11px; color:var(--text-tertiary);">${window.fixedExpanded ? '▲' : '▼'}</span>
     </div>
-    <button onclick="openFixedAddModal()" style="border:none; background:transparent; font-size:12px; color:var(--text-info); cursor:pointer; font-family:inherit; font-weight:500;">+ 추가</button>
+    <div style="display:flex; gap:8px;">
+      ${budget.fixed.length > 0 ? `<button onclick="toggleFixedEditMode()" style="border:none; background:transparent; font-size:12px; color:var(--text-secondary); cursor:pointer; font-family:inherit; font-weight:500;">${window._fixedEditMode ? '완료' : '✏️ 편집'}</button>` : ''}
+      <button onclick="openFixedAddModal()" style="border:none; background:transparent; font-size:12px; color:var(--text-info); cursor:pointer; font-family:inherit; font-weight:500;">+ 추가</button>
+    </div>
   </div>`;
 
   if (window.fixedExpanded) {
+    // 편집 모드: 일괄 삭제 바
+    if (window._fixedEditMode) {
+      const selCount = (window._fixedSelected || []).length;
+      html += `<div style="display:flex; gap:6px; margin-bottom:8px; padding:8px; background:var(--bg-secondary); border-radius:8px;">
+        <span style="flex:1; font-size:11px; color:var(--text-secondary); align-self:center;">${selCount}개 선택됨</span>
+        <button onclick="deleteSelectedFixed()" style="border:none; background:${selCount >= 1 ? 'var(--bg-danger)' : 'var(--bg-tertiary)'}; color:${selCount >= 1 ? 'var(--text-danger)' : 'var(--text-tertiary)'}; padding:6px 12px; border-radius:6px; font-size:11px; font-weight:600; cursor:${selCount >= 1 ? 'pointer' : 'default'}; font-family:inherit;">🗑️ 삭제</button>
+      </div>`;
+    }
     html += `<div class="card" style="padding:0 14px; margin-bottom:10px;">${renderFixedRows()}</div>`;
   }
 
@@ -4313,24 +4324,27 @@ function renderFixedRows() {
             ? `매주 ${dowNames[f.dow]} (월 ${occurCount}회)`
             : `격주 ${dowNames[f.dow]} (월 ${occurCount}회)`;
 
+        const fEditing = !!window._fixedEditMode;
+        const fSel = (window._fixedSelected || []).includes(f.id);
         html += `
-        <div class="fixed-row" style="padding-left:20px; background:var(--bg-secondary); border-bottom:0.5px solid var(--border-tertiary);">
+        <div class="fixed-row" style="padding-left:20px; background:${fEditing && fSel ? 'var(--bg-info)' : 'var(--bg-secondary)'}; border-bottom:0.5px solid var(--border-tertiary);">
+          ${fEditing ? `<div onclick="toggleFixedSelect(${f.id})" style="width:22px; height:22px; border-radius:6px; border:2px solid ${fSel ? 'var(--text-info)' : 'var(--border-tertiary)'}; background:${fSel ? 'var(--text-info)' : 'transparent'}; display:flex; align-items:center; justify-content:center; flex-shrink:0; color:white; font-size:13px; cursor:pointer; margin-right:8px;">${fSel ? '✓' : ''}</div>` : `
           <div class="ic" style="background:${f.paid?'var(--bg-success)':'white'}; color:${f.paid?'var(--text-success)':'var(--text-secondary)'}; cursor:pointer;" onclick="toggleFixedPaid(${f.id})">
             <i class="ti ${f.icon}"></i>
-          </div>
-          <div style="flex:1; min-width:0; cursor:pointer;" onclick="toggleFixedPaid(${f.id})">
+          </div>`}
+          <div style="flex:1; min-width:0; cursor:pointer;" onclick="${fEditing ? `toggleFixedSelect(${f.id})` : `toggleFixedPaid(${f.id})`}">
             <div class="nm">${f.name}</div>
             <div class="meta">${cycleLabel}</div>
           </div>
-          <div style="text-align:right; cursor:pointer;" onclick="toggleFixedPaid(${f.id})">
+          <div style="text-align:right; cursor:pointer;" onclick="${fEditing ? `toggleFixedSelect(${f.id})` : `toggleFixedPaid(${f.id})`}">
             <div class="amt ${f.paid?'paid':'upcoming'}">${totalAmt.toLocaleString()}원</div>
             <div class="meta" style="color:${f.paid?'var(--text-success)':'var(--text-tertiary)'};">
               ${f.paid ? '✓ 완료' : occurCount > 1 ? `${f.amt.toLocaleString()}원 × ${occurCount}` : (f.day && f.day < today ? '⚠ 연체' : (f.day ? `${f.day - today}일 후` : ''))}
             </div>
           </div>
-          <button onclick="editFixed(${f.id})" style="border:none; background:transparent; cursor:pointer; padding:6px 4px 6px 8px; color:var(--text-tertiary); font-family:inherit; flex-shrink:0;" aria-label="수정">
+          ${fEditing ? '' : `<button onclick="editFixed(${f.id})" style="border:none; background:transparent; cursor:pointer; padding:6px 4px 6px 8px; color:var(--text-tertiary); font-family:inherit; flex-shrink:0;" aria-label="수정">
             <i class="ti ti-dots-vertical" style="font-size:16px;"></i>
-          </button>
+          </button>`}
         </div>
         `;
       });
@@ -4338,6 +4352,44 @@ function renderFixedRows() {
   });
 
   return html;
+}
+
+// ===== 고정지출 편집 모드 (일괄 삭제) =====
+function toggleFixedEditMode() {
+  window._fixedEditMode = !window._fixedEditMode;
+  window._fixedSelected = [];
+  if (window._fixedEditMode) window.fixedExpanded = true; // 편집 시 펼침
+  renderMoney();
+}
+
+function toggleFixedSelect(id) {
+  if (!window._fixedSelected) window._fixedSelected = [];
+  const i = window._fixedSelected.indexOf(id);
+  if (i >= 0) window._fixedSelected.splice(i, 1);
+  else window._fixedSelected.push(id);
+  renderMoney();
+}
+
+function deleteSelectedFixed() {
+  const sel = window._fixedSelected || [];
+  if (sel.length === 0) return;
+  const names = sel.map(id => budget.fixed.find(f => f.id === id)?.name).filter(Boolean);
+
+  // 자동매수 연결된 게 있는지 확인
+  const hasAuto = sel.some(id => {
+    const f = budget.fixed.find(x => x.id === id);
+    return f && f.autoBuy;
+  });
+  let msg = `선택한 ${sel.length}개 고정지출을 삭제할까요?\n\n${names.join(', ')}`;
+  if (hasAuto) msg += '\n\n⚠️ 자동매수가 포함돼 있어요. 삭제해도 이미 쌓인 자산 기록은 남습니다.';
+
+  if (!confirm(msg)) return;
+
+  budget.fixed = budget.fixed.filter(f => !sel.includes(f.id));
+  window._fixedSelected = [];
+  saveData();
+  showToast(`${sel.length}개 고정지출 삭제됨`);
+  renderMoney();
 }
 
 function editFixed(id) {
@@ -8115,13 +8167,30 @@ function renderAsset() {
         </div>
       </div>`;
     } else {
+      const editing = !!window._assetEditMode;
       html += `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
         <span style="font-size:12px; color:var(--text-secondary);">${assets.length}개 자산</span>
         <div style="display:flex; align-items:center; gap:6px;">
-          <button onclick="manualRefreshAssetPrices()" style="border:none; background:var(--bg-secondary); color:var(--text-secondary); padding:5px 10px; border-radius:999px; font-size:11px; cursor:pointer; font-family:inherit;" title="시세 갱신">🔄 시세</button>
-          <button onclick="openAssetAddModal()" style="border:none; background:var(--bg-info); color:var(--text-info); padding:5px 12px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">+ 추가</button>
+          ${editing ? `
+            <button onclick="toggleAssetEditMode()" style="border:none; background:var(--bg-secondary); color:var(--text-secondary); padding:5px 12px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">완료</button>
+          ` : `
+            <button onclick="toggleAssetEditMode()" style="border:none; background:var(--bg-secondary); color:var(--text-secondary); padding:5px 10px; border-radius:999px; font-size:11px; cursor:pointer; font-family:inherit;">✏️ 편집</button>
+            <button onclick="manualRefreshAssetPrices()" style="border:none; background:var(--bg-secondary); color:var(--text-secondary); padding:5px 10px; border-radius:999px; font-size:11px; cursor:pointer; font-family:inherit;" title="시세 갱신">🔄 시세</button>
+            <button onclick="openAssetAddModal()" style="border:none; background:var(--bg-info); color:var(--text-info); padding:5px 12px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">+ 추가</button>
+          `}
         </div>
       </div>`;
+
+      // 편집 모드: 선택 액션 바
+      if (editing) {
+        const selCount = (window._assetSelected || []).length;
+        html += `<div style="display:flex; gap:6px; margin-bottom:10px; padding:8px; background:var(--bg-secondary); border-radius:8px;">
+          <span style="flex:1; font-size:11px; color:var(--text-secondary); align-self:center;">${selCount}개 선택됨</span>
+          <button onclick="mergeSelectedAssets()" style="border:none; background:${selCount >= 2 ? 'var(--bg-info)' : 'var(--bg-tertiary)'}; color:${selCount >= 2 ? 'var(--text-info)' : 'var(--text-tertiary)'}; padding:6px 12px; border-radius:6px; font-size:11px; font-weight:600; cursor:${selCount >= 2 ? 'pointer' : 'default'}; font-family:inherit;">🔗 합치기</button>
+          <button onclick="deleteSelectedAssets()" style="border:none; background:${selCount >= 1 ? 'var(--bg-danger)' : 'var(--bg-tertiary)'}; color:${selCount >= 1 ? 'var(--text-danger)' : 'var(--text-tertiary)'}; padding:6px 12px; border-radius:6px; font-size:11px; font-weight:600; cursor:${selCount >= 1 ? 'pointer' : 'default'}; font-family:inherit;">🗑️ 삭제</button>
+        </div>`;
+      }
+
       assets.forEach(a => {
         const live = liveAssetData[a.id];
         const v = live?.hasLive && live.krwValue ? live.krwValue : Number(a.qty) * Number(a.price);
@@ -8168,7 +8237,10 @@ function renderAsset() {
           extraInfo += `<span style="font-size:9px; color:var(--text-success);">💱 환전우대 ${a.fxDiscount}%</span>`;
         }
 
-        html += `<div class="hold-row" onclick="editAsset(${a.id})">
+        const editing = !!window._assetEditMode;
+        const isSel = (window._assetSelected || []).includes(a.id);
+        html += `<div class="hold-row" onclick="${editing ? `toggleAssetSelect(${a.id})` : `editAsset(${a.id})`}" style="${editing && isSel ? 'background:var(--bg-info);' : ''}">
+          ${editing ? `<div style="width:22px; height:22px; border-radius:6px; border:2px solid ${isSel ? 'var(--text-info)' : 'var(--border-tertiary)'}; background:${isSel ? 'var(--text-info)' : 'transparent'}; display:flex; align-items:center; justify-content:center; flex-shrink:0; color:white; font-size:13px;">${isSel ? '✓' : ''}</div>` : ''}
           <div style="width:38px; height:38px; border-radius:8px; background:var(--bg-secondary); color:var(--text-primary); display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600;">${badge}</div>
           <div style="flex:1; min-width:0;">
             <div style="font-size:14px; font-weight:500;">${a.name}${liveBadge}</div>
@@ -12928,6 +13000,114 @@ function updateAsset(id) {
   saveData();
   showToast('저장됨');
   closeModal();
+  renderAsset();
+}
+
+// ===== 자산 편집 모드 (일괄 삭제 / 합치기) =====
+function toggleAssetEditMode() {
+  window._assetEditMode = !window._assetEditMode;
+  window._assetSelected = [];
+  renderAsset();
+}
+
+function toggleAssetSelect(id) {
+  if (!window._assetSelected) window._assetSelected = [];
+  const i = window._assetSelected.indexOf(id);
+  if (i >= 0) window._assetSelected.splice(i, 1);
+  else window._assetSelected.push(id);
+  renderAsset();
+}
+
+function deleteSelectedAssets() {
+  const sel = window._assetSelected || [];
+  if (sel.length === 0) return;
+  const names = sel.map(id => assets.find(a => a.id === id)?.name).filter(Boolean);
+  if (!confirm(`선택한 ${sel.length}개 자산을 삭제할까요?\n\n${names.join(', ')}\n\n⚠️ 연결된 자동매수도 함께 정리됩니다.`)) return;
+
+  sel.forEach(id => {
+    const asset = assets.find(a => a.id === id);
+    if (!asset) return;
+    // 연결된 자동매수 고정지출 제거
+    if (budget.fixed) {
+      budget.fixed = budget.fixed.filter(f =>
+        !(f.autoBuy && f.assetInfo && f.assetInfo.name === asset.name && f.assetInfo.type === asset.type)
+      );
+    }
+  });
+  assets = assets.filter(a => !sel.includes(a.id));
+
+  window._assetSelected = [];
+  saveData();
+  showToast(`${sel.length}개 자산 삭제됨`);
+  renderAsset();
+}
+
+function mergeSelectedAssets() {
+  const sel = window._assetSelected || [];
+  if (sel.length < 2) {
+    showToast('합칠 자산을 2개 이상 선택해주세요');
+    return;
+  }
+  const targets = sel.map(id => assets.find(a => a.id === id)).filter(Boolean);
+
+  // 종류가 다르면 합치기 위험 → 경고
+  const types = [...new Set(targets.map(a => a.type))];
+  if (types.length > 1) {
+    showToast('종류가 다른 자산은 합칠 수 없어요 (' + types.join(', ') + ')');
+    return;
+  }
+
+  const names = targets.map(a => a.name);
+  // 기준 자산 = 첫 번째 (이름·티커 유지)
+  const base = targets[0];
+  const rest = targets.slice(1);
+
+  if (!confirm(`${targets.length}개 자산을 "${base.name}" 하나로 합칠까요?\n\n${names.join(' + ')}\n\n→ 모든 매수 기록이 합산되고, 나머지는 삭제됩니다.`)) return;
+
+  // 모든 자산의 lot을 base로 모음
+  if (!base.lots) base.lots = [];
+  // base에 lot이 없으면 기존 수량을 lot으로 변환 (보존)
+  if (base.lots.length === 0 && Number(base.qty) > 0) {
+    base.lots.push({
+      id: Date.now() + Math.random(),
+      source: '기존 보유분', qty: Number(base.qty), price: Number(base.price),
+      date: todayKey(), autoBuy: false, note: '합치기 전 보유분',
+    });
+  }
+
+  rest.forEach(other => {
+    if (other.lots && other.lots.length > 0) {
+      other.lots.forEach(lot => base.lots.push({ ...lot, id: Date.now() + Math.random() }));
+    } else if (Number(other.qty) > 0) {
+      base.lots.push({
+        id: Date.now() + Math.random(),
+        source: `${other.name} (합침)`, qty: Number(other.qty), price: Number(other.price),
+        date: todayKey(), autoBuy: false, note: '합치기로 통합됨',
+      });
+    }
+    // 티커 없으면 채워줌
+    if (!base.ticker && other.ticker) base.ticker = other.ticker;
+    // 연결된 자동매수를 base로 재연결
+    if (budget.fixed) {
+      budget.fixed.forEach(f => {
+        if (f.autoBuy && f.assetInfo && f.assetInfo.name === other.name && f.assetInfo.type === other.type) {
+          f.assetInfo.name = base.name;
+          f.assetInfo.ticker = base.ticker || f.assetInfo.ticker;
+        }
+      });
+    }
+  });
+
+  recalcAssetFromLots(base);
+
+  // 나머지 자산 제거
+  const restIds = rest.map(a => a.id);
+  assets = assets.filter(a => !restIds.includes(a.id));
+
+  window._assetSelected = [];
+  window._assetEditMode = false;
+  saveData();
+  showToast(`${targets.length}개 자산이 "${base.name}"으로 합쳐졌어요`);
   renderAsset();
 }
 
