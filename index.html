@@ -6367,6 +6367,24 @@ async function processAutoBuy(fixed) {
   const cycle = fixed.cycle || 'monthly';
   console.log(`🤖 ${fixed.name} 자동매수 점검 (주기:${cycle}, day:${fixed.day}, dow:${fixed.dow})`);
 
+  // 🔧 자동 복구: 연결된 자산이 없거나, 자산은 있는데 이 자동매수의 lot이 하나도 없는데
+  //    lastBuyDate만 과거로 남아 있으면 → 자산이 삭제/리셋된 상황. lastBuyDate를 리셋해
+  //    시작일부터 회차를 다시 채운다 (자산 삭제 후 0원으로 남는 문제 복구)
+  if (fixed.lastBuyDate) {
+    const linkedAsset = findMatchingAsset({
+      name: fixed.assetInfo.name,
+      type: fixed.assetInfo.type,
+      ticker: fixed.assetInfo.ticker,
+    });
+    const hasMyLots = linkedAsset && (linkedAsset.lots || []).some(l =>
+      l.autoBuy && (l.fixedId != null ? l.fixedId === fixed.id : l.source === `🤖 ${fixed.name}`)
+    );
+    if (!linkedAsset || !hasMyLots) {
+      console.log(`🔧 ${fixed.name} - 연결 자산/회차 없음 → lastBuyDate 리셋(시작일부터 재계산)`);
+      fixed.lastBuyDate = null;
+    }
+  }
+
   // 이번 달의 발생일 계산 - createdAt 이후만!
   const year = now.getFullYear();
   const month = now.getMonth();
@@ -13707,6 +13725,38 @@ function deleteSelectedAssets() {
   const targetSet = new Set(targetAssets);
   assets = assets.filter(a => !targetSet.has(a));
 
+  // 🔧 삭제된 자산에 연결된 자동매수 찾기 → 시작일부터 다시 채울지 물어보기
+  const orphanedAutos = (budget.fixed || []).filter(f =>
+    f.autoBuy && f.assetInfo &&
+    targetAssets.some(a => a.name === f.assetInfo.name && a.type === f.assetInfo.type)
+  );
+  if (orphanedAutos.length > 0) {
+    const autoNames = orphanedAutos.map(f => f.name).join(', ');
+    const refill = confirm(
+      `삭제한 자산에 자동매수 ${orphanedAutos.length}개가 연결돼 있어요.\n(${autoNames})\n\n` +
+      `✅ 확인: 자동매수를 시작일부터 다시 계산해 자산을 새로 채웁니다 (권장)\n` +
+      `❌ 취소: 자동매수는 다음 회차부터만 추가 (과거분은 0)`
+    );
+    orphanedAutos.forEach(f => {
+      if (refill) {
+        // 시작일부터 전부 재계산하도록 추적 상태 리셋
+        f.lastBuyDate = null;
+      } else {
+        // 다음 회차부터만 → lastBuyDate를 오늘로
+        f.lastBuyDate = new Date().toISOString();
+      }
+    });
+    if (refill) {
+      showToast('🔄 자동매수 재계산 중...');
+      saveData(true);
+      window._assetSelected = [];
+      Promise.all(orphanedAutos.map(f => processAutoBuy(f)))
+        .then(() => { renderAsset(); showToast('✅ 자동매수 자산 다시 채워짐'); })
+        .catch(() => renderAsset());
+      return;
+    }
+  }
+
   window._assetSelected = [];
   saveData(true);
   showToast(`${targetAssets.length}개 자산 삭제됨`);
@@ -13886,12 +13936,24 @@ function deleteAsset(id) {
   assets = assets.filter(x => x.id !== id);
 
   // 🔧 연결된 자동매수가 있으면 별도로 물어봄 (자산만 지우고 자동매수는 유지 가능)
+  let refillAutos = [];
   if (linkedFixed.length > 0) {
     const alsoDeleteAuto = confirm(`연결된 자동매수가 ${linkedFixed.length}개 있어요.\n\n⚠️ 확인: 자동매수 설정도 함께 삭제\n❌ 취소: 자동매수는 그대로 두기 (자산만 삭제)`);
     if (alsoDeleteAuto) {
       budget.fixed = budget.fixed.filter(f =>
         !(f.autoBuy && f.assetInfo && f.assetInfo.name === asset.name && f.assetInfo.type === asset.type)
       );
+    } else {
+      // 자동매수 유지 → 자산이 사라졌으니 시작일부터 다시 채울지 물어봄
+      const refill = confirm(
+        `자동매수를 시작일부터 다시 계산해 자산을 새로 채울까요?\n\n` +
+        `✅ 확인: 과거 회차를 모두 다시 채움 (권장 — 안 하면 0원으로 남아요)\n` +
+        `❌ 취소: 다음 회차부터만 추가`
+      );
+      linkedFixed.forEach(f => {
+        f.lastBuyDate = refill ? null : new Date().toISOString();
+      });
+      if (refill) refillAutos = linkedFixed.slice();
     }
   }
 
@@ -13903,6 +13965,16 @@ function deleteAsset(id) {
 
   saveData();
   closeModal();
+
+  // 🔧 시작일부터 재계산하기로 한 자동매수 처리
+  if (refillAutos.length > 0) {
+    showToast('🔄 자동매수 재계산 중...');
+    Promise.all(refillAutos.map(f => processAutoBuy(f)))
+      .then(() => { renderAsset(); showToast('✅ 자동매수 자산 다시 채워짐'); })
+      .catch(() => renderAsset());
+    return;
+  }
+
   showToast(`삭제됨${linkedFixed.length + linkedExpenses.length > 0 ? ` (연결 항목 ${linkedFixed.length + linkedExpenses.length}개 포함)` : ''}`);
   renderAsset();
 }
