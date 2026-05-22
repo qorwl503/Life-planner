@@ -6087,6 +6087,95 @@ function collapseLots(assetId) {
   setTimeout(() => editAsset(assetId), 50);
 }
 
+// 🔧 자동매수 회차를 정수 수량으로 보정 (한국 주식·ETF는 정수만 거래)
+// 각 회차의 1주당 단가는 그대로, 그 단가로 살 수 있는 정수 주수로 재계산.
+async function fixAutoLotsToInteger(assetId) {
+  const asset = assets.find(a => a.id === assetId);
+  if (!asset || !asset.lots) return;
+
+  const autoLots = asset.lots.filter(l => l.autoBuy);
+  if (autoLots.length === 0) {
+    showToast('자동매수 회차가 없어요');
+    return;
+  }
+
+  // 연결된 자동매수 설정에서 회차 매수 한도(amt) 찾기
+  const linkedFixed = (budget.fixed || []).find(f =>
+    f.autoBuy && f.assetInfo && f.assetInfo.name === asset.name && f.assetInfo.type === asset.type
+  );
+
+  showToast('🔄 회차별 그날 시세로 보정 중...');
+
+  // 🔧 각 회차 날짜의 실제 종가를 받아 정확히 복원
+  let histMap = null, fxHistMap = null, histIsUSD = false, fxSpreadMul = 1;
+  if (asset.ticker && asset.type !== '금') {
+    try {
+      let t = asset.ticker.trim();
+      if (/^\d{6}$/.test(t)) t = t + '.KS';
+      histMap = await fetchYahooHistorical(t);
+      const live = liveAssetData[asset.id];
+      if (live?.currency === 'USD' || asset.priceCurrency === 'USD') {
+        histIsUSD = true;
+        fxSpreadMul = 1 + 0.0175 * (1 - (Number(asset.fxDiscount) || 0) / 100);
+        fxHistMap = await fetchYahooHistorical('KRW=X');
+      }
+    } catch (e) { console.warn('보정: 과거 종가 로드 실패', e); }
+  }
+
+  let changed = 0;
+  autoLots.forEach(lot => {
+    const q = Number(lot.qty) || 0;
+    const p = Number(lot.price) || 0;
+    if (p <= 0) return;
+
+    // 그 회차에 쓴 매수 한도 = 자동매수 설정 금액(있으면) 아니면 기존 수량×단가
+    const budgetAmt = (linkedFixed && Number(linkedFixed.amt) > 0)
+      ? Number(linkedFixed.amt)
+      : q * p;
+
+    // 🔧 회차 날짜의 실제 그날 종가 (원화)
+    let realPrice = p; // 폴백: lot에 저장된 단가
+    const histClose = lot.date ? getHistPriceOn(histMap, lot.date) : null;
+    if (histClose != null) {
+      if (histIsUSD) {
+        const histFx = lot.date ? getHistPriceOn(fxHistMap, lot.date) : null;
+        const rate = histFx != null ? histFx * fxSpreadMul : (lot.buyRate || 1380);
+        realPrice = histClose * rate;
+        lot.buyRate = Math.round(rate);
+      } else {
+        realPrice = histClose;
+      }
+    }
+
+    // 그날 종가로 살 수 있는 정수 주수
+    const intQty = Math.floor(budgetAmt / realPrice);
+    if (intQty <= 0) return;
+
+    const newQty = intQty;
+    const newPrice = Math.round(realPrice);
+    if (newQty === q && newPrice === p) return; // 변화 없으면 스킵
+
+    lot.qty = newQty;
+    lot.price = newPrice;
+    lot.note = (lot.note || '').replace(/ ?\(정수 보정\)/g, '') + ' (정수 보정)';
+    changed++;
+  });
+
+  if (changed === 0) {
+    showToast('보정할 회차가 없어요 (이미 정확함)');
+    return;
+  }
+
+  // 연결된 자동매수 설정도 정수 모드로 전환 (앞으로의 회차도 정수)
+  if (linkedFixed) linkedFixed.fractional = false;
+
+  recalcAssetFromLots(asset);
+  saveData();
+  showToast(`🔢 ${changed}개 회차 보정 완료 (총 ${Number(asset.qty).toFixed(2).replace(/\.?0+$/, '')}주)`);
+  closeModal();
+  setTimeout(() => editAsset(assetId), 60);
+}
+
 // 🔧 자동매수 회차별 상세 펼치기/접기 (모달 안 닫고 토글만)
 function toggleAutoLotDetail(assetId) {
   const detail = document.getElementById(`auto-lot-detail-${assetId}`);
@@ -6154,6 +6243,24 @@ async function recalcAutoBuy(assetId, fixedId) {
     return;
   }
 
+  // 🔧 회차별 정확한 매입가를 위해 과거 종가 + 과거 환율 맵 로드
+  let histMap = null, fxHistMap = null, histIsUSD = false, fxSpreadMul = 1;
+  if (asset.ticker && asset.type !== '금') {
+    try {
+      let histTicker = asset.ticker.trim();
+      if (/^\d{6}$/.test(histTicker)) histTicker = histTicker + '.KS';
+      histMap = await fetchYahooHistorical(histTicker);
+      if (live?.currency === 'USD') {
+        histIsUSD = true;
+        const fxDiscount = Number(asset.fxDiscount) || 0;
+        fxSpreadMul = 1 + 0.0175 * (1 - fxDiscount / 100);
+        fxHistMap = await fetchYahooHistorical('KRW=X');
+      }
+    } catch (e) {
+      console.warn('재계산: 과거 종가 로드 실패', e);
+    }
+  }
+
   const now = new Date();
   const cycle = fixed.cycle || 'monthly';
 
@@ -6198,23 +6305,44 @@ async function recalcAutoBuy(assetId, fixedId) {
   }
 
   // 모든 발생일에 대해 lot 추가
+  // 🔧 소수점 매매는 이 자동매수의 fractional === true 일 때만
+  const allowFractional = fixed.fractional === true;
   occurDates.forEach((d) => {
-    let newQty = fixed.amt / currPrice;
-    // 소수점 매매 X → 정수만 매수
-    if (!fixed.fractional) {
+    const dStr = dateKey(d.getFullYear(), d.getMonth(), d.getDate());
+
+    // 🔧 그 회차 날짜의 실제 종가를 매입가로 (없으면 오늘 시세 폴백)
+    let lotPrice = currPrice;
+    let lotBuyRate = null;
+    const histClose = getHistPriceOn(histMap, dStr);
+    if (histClose != null) {
+      if (histIsUSD) {
+        const histFx = getHistPriceOn(fxHistMap, dStr);
+        lotBuyRate = histFx != null ? histFx * fxSpreadMul : (live?.krwPrice && live?.currentPrice ? live.krwPrice / live.currentPrice : 1380);
+        lotPrice = histClose * lotBuyRate;
+      } else {
+        lotPrice = histClose;
+      }
+    }
+
+    let newQty = fixed.amt / lotPrice;
+    // 🔧 소수점 매매는 fractional===true 일 때만, 한국 주식·ETF는 무조건 정수
+    if (!allowFractional) {
       newQty = Math.floor(newQty); // 내림 (잔돈 남김)
+    } else {
+      newQty = parseFloat(newQty.toFixed(4));
     }
     if (newQty <= 0) return; // 한 주도 못 사는 경우 스킵
 
     addAssetLot(asset, {
       source: `🤖 ${fixed.name}`,
       qty: newQty,
-      price: currPrice,
-      date: dateKey(d.getFullYear(), d.getMonth(), d.getDate()),
+      price: Math.round(lotPrice),
+      date: dStr,
       fxDiscount: asset.fxDiscount || null,
+      buyRate: lotBuyRate ? Math.round(lotBuyRate) : null,
       autoBuy: true,
       fixedId: fixed.id,
-      note: fixed.fractional ? '자동매수 (소수점)' : '자동매수 (정수)',
+      note: allowFractional ? '자동매수 (소수점)' : '자동매수 (정수)',
     });
   });
 
@@ -6379,6 +6507,8 @@ async function processAutoBuy(fixed) {
 
   const skippedDates = []; // 🔧 시세 조회 실패로 건너뛴 회차 (lastBuyDate 갱신 제외용)
   const addedDates = [];   // 🔧 실제로 lot이 추가된 회차 (토스트 카운트용)
+  // 🔧 정수 매수 시 매수하고 남은 잔돈 — 다음 회차로 이월 (증권사 예수금처럼)
+  let carryOver = Number(fixed._carryOver) || 0;
   newDates.forEach(d => {
     // 🔧 toISOString()은 UTC 기준이라 한국(UTC+9)에서 하루 밀림 → 로컬 기준으로 변환
     const dateStr = dateKey(d.getFullYear(), d.getMonth(), d.getDate());
@@ -6438,9 +6568,13 @@ async function processAutoBuy(fixed) {
 
       // 시세 알면 정확한 수량 계산
       let newQty = fixed.amt / lotPrice;
-      // 소수점 매매 X → 정수만 매수
-      if (!fixed.fractional) {
+      // 🔧 소수점 매매는 이 자동매수의 fractional === true 일 때만.
+      //    그 외(정수 매매 설정)엔 무조건 내림 → 정수 주수 (잔돈은 남김)
+      const allowFractional = fixed.fractional === true;
+      if (!allowFractional) {
         newQty = Math.floor(newQty);
+      } else {
+        newQty = parseFloat(newQty.toFixed(4));
       }
       if (newQty <= 0) {
         console.warn(`⚠️ ${asset.name} 정수 매수 불가 (한도 ${fixed.amt} / 시세 ${lotPrice})`);
@@ -13109,6 +13243,22 @@ function editAsset(id) {
                     ${firstDate}${lastDate && lastDate !== firstDate ? ` ~ ${lastDate}` : ''} · ${autoQty.toFixed(4).replace(/\.?0+$/, '')}주 · 평균 ${Math.round(autoAvg).toLocaleString()}원
                   </div>
                   <button onclick="toggleAutoLotDetail(${a.id})" style="margin-top:6px; border:none; background:transparent; color:#5E5CE6; font-size:9px; cursor:pointer; font-family:inherit; padding:0; text-decoration:underline;">회차별 상세 보기 ▾</button>
+                  ${(() => {
+                    // 연결된 자동매수가 '정수 매매'인데 소수점 회차가 있으면 보정 버튼 표시
+                    const lf = (budget.fixed || []).find(f =>
+                      f.autoBuy && f.assetInfo && f.assetInfo.name === a.name && f.assetInfo.type === a.type
+                    );
+                    const isIntegerMode = lf ? lf.fractional !== true : true;
+                    const hasFractionalLot = autoLots.some(l => !Number.isInteger(Number(l.qty)));
+                    if (!isIntegerMode || !hasFractionalLot) return '';
+                    return `
+                    <div style="margin-top:8px; padding:8px; background:var(--bg-warning); border-radius:6px;">
+                      <div style="font-size:9px; color:var(--text-warning); line-height:1.5; margin-bottom:6px;">
+                        ⚠️ 정수 매매로 설정했는데 소수점 수량(예: 12.30주)으로 쌓인 회차가 있어요. 각 회차를 <b>그날 실제 종가</b> 기준으로 다시 계산해 정수 주수로 보정해요.
+                      </div>
+                      <button onclick="fixAutoLotsToInteger(${a.id})" style="width:100%; border:none; background:var(--text-warning); color:white; padding:7px; border-radius:6px; font-size:10px; font-weight:700; cursor:pointer; font-family:inherit;">🔢 자동매수 회차 정수로 보정</button>
+                    </div>`;
+                  })()}
                   <div id="auto-lot-detail-${a.id}" style="display:none; margin-top:6px; padding-top:6px; border-top:0.5px dashed rgba(94,92,230,0.25);">
                     ${autoLots.slice().sort((x, y) => (y.date || '').localeCompare(x.date || '')).map((lot, idx) => `
                       <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 0; font-size:9px;">
