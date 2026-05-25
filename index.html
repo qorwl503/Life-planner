@@ -12866,6 +12866,50 @@ function getAllocationBuckets() {
   return b;
 }
 
+// 🔧 상세 자산군 분류 — 자산배분 탭 '현재 구성'을 잘게 쪼개 보여주기 위한 라벨
+// classifyAssetBucket(5버킷)보다 세분화: 주식/ETF/펀드/채권/금/현금을 각각 구분
+function detailAssetGroup(a) {
+  const type = a.type || '';
+  const name = (a.name || '').toLowerCase();
+  const bucket = classifyAssetBucket(a); // 미국/국내 판별은 기존 로직 재사용
+
+  if (type === '채권') return { key: 'bondDirect', label: '채권 (직접)', color: '#9B7BC9' };
+  if (type === '금') return { key: 'gold', label: '금', color: '#E2A04A' };
+  if (type === '달러') return { key: 'dollar', label: '달러/외화', color: '#6BB6C9' };
+  if (type === '예적금') return { key: 'savings', label: '예적금', color: '#7BC97B' };
+  if (type === '청약') return { key: 'subscription', label: '청약', color: '#5BA85B' };
+  if (type === '현금') return { key: 'cash', label: '현금', color: '#A0D8A0' };
+  if (type === '부동산') return { key: 'realestate', label: '부동산', color: '#C99B7B' };
+
+  // 주식/ETF/펀드 — bucket으로 채권형·금형 먼저 거르고, 나머지는 타입+지역
+  if (bucket === 'bonds') return { key: 'bondFund', label: '채권형 ETF·펀드', color: '#9B7BC9' };
+  if (bucket === 'gold') return { key: 'goldFund', label: '금 ETF·펀드', color: '#E2A04A' };
+
+  const isUs = bucket === 'stockUs';
+  if (type === 'ETF') return isUs
+    ? { key: 'etfUs', label: '미국 ETF', color: '#5D7CE0' }
+    : { key: 'etfKr', label: '국내 ETF', color: '#4A90E2' };
+  if (type === '펀드') return isUs
+    ? { key: 'fundUs', label: '해외 펀드', color: '#7B8FE0' }
+    : { key: 'fundKr', label: '국내 펀드', color: '#6BA0E2' };
+  // 개별 주식
+  return isUs
+    ? { key: 'stockUs', label: '미국 주식', color: '#5D7CE0' }
+    : { key: 'stockKr', label: '국내 주식', color: '#4A90E2' };
+}
+
+// 현재 자산을 상세 자산군별 합계로
+function getDetailGroups() {
+  const map = {};
+  (assets || []).forEach(a => {
+    const g = detailAssetGroup(a);
+    if (!map[g.key]) map[g.key] = { ...g, value: 0, count: 0 };
+    map[g.key].value += assetKrwValue(a);
+    map[g.key].count += 1;
+  });
+  return Object.values(map).sort((x, y) => y.value - x.value);
+}
+
 // ★ 자산 플랜 탭
 function renderAssetPlan(total, byType) {
   // 자산별 비중 계산 (세분화) — ETF 포함, 미국/국내 자동 판별
@@ -12932,6 +12976,41 @@ function renderAssetPlan(total, byType) {
       ${planRow('금', pct(gold), alloc.gold, total)}
       ${planRow('현금/예적금', pct(cash), alloc.cash, total)}
     </div>
+
+    ${(() => {
+      // 🔧 현재 자산 상세 구성 — 주식/ETF/펀드/채권/금 등을 잘게 쪼개 표시
+      const groups = getDetailGroups();
+      if (groups.length === 0 || total <= 0) return '';
+      let bar = '<div style="display:flex; height:12px; border-radius:6px; overflow:hidden; margin:10px 0 10px;">';
+      groups.forEach(g => {
+        const w = (g.value / total) * 100;
+        if (w > 0) bar += `<div style="width:${w}%; background:${g.color};" title="${g.label}"></div>`;
+      });
+      bar += '</div>';
+      const rows = groups.map(g => {
+        const p = (g.value / total) * 100;
+        return `<div style="display:flex; align-items:center; justify-content:space-between; padding:7px 0; border-bottom:0.5px solid var(--border-tertiary);">
+          <span style="font-size:12px; display:flex; align-items:center; gap:6px;">
+            <span style="display:inline-block; width:9px; height:9px; border-radius:2px; background:${g.color};"></span>
+            ${g.label} <span style="font-size:10px; color:var(--text-tertiary);">${g.count}개</span>
+          </span>
+          <span style="font-size:12px; font-weight:600;">
+            ${Math.round(g.value).toLocaleString()}원
+            <span style="font-size:10px; color:var(--text-tertiary); font-weight:500; margin-left:4px;">${p.toFixed(1)}%</span>
+          </span>
+        </div>`;
+      }).join('');
+      return `
+        <div style="font-size:14px; font-weight:600; margin: 18px 0 8px;">현재 자산 상세 구성</div>
+        <div class="card" style="padding:12px 14px 4px; margin-bottom:14px;">
+          <div style="font-size:10px; color:var(--text-tertiary);">${groups.length}개 자산군 · 총 ${Math.round(total).toLocaleString()}원</div>
+          ${bar}
+          ${rows}
+          <div style="font-size:9px; color:var(--text-tertiary); padding:8px 0 6px; line-height:1.5;">
+            ※ ETF·펀드는 이름·티커로 미국/국내·채권형·금형을 자동 분류해요. 분류가 어긋나면 자산명에 '미국'·'채권' 같은 키워드를 넣거나 티커를 정확히 입력하세요.
+          </div>
+        </div>`;
+    })()}
 
     <div style="font-size:14px; font-weight:600; margin: 18px 0 8px;">💡 이번 달 AI 맞춤 액션</div>
     <div id="ai-action-advice">
