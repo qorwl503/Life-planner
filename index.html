@@ -1410,6 +1410,7 @@ function showToast(msg) {
 
 function nav(tab) {
   currentTab = tab;
+  window._assetDetailId = null; // 자산 상세 뷰 초기화
   document.querySelectorAll('.tab-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === tab);
   });
@@ -8714,12 +8715,15 @@ function saveTodo(editId) {
 
 // ====== 자산 ======
 
-// 🔧 종목 상세 카드 펼치기/접기
-function toggleAssetExpand(assetId) {
-  if (!window._expandedAssets) window._expandedAssets = [];
-  const i = window._expandedAssets.indexOf(assetId);
-  if (i >= 0) window._expandedAssets.splice(i, 1);
-  else window._expandedAssets.push(assetId);
+// 🔧 종목 상세 — 전체 화면 뷰 (새 탭처럼)
+function openAssetDetail(assetId) {
+  window._assetDetailId = assetId;
+  renderAsset();
+  // 상단으로 스크롤
+  setTimeout(() => { if (screen) screen.scrollTop = 0; }, 30);
+}
+function closeAssetDetail() {
+  window._assetDetailId = null;
   renderAsset();
 }
 
@@ -8809,13 +8813,42 @@ function buildAssetDetailCard(a, live) {
     }
   }
 
+  // 평가금액 / 손익 헤더
+  const v = live?.hasLive && live.krwValue ? live.krwValue : Number(a.qty) * Number(a.price);
+  let headProfit = '';
+  if (isStock && live?.hasLive) {
+    const qty = Number(a.qty) || 0;
+    const totalBuy = (live.krwAvgPrice || 0) * qty;
+    const profit = v - totalBuy;
+    const pct = totalBuy > 0 ? (profit / totalBuy * 100) : 0;
+    const pColor = profit >= 0 ? 'var(--text-danger)' : 'var(--text-info)';
+    headProfit = `<div style="font-size:13px; font-weight:600; color:${pColor}; margin-top:2px;">${profit >= 0 ? '+' : ''}${Math.round(profit).toLocaleString()}원 (${profit >= 0 ? '+' : ''}${pct.toFixed(2)}%)</div>`;
+  }
+
   return `
-    <div style="margin:-4px 0 8px 0; padding:13px; background:var(--bg-secondary); border-radius:10px;">
-      ${body}
-      ${holdInfo ? `<div style="font-size:10px; color:var(--text-tertiary); margin-top:10px; padding-top:8px; border-top:0.5px solid var(--border-tertiary);">${holdInfo}</div>` : ''}
-      <div style="display:flex; gap:6px; margin-top:10px;">
-        <button onclick="event.stopPropagation(); editAsset(${a.id})" style="flex:1; border:none; background:var(--bg-tertiary); color:var(--text-secondary); padding:8px; border-radius:7px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">✏️ 수정</button>
-        ${a.ticker ? `<button onclick="event.stopPropagation(); manualRefreshAssetPrices()" style="flex:1; border:none; background:var(--bg-tertiary); color:var(--text-secondary); padding:8px; border-radius:7px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">🔄 시세 갱신</button>` : ''}
+    <div style="padding-bottom:20px;">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+        <button onclick="closeAssetDetail()" style="border:none; background:var(--bg-secondary); width:34px; height:34px; border-radius:8px; font-size:16px; cursor:pointer; font-family:inherit;">←</button>
+        <div style="flex:1; min-width:0;">
+          <div style="font-size:16px; font-weight:700;">${a.name}</div>
+          <div style="font-size:11px; color:var(--text-tertiary);">${a.type}${a.ticker ? ' · ' + a.ticker : ''}</div>
+        </div>
+      </div>
+
+      <div style="padding:16px; background:var(--bg-secondary); border-radius:12px; margin-bottom:12px;">
+        <div style="font-size:11px; color:var(--text-tertiary);">총 평가금액</div>
+        <div style="font-size:24px; font-weight:800; margin-top:2px;">${Math.round(v).toLocaleString()}원</div>
+        ${headProfit}
+      </div>
+
+      <div style="padding:14px; background:var(--bg-secondary); border-radius:12px;">
+        ${body}
+        ${holdInfo ? `<div style="font-size:10px; color:var(--text-tertiary); margin-top:12px; padding-top:10px; border-top:0.5px solid var(--border-tertiary);">${holdInfo}</div>` : ''}
+      </div>
+
+      <div style="display:flex; gap:8px; margin-top:12px;">
+        <button onclick="editAsset(${a.id})" style="flex:1; border:none; background:var(--accent-primary, #5E5CE6); color:white; padding:12px; border-radius:10px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">✏️ 수정</button>
+        ${a.ticker ? `<button onclick="manualRefreshAssetPrices()" style="flex:1; border:none; background:var(--bg-tertiary); color:var(--text-secondary); padding:12px; border-radius:10px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit;">🔄 시세 갱신</button>` : ''}
       </div>
     </div>`;
 }
@@ -8962,6 +8995,15 @@ function renderAsset() {
   html += `</div>`;
 
   if (assetTab === 'holdings') {
+    // 🔧 종목 상세 뷰 (특정 종목 선택 시 목록 대신 전체화면 상세)
+    const detailAsset = window._assetDetailId
+      ? assets.find(a => a.id === window._assetDetailId)
+      : null;
+    if (detailAsset) {
+      html += buildAssetDetailCard(detailAsset, liveAssetData[detailAsset.id]);
+      screen.innerHTML = html;
+      return;
+    }
     if (assets.length === 0) {
       html += `<div class="empty-state"><i class="ti ti-chart-pie"></i>등록된 자산이 없어요<br><span style="font-size:11px; opacity:0.7;">+ 버튼으로 자산을 추가하세요</span>
         <div style="margin-top:14px;">
@@ -9026,7 +9068,41 @@ function renderAsset() {
         </div>`;
       }
 
-      assets.forEach((a, assetIdx) => {
+      // 🔧 자산을 종류별로 그룹핑해서 표시 (청약·주식·ETF 섞이지 않게)
+      const GROUP_ORDER = ['주식','ETF','펀드','채권','금','달러','예적금','청약','현금','부동산'];
+      const GROUP_ICON = { '주식':'📈','ETF':'📊','펀드':'🧺','채권':'📜','금':'🪙','달러':'💵','예적금':'🏦','청약':'🏠','현금':'💴','부동산':'🏢' };
+      // 원본 인덱스 보존하며 그룹 구성
+      const groups = {};
+      assets.forEach((a, idx) => {
+        const t = a.type || '기타';
+        if (!groups[t]) groups[t] = [];
+        groups[t].push({ a, idx });
+      });
+      const groupKeys = Object.keys(groups).sort((x, y) => {
+        const ix = GROUP_ORDER.indexOf(x), iy = GROUP_ORDER.indexOf(y);
+        return (ix < 0 ? 99 : ix) - (iy < 0 ? 99 : iy);
+      });
+
+      groupKeys.forEach(gKey => {
+        const groupItems = groups[gKey];
+        // 그룹 합계
+        const groupTotal = groupItems.reduce((s, { a }) => {
+          const lv = liveAssetData[a.id];
+          return s + (lv?.hasLive && lv.krwValue ? lv.krwValue : Number(a.qty) * Number(a.price));
+        }, 0);
+        const groupPct = total > 0 ? (groupTotal / total * 100) : 0;
+        // 그룹 헤더
+        html += `
+          <div style="display:flex; align-items:center; justify-content:space-between; margin:14px 2px 6px;">
+            <div style="font-size:12px; font-weight:700; color:var(--text-secondary);">
+              ${GROUP_ICON[gKey] || '📦'} ${gKey} <span style="font-size:10px; color:var(--text-tertiary); font-weight:500;">${groupItems.length}개</span>
+            </div>
+            <div style="font-size:11px; color:var(--text-tertiary);">
+              ${Math.round(groupTotal).toLocaleString()}원 · ${groupPct.toFixed(0)}%
+            </div>
+          </div>`;
+
+        groupItems.forEach(({ a, idx: assetIdx }) => {
         const live = liveAssetData[a.id];
         const v = live?.hasLive && live.krwValue ? live.krwValue : Number(a.qty) * Number(a.price);
         const badge = a.type[0];
@@ -9087,15 +9163,8 @@ function renderAsset() {
 
         const editing = !!window._assetEditMode;
         const isSel = (window._assetSelected || []).includes(assetIdx);
-        const isExpanded = (window._expandedAssets || []).includes(a.id);
 
-        // 🔧 종목 상세 카드 데이터 (펼쳤을 때만 계산)
-        let detailCard = '';
-        if (isExpanded && !editing) {
-          detailCard = buildAssetDetailCard(a, live);
-        }
-
-        html += `<div class="hold-row" onclick="${editing ? `toggleAssetSelect(${assetIdx})` : `toggleAssetExpand(${a.id})`}" style="${editing && isSel ? 'background:var(--bg-info);' : ''}${isExpanded && !editing ? 'background:var(--bg-secondary);' : ''}">
+        html += `<div class="hold-row" onclick="${editing ? `toggleAssetSelect(${assetIdx})` : `openAssetDetail(${a.id})`}" style="${editing && isSel ? 'background:var(--bg-info);' : ''}">
           ${editing ? `<div style="width:22px; height:22px; border-radius:6px; border:2px solid ${isSel ? 'var(--text-info)' : 'var(--border-tertiary)'}; background:${isSel ? 'var(--text-info)' : 'transparent'}; display:flex; align-items:center; justify-content:center; flex-shrink:0; color:white; font-size:13px;">${isSel ? '✓' : ''}</div>` : ''}
           <div style="width:38px; height:38px; border-radius:8px; background:var(--bg-secondary); color:var(--text-primary); display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600;">${badge}</div>
           <div style="flex:1; min-width:0;">
@@ -9107,10 +9176,10 @@ function renderAsset() {
             <div style="font-size:14px; font-weight:600;">${Math.round(v).toLocaleString()}원</div>
             ${priceInfo}
           </div>
-          ${!editing ? `<div style="margin-left:6px; color:var(--text-tertiary); font-size:11px; align-self:center;">${isExpanded ? '▲' : '▼'}</div>` : ''}
+          ${!editing ? `<div style="margin-left:6px; color:var(--text-tertiary); font-size:13px; align-self:center;">›</div>` : ''}
         </div>`;
-        if (detailCard) html += detailCard;
-      });
+        }); // groupItems.forEach
+      }); // groupKeys.forEach
     }
   } else if (assetTab === 'plan') {
     html += renderAssetPlan(total, byType);
@@ -9810,7 +9879,7 @@ async function manualRefreshPrices() {
   }
 }
 
-function switchAssetTab(t) { assetTab = t; renderAsset(); }
+function switchAssetTab(t) { assetTab = t; window._assetDetailId = null; renderAsset(); }
 
 // ====== 외부 링크 ======
 function openExt(url) {
