@@ -8713,6 +8713,113 @@ function saveTodo(editId) {
 }
 
 // ====== 자산 ======
+
+// 🔧 종목 상세 카드 펼치기/접기
+function toggleAssetExpand(assetId) {
+  if (!window._expandedAssets) window._expandedAssets = [];
+  const i = window._expandedAssets.indexOf(assetId);
+  if (i >= 0) window._expandedAssets.splice(i, 1);
+  else window._expandedAssets.push(assetId);
+  renderAsset();
+}
+
+// 🔧 종목 상세 카드 HTML 생성 (매입/평가/환차손익/보유기간)
+function buildAssetDetailCard(a, live) {
+  const isStock = ['주식','ETF','펀드'].includes(a.type);
+  const row = (label, mainVal, subVal) =>
+    `<div style="flex:1;">
+      <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:2px;">${label}</div>
+      <div style="font-size:13px; font-weight:700;">${mainVal}</div>
+      ${subVal ? `<div style="font-size:10px; color:var(--text-tertiary);">${subVal}</div>` : ''}
+    </div>`;
+
+  let body = '';
+
+  if (isStock && live?.hasLive) {
+    // 시세가 있는 주식/ETF — 매입가/현재가/평가금액/환차손익
+    const isUSD = live.currency === 'USD';
+    const qty = Number(a.qty) || 0;
+    const krwAvg = live.krwAvgPrice || 0;
+    const krwNow = live.krwPrice || 0;
+    const totalBuy = krwAvg * qty;
+    const totalEval = live.krwValue || krwNow * qty;
+    const profit = totalEval - totalBuy;
+    const profitPct = totalBuy > 0 ? (profit / totalBuy) * 100 : 0;
+    const pColor = profit >= 0 ? 'var(--text-danger)' : 'var(--text-info)';
+
+    const usdAvg = isUSD && live.currentPrice && krwNow ? (krwAvg / krwNow * live.currentPrice) : null;
+
+    body = `
+      <div style="display:flex; gap:12px; margin-bottom:10px;">
+        ${row('매입가', isUSD && usdAvg ? `$${usdAvg.toFixed(2)}` : `${Math.round(krwAvg).toLocaleString()}원`, isUSD ? `₩${Math.round(krwAvg).toLocaleString()}` : `${qty}주`)}
+        ${row('총 매입금액', `${Math.round(totalBuy).toLocaleString()}원`, '')}
+      </div>
+      <div style="display:flex; gap:12px; margin-bottom:10px;">
+        ${row('현재가', isUSD ? `$${(live.currentPrice||0).toFixed(2)}` : `${Math.round(krwNow).toLocaleString()}원`, isUSD ? `₩${Math.round(krwNow).toLocaleString()}` : '')}
+        ${row('총 평가금액', `${Math.round(totalEval).toLocaleString()}원`, '')}
+      </div>
+      <div style="display:flex; gap:12px; padding-top:8px; border-top:0.5px solid var(--border-tertiary);">
+        <div style="flex:1;">
+          <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:2px;">평가손익</div>
+          <div style="font-size:14px; font-weight:700; color:${pColor};">${profit >= 0 ? '+' : ''}${Math.round(profit).toLocaleString()}원</div>
+          <div style="font-size:10px; color:${pColor};">${profit >= 0 ? '+' : ''}${profitPct.toFixed(2)}%</div>
+        </div>
+        ${a.avgBuyRate ? `<div style="flex:1;">
+          <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:2px;">매입환율</div>
+          <div style="font-size:13px; font-weight:700;">$1 = ₩${Number(a.avgBuyRate).toLocaleString()}</div>
+        </div>` : ''}
+      </div>`;
+  } else if (isStock) {
+    // 시세 없는 주식 — 입력값만
+    const qty = Number(a.qty) || 0;
+    const p = Number(a.price) || 0;
+    body = `
+      <div style="display:flex; gap:12px;">
+        ${row('보유 수량', `${qty}주`, '')}
+        ${row('평균 매입가', `${p.toLocaleString()}원`, '')}
+        ${row('총 매입금액', `${Math.round(qty*p).toLocaleString()}원`, '')}
+      </div>
+      <div style="font-size:10px; color:var(--text-tertiary); margin-top:8px;">티커를 입력하면 실시간 시세·수익률이 표시돼요.</div>`;
+  } else {
+    // 납입형 (청약·예적금 등)
+    body = `
+      <div style="display:flex; gap:12px;">
+        ${row('현재 잔액', `${Number(a.price||0).toLocaleString()}원`, '')}
+        ${a.type === '청약' && a.rounds ? row('납입 회차', `${a.rounds}회`, '') : ''}
+        ${a.rate ? row('금리', `${a.rate}%`, '') : ''}
+      </div>`;
+  }
+
+  // 보유기간 (가장 오래된 lot 기준)
+  let holdInfo = '';
+  const lots = a.lots || [];
+  if (lots.length > 0) {
+    const dates = lots.map(l => l.date).filter(Boolean).sort();
+    if (dates.length > 0) {
+      const first = new Date(dates[0] + 'T00:00:00');
+      const days = Math.floor((Date.now() - first.getTime()) / 86400000);
+      const y = Math.floor(days / 365);
+      const m = Math.floor((days % 365) / 30);
+      const d = (days % 365) % 30;
+      const parts = [];
+      if (y > 0) parts.push(`${y}년`);
+      if (m > 0) parts.push(`${m}개월`);
+      parts.push(`${d}일`);
+      holdInfo = `🕐 ${parts.join(' ')} 보유 · 최초매수 ${dates[0]}`;
+    }
+  }
+
+  return `
+    <div style="margin:-4px 0 8px 0; padding:13px; background:var(--bg-secondary); border-radius:10px;">
+      ${body}
+      ${holdInfo ? `<div style="font-size:10px; color:var(--text-tertiary); margin-top:10px; padding-top:8px; border-top:0.5px solid var(--border-tertiary);">${holdInfo}</div>` : ''}
+      <div style="display:flex; gap:6px; margin-top:10px;">
+        <button onclick="event.stopPropagation(); editAsset(${a.id})" style="flex:1; border:none; background:var(--bg-tertiary); color:var(--text-secondary); padding:8px; border-radius:7px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">✏️ 수정</button>
+        ${a.ticker ? `<button onclick="event.stopPropagation(); manualRefreshAssetPrices()" style="flex:1; border:none; background:var(--bg-tertiary); color:var(--text-secondary); padding:8px; border-radius:7px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">🔄 시세 갱신</button>` : ''}
+      </div>
+    </div>`;
+}
+
 function renderAsset() {
   runAllAutoBuys(); // 자동매수 점검 (시세 알면 정확히 처리)
   header.innerHTML = `
@@ -8980,7 +9087,15 @@ function renderAsset() {
 
         const editing = !!window._assetEditMode;
         const isSel = (window._assetSelected || []).includes(assetIdx);
-        html += `<div class="hold-row" onclick="${editing ? `toggleAssetSelect(${assetIdx})` : `editAsset(${a.id})`}" style="${editing && isSel ? 'background:var(--bg-info);' : ''}">
+        const isExpanded = (window._expandedAssets || []).includes(a.id);
+
+        // 🔧 종목 상세 카드 데이터 (펼쳤을 때만 계산)
+        let detailCard = '';
+        if (isExpanded && !editing) {
+          detailCard = buildAssetDetailCard(a, live);
+        }
+
+        html += `<div class="hold-row" onclick="${editing ? `toggleAssetSelect(${assetIdx})` : `toggleAssetExpand(${a.id})`}" style="${editing && isSel ? 'background:var(--bg-info);' : ''}${isExpanded && !editing ? 'background:var(--bg-secondary);' : ''}">
           ${editing ? `<div style="width:22px; height:22px; border-radius:6px; border:2px solid ${isSel ? 'var(--text-info)' : 'var(--border-tertiary)'}; background:${isSel ? 'var(--text-info)' : 'transparent'}; display:flex; align-items:center; justify-content:center; flex-shrink:0; color:white; font-size:13px;">${isSel ? '✓' : ''}</div>` : ''}
           <div style="width:38px; height:38px; border-radius:8px; background:var(--bg-secondary); color:var(--text-primary); display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600;">${badge}</div>
           <div style="flex:1; min-width:0;">
@@ -8992,7 +9107,9 @@ function renderAsset() {
             <div style="font-size:14px; font-weight:600;">${Math.round(v).toLocaleString()}원</div>
             ${priceInfo}
           </div>
+          ${!editing ? `<div style="margin-left:6px; color:var(--text-tertiary); font-size:11px; align-self:center;">${isExpanded ? '▲' : '▼'}</div>` : ''}
         </div>`;
+        if (detailCard) html += detailCard;
       });
     }
   } else if (assetTab === 'plan') {
