@@ -6497,20 +6497,19 @@ async function processAutoBuy(fixed) {
   const cycle = fixed.cycle || 'monthly';
   console.log(`🤖 ${fixed.name} 자동매수 점검 (주기:${cycle}, day:${fixed.day}, dow:${fixed.dow})`);
 
-  // 🔧 자동 복구: 연결된 자산이 없거나, 자산은 있는데 이 자동매수의 lot이 하나도 없는데
-  //    lastBuyDate만 과거로 남아 있으면 → 자산이 삭제/리셋된 상황. lastBuyDate를 리셋해
-  //    시작일부터 회차를 다시 채운다 (자산 삭제 후 0원으로 남는 문제 복구)
+  // 🔧 자동 복구: 연결된 자산이 '아예 없을 때만' lastBuyDate를 리셋해 시작일부터 다시 채운다.
+  //    (자산 삭제 후 자동매수만 남아 0원 되는 문제 복구용)
+  //    ⚠️ 자산이 존재하면 — lot이 없어도 — 복구하지 않는다.
+  //       사용자가 보유 탭에서 '현재값(과거분 이미 포함)'을 직접 입력한 정상 상황이기 때문.
+  //       이때 복구하면 입력값 위에 과거 회차가 통째로 중복으로 쌓인다.
   if (fixed.lastBuyDate) {
     const linkedAsset = findMatchingAsset({
       name: fixed.assetInfo.name,
       type: fixed.assetInfo.type,
       ticker: fixed.assetInfo.ticker,
     });
-    const hasMyLots = linkedAsset && (linkedAsset.lots || []).some(l =>
-      l.autoBuy && (l.fixedId != null ? l.fixedId === fixed.id : l.source === `🤖 ${fixed.name}`)
-    );
-    if (!linkedAsset || !hasMyLots) {
-      console.log(`🔧 ${fixed.name} - 연결 자산/회차 없음 → lastBuyDate 리셋(시작일부터 재계산)`);
+    if (!linkedAsset) {
+      console.log(`🔧 ${fixed.name} - 연결 자산 없음(삭제됨) → lastBuyDate 리셋(시작일부터 재계산)`);
       fixed.lastBuyDate = null;
     }
   }
@@ -6565,7 +6564,37 @@ async function processAutoBuy(fixed) {
   console.log(`📅 ${fixed.name} - 발생일 ${occurDates.length}회:`, occurDates.map(d => d.toLocaleDateString()));
 
   // 마지막 처리 날짜 이후의 회차만 처리
-  const lastBuyDate = fixed.lastBuyDate ? new Date(fixed.lastBuyDate) : null;
+  let lastBuyDate = fixed.lastBuyDate ? new Date(fixed.lastBuyDate) : null;
+
+  // 🔧 안전망: lastBuyDate가 없는데(=처음부터 채우려는 상태) 연결 자산에 이미 보유분이 있으면,
+  //    그 자산은 사용자가 보유 탭에서 '현재값(과거 회차 다 포함)'을 직접 입력한 것이다.
+  //    이때 과거 회차를 채우면 입력값 위에 중복으로 쌓인다(청약·주식 공통 버그).
+  //    → lastBuyDate를 오늘로 잡아 다음 회차부터만 추가한다.
+  if (!lastBuyDate) {
+    const linkedAsset = findMatchingAsset({
+      name: fixed.assetInfo.name,
+      type: fixed.assetInfo.type,
+      ticker: fixed.assetInfo.ticker,
+    });
+    // 이 자동매수가 만든 lot이 하나라도 있으면 '이미 자동으로 채운 자산' → 안전망 불필요
+    const hasMyAutoLot = linkedAsset && (linkedAsset.lots || []).some(l =>
+      l.autoBuy && (l.fixedId != null ? l.fixedId === fixed.id : l.source === `🤖 ${fixed.name}`)
+    );
+    // 보유분 판정: 수량>0 이거나, 납입형이면 금액>0
+    const hasHolding = linkedAsset && (
+      Number(linkedAsset.qty) > 0 ||
+      Number(linkedAsset.price) > 0 ||
+      (linkedAsset.lots && linkedAsset.lots.length > 0)
+    );
+    if (linkedAsset && hasHolding && !hasMyAutoLot) {
+      const todayEnd = new Date(now);
+      todayEnd.setHours(23, 59, 59, 999);
+      fixed.lastBuyDate = todayEnd.toISOString();
+      lastBuyDate = new Date(fixed.lastBuyDate);
+      console.log(`🛡️ ${fixed.name} - 자산에 입력된 보유분 있음 → 과거분 생략, 다음 회차부터 (lastBuyDate=오늘)`);
+    }
+  }
+
   const newDates = lastBuyDate
     ? occurDates.filter(d => d > lastBuyDate)
     : occurDates;
