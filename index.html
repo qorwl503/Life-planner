@@ -2432,8 +2432,8 @@ function renderTodo() {
     if (dayTodos.length === 0 && dayDone.length === 0) {
       html += `<div style="padding:8px 12px; color:var(--text-tertiary); font-size:11px; opacity:0.6;">${isToday ? '오늘 할일 없음 ✨' : '없음'}</div>`;
     } else {
-      dayTodos.forEach(t => html += renderTodoRow(t));
-      dayDone.forEach(t => html += renderTodoRow(t));
+      sortTodosByTime(dayTodos).forEach(t => html += renderTodoRow(t));
+      sortTodosByTime(dayDone).forEach(t => html += renderTodoRow(t));
     }
   }
 
@@ -2492,7 +2492,16 @@ function renderTodo() {
           <span style="font-size:12px; font-weight:600; color:var(--text-secondary);">${g.label}</span>
           <span style="font-size:10px; color:var(--text-tertiary);">${g.items.length}개</span>
         </div>`;
-        g.items.sort((a, b) => (a.dateKey || '').localeCompare(b.dateKey || ''));
+        g.items.sort((a, b) => {
+          const dc = (a.dateKey || '').localeCompare(b.dateKey || '');
+          if (dc !== 0) return dc;
+          // 같은 날짜면 시간순 (시간 없는 건 뒤로)
+          const ta = a.time || '', tb = b.time || '';
+          if (ta && tb) return ta.localeCompare(tb);
+          if (ta && !tb) return -1;
+          if (!ta && tb) return 1;
+          return 0;
+        });
         g.items.forEach(t => html += renderTodoRow(t));
       });
     }
@@ -2503,19 +2512,65 @@ function renderTodo() {
     html += `<div class="empty-state"><i class="ti ti-checks"></i>할일이 없어요<br><span style="font-size:11px; opacity:0.7;">+ 버튼으로 추가하세요</span></div>`;
   }
 
-  // ===== 밀린 할일 (별도 강조) =====
+  // ===== 밀린 할일 (별도 강조, 기본 접힘) =====
   if (pastTodos.length > 0 && window.todoWeekOffset === 0) {
+    const expanded = !!window._pastTodosExpanded;
     html += `<div style="margin-top:24px; padding-top:14px; border-top:0.5px solid var(--border-tertiary);">
-      <div style="margin: 0 0 8px; display:flex; align-items:center; gap:8px;">
+      <div onclick="window._pastTodosExpanded=!window._pastTodosExpanded; renderTodo();" style="margin:0 0 8px; display:flex; align-items:center; gap:8px; cursor:pointer;">
         <span style="font-size:13px; font-weight:600; color:var(--text-danger);">⏰ 밀린 일정</span>
         <span style="font-size:10px; padding:2px 7px; border-radius:999px; background:var(--bg-danger); color:var(--text-danger);">${pastTodos.length}</span>
-      </div>
-    </div>`;
-    pastTodos.sort((a, b) => b.dateKey.localeCompare(a.dateKey));
-    pastTodos.forEach(t => html += renderTodoRow(t));
+        <span style="margin-left:auto; font-size:11px; color:var(--text-tertiary);">${expanded ? '접기 ▲' : '펼치기 ▼'}</span>
+      </div>`;
+
+    if (expanded) {
+      // 일괄 정리 버튼
+      html += `<div style="display:flex; gap:6px; margin-bottom:8px;">
+        <button onclick="bulkMovePastTodos()" style="flex:1; border:none; background:var(--bg-info); color:var(--text-info); padding:8px; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">📅 전부 오늘로</button>
+        <button onclick="bulkDonePastTodos()" style="flex:1; border:none; background:var(--bg-success); color:var(--text-success); padding:8px; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">✓ 전부 완료</button>
+        <button onclick="bulkDeletePastTodos()" style="flex:1; border:none; background:var(--bg-danger); color:var(--text-danger); padding:8px; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">🗑️ 전부 삭제</button>
+      </div>`;
+      pastTodos.sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+      pastTodos.forEach(t => html += renderTodoRow(t));
+    } else {
+      html += `<div style="padding:10px 12px; background:var(--bg-secondary); border-radius:10px; font-size:11px; color:var(--text-tertiary); line-height:1.5;">
+        밀린 일이 ${pastTodos.length}개 있어요. 펼쳐서 한 번에 정리하거나 개별 처리할 수 있어요.
+      </div>`;
+    }
+    html += `</div>`;
   }
 
   screen.innerHTML = html;
+}
+
+// 🔧 밀린 할일 일괄 처리
+function bulkMovePastTodos() {
+  const today = todayKey();
+  const past = todos.filter(t => todoGroup(t.dateKey) === 'past' && !t.done);
+  if (past.length === 0) return;
+  if (!confirm(`밀린 일 ${past.length}개를 모두 오늘 날짜로 옮길까요?`)) return;
+  past.forEach(t => { t.dateKey = today; });
+  saveData();
+  showToast(`${past.length}개를 오늘로 옮겼어요`);
+  renderTodo();
+}
+function bulkDonePastTodos() {
+  const past = todos.filter(t => todoGroup(t.dateKey) === 'past' && !t.done);
+  if (past.length === 0) return;
+  if (!confirm(`밀린 일 ${past.length}개를 모두 완료 처리할까요?`)) return;
+  past.forEach(t => { t.done = true; t.completedAt = Date.now(); });
+  saveData();
+  showToast(`${past.length}개를 완료 처리했어요`);
+  renderTodo();
+}
+function bulkDeletePastTodos() {
+  const past = todos.filter(t => todoGroup(t.dateKey) === 'past' && !t.done);
+  if (past.length === 0) return;
+  if (!confirm(`밀린 일 ${past.length}개를 모두 삭제할까요? 되돌릴 수 없어요.`)) return;
+  const ids = new Set(past.map(t => t.id));
+  todos = todos.filter(t => !ids.has(t.id));
+  saveData();
+  showToast(`${past.length}개를 삭제했어요`);
+  renderTodo();
 }
 
 function renderTodoRow(t) {
@@ -2524,17 +2579,29 @@ function renderTodoRow(t) {
       ${t.done ? '<i class="ti ti-check"></i>' : ''}
     </div>
     <div style="flex:1; min-width:0;">
-      <div class="todo-title">${t.title}</div>
+      <div class="todo-title">${t.time ? `<span style="color:var(--text-info); font-weight:700; margin-right:5px;">${t.time}</span>` : ''}${t.title}</div>
       <div class="todo-meta">
         <span class="tag">${t.tag}</span>
         ${t.dateKey ? `<span class="meta-mini" style="font-size:10px;"><i class="ti ti-calendar" style="font-size:10px;"></i> ${dateLabel(t.dateKey)}</span>` : ''}
         ${t.due ? `<span class="meta-mini">~ ${t.due}</span>` : ''}
         ${t.money ? `<span class="meta-money"><i class="ti ti-wallet" style="font-size:11px;"></i> ${t.money}</span>` : ''}
       </div>
+      ${t.memo ? `<div style="font-size:11px; color:var(--text-tertiary); margin-top:3px; line-height:1.5; white-space:pre-wrap; word-break:break-word;">📝 ${t.memo.replace(/</g,'&lt;')}</div>` : ''}
     </div>
     ${t.flag ? '<i class="ti ti-flag" style="font-size:14px; color:var(--text-danger);"></i>' : ''}
     <button class="todo-del" onclick="event.stopPropagation(); delTodo(${t.id}, event)" aria-label="삭제"><i class="ti ti-trash"></i></button>
   </div>`;
+}
+
+// 🔧 할 일 정렬 — 시간 있는 것 먼저(시간순), 시간 없는 건 뒤로
+function sortTodosByTime(list) {
+  return list.slice().sort((a, b) => {
+    const ta = a.time || '', tb = b.time || '';
+    if (ta && tb) return ta.localeCompare(tb);
+    if (ta && !tb) return -1;  // 시간 있는 게 먼저
+    if (!ta && tb) return 1;
+    return 0;
+  });
 }
 
 function editTodo(id) {
@@ -2600,7 +2667,7 @@ function renderChallengeSection() {
 
   if (completedC.length > 0) {
     html += `<div style="margin-top:14px; padding:10px 12px; background:var(--bg-secondary); border-radius:var(--radius-md); cursor:pointer; display:flex; align-items:center; justify-content:space-between;" onclick="showCompletedChallenges()">
-      <span style="font-size:11px; color:var(--text-secondary);">🏆 완료한 챌린지 ${completedC.length}개</span>
+      <span style="font-size:11px; color:var(--text-secondary);">🏆 명예의 전당 — 해낸 챌린지 ${completedC.length}개</span>
       <i class="ti ti-chevron-right" style="font-size:14px; color:var(--text-tertiary);"></i>
     </div>`;
   }
@@ -3035,8 +3102,8 @@ function completeChallenge(id) {
 }
 
 function deleteChallenge(id) {
-  if (confirm('이 챌린지를 삭제할까요?')) {
-    challenges = challenges.filter(x => x.id !== id);
+  if (confirm('이 챌린지 기록을 삭제할까요?')) {
+    challenges = challenges.filter(x => x.id != id);
     saveData();
     closeModal();
     showToast('삭제됨');
@@ -3046,21 +3113,71 @@ function deleteChallenge(id) {
 
 function showCompletedChallenges() {
   const completed = challenges.filter(c => c.completed);
+
+  // 🔧 성취 요약 통계
+  const totalCount = completed.length;
+  const totalDaysAchieved = completed.reduce((s, c) =>
+    s + Object.keys(c.checks || {}).filter(k => c.checks[k] === true).length, 0);
+  const longestCh = completed.reduce((max, c) =>
+    (c.totalDays || 0) > (max?.totalDays || 0) ? c : max, null);
+  // 완주(목표일 100% 체크) 챌린지 수
+  const perfectCount = completed.filter(c => {
+    const checked = Object.keys(c.checks || {}).filter(k => c.checks[k] === true).length;
+    return c.totalDays > 0 && checked >= c.totalDays;
+  }).length;
+
+  const summary = totalCount > 0 ? `
+    <div style="padding:16px; background:linear-gradient(135deg,#E091A8,#C9758F); border-radius:14px; color:white; margin-bottom:14px;">
+      <div style="font-size:12px; opacity:0.9; margin-bottom:8px;">🎯 지금까지 해낸 것들</div>
+      <div style="display:flex; gap:8px;">
+        <div style="flex:1; text-align:center;">
+          <div style="font-size:22px; font-weight:800;">${totalCount}</div>
+          <div style="font-size:9px; opacity:0.85;">완료한 챌린지</div>
+        </div>
+        <div style="flex:1; text-align:center; border-left:0.5px solid rgba(255,255,255,0.3);">
+          <div style="font-size:22px; font-weight:800;">${totalDaysAchieved}</div>
+          <div style="font-size:9px; opacity:0.85;">누적 실천 일수</div>
+        </div>
+        <div style="flex:1; text-align:center; border-left:0.5px solid rgba(255,255,255,0.3);">
+          <div style="font-size:22px; font-weight:800;">${perfectCount}</div>
+          <div style="font-size:9px; opacity:0.85;">100% 완주</div>
+        </div>
+      </div>
+      ${longestCh ? `<div style="font-size:10px; opacity:0.9; margin-top:10px; text-align:center;">가장 긴 도전: <b>${longestCh.title}</b> (${longestCh.totalDays}일)</div>` : ''}
+    </div>` : '';
+
+  const cards = completed.length > 0
+    ? completed.slice().reverse().map(c => {
+        const checkedDays = Object.keys(c.checks || {}).filter(k => c.checks[k] === true).length;
+        const rate = c.totalDays > 0 ? Math.round(checkedDays / c.totalDays * 100) : 0;
+        const isPerfect = c.totalDays > 0 && checkedDays >= c.totalDays;
+        return `<div style="padding:14px; background:var(--bg-secondary); border-radius:12px; margin-bottom:8px; display:flex; align-items:center; gap:12px;">
+          <div style="font-size:26px;">${isPerfect ? '🏆' : '🎖️'}</div>
+          <div style="flex:1; min-width:0;">
+            <div style="font-size:14px; font-weight:600;">${c.title}</div>
+            <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">
+              ${c.totalDays}일 챌린지 · ${checkedDays}일 실천 · 달성률 ${rate}%
+              ${c.startDate ? ` · ${c.startDate} 시작` : ''}
+            </div>
+            <div style="height:5px; background:var(--bg-tertiary); border-radius:3px; margin-top:6px; overflow:hidden;">
+              <div style="height:100%; width:${Math.min(100,rate)}%; background:${isPerfect ? '#E091A8' : '#C9A0B0'};"></div>
+            </div>
+          </div>
+          <button onclick="deleteChallenge('${c.id}')" style="border:none; background:transparent; color:var(--text-tertiary); font-size:13px; cursor:pointer; font-family:inherit; padding:4px;">🗑️</button>
+        </div>`;
+      }).join('')
+    : `<div style="padding:30px 14px; text-align:center; color:var(--text-tertiary); font-size:12px;">아직 완료한 챌린지가 없어요.<br>첫 챌린지를 끝까지 해내면 여기 모여요.</div>`;
+
   modal.innerHTML = `
     <div class="modal">
       <div class="modal-handle"></div>
       <div class="modal-header">
         <button class="modal-cancel" onclick="closeModal()">닫기</button>
-        <h2>🏆 완료한 챌린지</h2>
+        <h2>🏆 명예의 전당</h2>
         <span></span>
       </div>
-      ${completed.map(c => {
-        const checkedDays = Object.keys(c.checks || {}).filter(k => c.checks[k] === true).length;
-        return `<div style="padding:14px; background:var(--bg-secondary); border-radius:var(--radius-md); margin-bottom:8px;">
-          <div style="font-size:14px; font-weight:600; margin-bottom:2px;">${c.title}</div>
-          <div style="font-size:11px; color:var(--text-secondary);">${c.totalDays}일 챌린지 · ${checkedDays}일 완료</div>
-        </div>`;
-      }).join('')}
+      ${summary}
+      ${cards}
     </div>
   `;
   modal.classList.add('show');
@@ -5692,37 +5809,42 @@ async function runAIStockAnalysis() {
 
   const prompt = `너는 15년차 주식 애널리스트야. 사용자가 '${stockName}' 종목 투자 분석을 요청했어.
 
-다음 6개 섹션으로 **전문적이고 구체적으로** 분석해줘. Markdown 형식 사용, 한국어로.
+다음 7개 섹션으로 **전문적이고 구체적으로** 분석해줘. Markdown 형식 사용, 한국어로.
 
 ## 📊 1. 기업 개요 & 현재 사업
 - 회사명/티커, 시가총액, 섹터/산업
 - 현재 매출의 70% 이상을 차지하는 **주력 사업 부문** 구체적으로 (예: "AI 반도체 70%, 게이밍 GPU 20%, 데이터센터 10%")
 - 최근 분기 매출 / YoY 성장률
 
-## 🎯 2. 향후 사업 계획 & 신사업
+## 📰 2. 최근 실적발표 & 주요 이벤트
+- **가장 최근 분기 실적발표** 내용: 발표 시점, 매출/영업이익이 컨센서스 대비 어땠는지 (어닝 서프라이즈/쇼크)
+- 실적발표 후 주가 반응, 경영진 가이던스(다음 분기·연간 전망)
+- 최근 3~6개월 내 **주요 이벤트**: 신제품 출시, 대형 계약, 자사주 매입/배당 변경, 액면분할, 지수 편입 등
+- 해당 기업이 **신규 상장(IPO) 예정**이거나 최근 상장했다면 그 내용. 관련 자회사·계열사의 IPO 이슈가 있으면 함께
+- 다음 실적발표 예정일 (알면)
+
+## 🎯 3. 향후 사업 계획 & 신사업
 - **공식 발표된 로드맵** 위주로 1~3년 내 계획
 - 신제품, 신시장 진출, M&A, 투자 확대 등 구체적
 - 최근 IR/실적발표/CES 등에서 강조한 키워드
 
-## 💰 3. 핵심 밸류에이션 지표
-- PER (선행 PER 포함)
-- PBR
-- ROE
+## 💰 4. 핵심 밸류에이션 지표
+- PER (선행 PER 포함), PBR, ROE
 - 배당수익률 / 배당성장률 (있는 경우)
 - 영업이익률, 부채비율
 - **업종 평균과 비교** (예: "PER 25.4 vs 반도체 평균 28.7 → 저평가")
 
-## 🚀 4. 성장 모멘텀 (1~3년)
+## 🚀 5. 성장 모멘텀 (1~3년)
 - 향후 주가/실적을 크게 견인할 **구체적 요인 3가지**
 - 시장 점유율 변화, 신제품 사이클, 규제 환경 등
 - 매출 추정치 / 컨센서스 (있으면)
 
-## ⚠️ 5. 투자 리스크 (점수 포함)
+## ⚠️ 6. 투자 리스크 (점수 포함)
 - **리스크 점수: ?/10점** (1=매우 안전, 10=매우 위험)
 - 구체적 리스크 3가지 (재무, 시장, 규제 등)
 - 단기/중기 주의사항
 
-## 💎 6. 최종 투자 의견
+## 💎 7. 최종 투자 의견
 - **투자 매력도: ?/10점**
 - **목표가 의견** (적정 / 고평가 / 저평가)
 - 매수/관망/매도 한줄 의견
@@ -5731,13 +5853,14 @@ async function runAIStockAnalysis() {
 ---
 ⚠️ 본 분석은 일반적인 정보 제공 목적이며, 모든 투자 책임은 본인에게 있습니다.
 
-답변은 친근하게 (반말 OK), 구체적 숫자/예시 포함, 추측은 "(추정)" 표시.`;
+답변은 친근하게 (반말 OK), 구체적 숫자/예시 포함, 추측은 "(추정)" 표시.
+⚠️ 중요: 최근 실적·이벤트는 시점이 불확실할 수 있으니, 확실하지 않은 날짜·수치는 "(추정)" 또는 "(약 ~분기)"로 표시하고 단정하지 마. 모르는 최신 정보는 "최신 공시를 확인하세요"라고 안내해.`;
 
   try {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${window.GEMINI_API_KEY}`;
     const body = {
       contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.3, maxOutputTokens: 5000 }
+      generationConfig: { temperature: 0.3, maxOutputTokens: 6000 }
     };
 
     const res = await fetch(url, {
@@ -8617,6 +8740,16 @@ function openTodoModal(forDateKey, editTodoObj) {
       </div>
 
       <div class="field">
+        <div class="field-label">🕐 시간 <span style="font-size:9px; color:var(--text-tertiary);">(선택 — 넣으면 시간순 정렬돼요)</span></div>
+        <input type="time" id="todo-time" value="${isEdit && editTodoObj.time ? editTodoObj.time : ''}" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit;" />
+      </div>
+
+      <div class="field">
+        <div class="field-label">📝 메모 <span style="font-size:9px; color:var(--text-tertiary);">(선택)</span></div>
+        <textarea id="todo-memo" placeholder="세부 내용, 준비물, 링크 등" rows="3" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit; resize:vertical;">${isEdit && editTodoObj.memo ? editTodoObj.memo.replace(/</g,'&lt;') : ''}</textarea>
+      </div>
+
+      <div class="field">
         <div class="field-label">카테고리</div>
         <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:6px;" id="tag-grid">
           ${[
@@ -8685,6 +8818,8 @@ function saveTodo(editId) {
   const dateKeyVal = document.getElementById('todo-date').value || todayKey();
   const tag = document.querySelector('#tag-grid .chip.active')?.dataset.tag || '업무';
   const flag = modal.querySelector('.toggle').classList.contains('on');
+  const time = document.getElementById('todo-time')?.value || '';
+  const memo = document.getElementById('todo-memo')?.value.trim() || '';
 
   if (editId) {
     // 수정
@@ -8694,6 +8829,8 @@ function saveTodo(editId) {
       t.dateKey = dateKeyVal;
       t.tag = tag;
       t.flag = flag;
+      t.time = time;
+      t.memo = memo;
     }
     showToast('수정됨');
   } else {
@@ -8704,6 +8841,8 @@ function saveTodo(editId) {
       tag,
       dateKey: dateKeyVal,
       flag,
+      time,
+      memo,
       done: false,
     });
     showToast(`"${title}" 추가됨`);
@@ -8725,6 +8864,144 @@ function openAssetDetail(assetId) {
 function closeAssetDetail() {
   window._assetDetailId = null;
   renderAsset();
+}
+
+// 🔧 매도 시뮬레이터 — 주식 매도 시 세금 제외 최종 실수령액 계산
+function openSellSimulator(assetId) {
+  const a = assets.find(x => x.id === assetId);
+  if (!a) return;
+  if (!['주식','ETF','펀드'].includes(a.type)) {
+    showToast('주식·ETF·펀드만 매도 계산이 가능해요');
+    return;
+  }
+  const live = liveAssetData[a.id];
+  const qty = Number(a.qty) || 0;
+  const isUS = (a.region === '해외' || a.region === '미국' || a.priceCurrency === 'USD'
+    || (live && live.currency === 'USD'));
+  // 현재가(원화)와 평단가(원화)
+  const krwNow = (live && live.hasLive && live.krwPrice) ? live.krwPrice : Number(a.price);
+  const krwAvg = (live && live.hasLive && live.krwAvgPrice) ? live.krwAvgPrice : Number(a.price);
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+        <h2>💰 매도 시뮬레이터</h2>
+        <span></span>
+      </div>
+
+      <div style="padding:10px 12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:12px; font-size:11px; color:var(--text-secondary); line-height:1.6;">
+        <b>${a.name}</b> · 보유 ${qty}주<br>
+        ${isUS ? '🇺🇸 미국주식 — 양도소득세(22%) 적용' : '🇰🇷 국내주식 — 증권거래세 적용'}
+      </div>
+
+      <div class="field">
+        <div class="field-label">매도 수량 (주)</div>
+        <input type="number" id="sell-qty" value="${qty}" max="${qty}" min="0" step="${isUS?'0.0001':'1'}" oninput="calcSellResult(${assetId})" />
+      </div>
+
+      <div class="field">
+        <div class="field-label">매도 단가 (1주당, 원)</div>
+        <input type="number" id="sell-price" value="${Math.round(krwNow)}" oninput="calcSellResult(${assetId})" />
+        <div style="font-size:9px; color:var(--text-tertiary); margin-top:3px;">현재 시세가 기본값. 원하는 매도가로 바꿔보세요.</div>
+      </div>
+
+      ${isUS ? `
+      <div class="field">
+        <div class="field-label">올해 이미 실현한 해외주식 손익 (원, 선택)</div>
+        <input type="number" id="sell-prior" value="0" oninput="calcSellResult(${assetId})" />
+        <div style="font-size:9px; color:var(--text-tertiary); margin-top:3px;">
+          올해 다른 해외주식을 팔아 낸 손익. 양도세 250만원 공제를 정확히 적용하려면 입력하세요. (모르면 0)
+        </div>
+      </div>
+      ` : ''}
+
+      <input type="hidden" id="sell-krwavg" value="${krwAvg}" />
+      <input type="hidden" id="sell-isus" value="${isUS ? '1' : '0'}" />
+
+      <div id="sell-result" style="margin-top:8px;"></div>
+
+      <div style="font-size:9px; color:var(--text-tertiary); margin-top:12px; line-height:1.6;">
+        ※ 추정치입니다. 양도소득세는 1년간 전체 해외주식 손익을 합산해 250만원 공제 후 22% 부과돼요.
+        실제 세액은 다른 거래·수수료·환율에 따라 달라지며, 정확한 신고는 세무 전문가나 국세청을 통하세요.
+      </div>
+    </div>
+  `;
+  modal.classList.add('show');
+  setTimeout(() => calcSellResult(assetId), 50);
+}
+
+function calcSellResult(assetId) {
+  const sellQty = Number(document.getElementById('sell-qty')?.value) || 0;
+  const sellPrice = Number(document.getElementById('sell-price')?.value) || 0;
+  const krwAvg = Number(document.getElementById('sell-krwavg')?.value) || 0;
+  const isUS = document.getElementById('sell-isus')?.value === '1';
+  const priorProfit = Number(document.getElementById('sell-prior')?.value) || 0;
+  const resultEl = document.getElementById('sell-result');
+  if (!resultEl) return;
+
+  if (sellQty <= 0 || sellPrice <= 0) {
+    resultEl.innerHTML = `<div style="padding:14px; text-align:center; color:var(--text-tertiary); font-size:12px;">매도 수량과 단가를 입력하세요.</div>`;
+    return;
+  }
+
+  const grossSell = sellQty * sellPrice;        // 매도 총액 (원화)
+  const buyValue = sellQty * krwAvg;            // 해당 수량의 매입원가 (원화)
+  const rawProfit = grossSell - buyValue;       // 세전 매매차익 (환차익 포함 — krwAvg가 매입환율 반영)
+
+  let tax = 0, taxLabel = '', taxDetail = '';
+  if (isUS) {
+    // 미국: 양도소득세 22% (양도세 20% + 지방소득세 2%), 연 250만원 기본공제
+    const yearProfit = rawProfit + priorProfit;       // 올해 전체 해외주식 손익
+    const taxable = Math.max(0, yearProfit - 2500000); // 250만원 공제
+    tax = Math.round(taxable * 0.22);
+    taxLabel = '양도소득세 (22%)';
+    taxDetail = yearProfit > 0
+      ? `올해 합산손익 ${Math.round(yearProfit).toLocaleString()}원 − 공제 250만원 = 과세표준 ${Math.round(taxable).toLocaleString()}원`
+      : '올해 합산손익이 손실이라 양도세 없음';
+  } else {
+    // 국내: 증권거래세 (매도금액 기준, 2025년 약 0.18%) — 일반 개인은 양도세 없음
+    tax = Math.round(grossSell * 0.0018);
+    taxLabel = '증권거래세 (0.18%)';
+    taxDetail = `매도금액 ${Math.round(grossSell).toLocaleString()}원 × 0.18%`;
+  }
+
+  // 거래수수료 (매도, 대략 0.015%)
+  const fee = Math.round(grossSell * 0.00015);
+  const netReceive = grossSell - tax - fee;     // 최종 실수령액
+  const netProfit = netReceive - buyValue;      // 세후 실현손익
+  const netProfitPct = buyValue > 0 ? (netProfit / buyValue * 100) : 0;
+  const pColor = netProfit >= 0 ? 'var(--text-danger)' : 'var(--text-info)';
+
+  const line = (label, val, color) =>
+    `<div style="display:flex; justify-content:space-between; padding:6px 0; font-size:12px;">
+      <span style="color:var(--text-tertiary);">${label}</span>
+      <span style="font-weight:600; ${color ? `color:${color};` : ''}">${val}</span>
+    </div>`;
+
+  resultEl.innerHTML = `
+    <div style="padding:14px; background:var(--bg-secondary); border-radius:12px;">
+      ${line('매도 총액', Math.round(grossSell).toLocaleString() + '원')}
+      ${line('매입 원가', '− ' + Math.round(buyValue).toLocaleString() + '원')}
+      ${line('세전 매매차익', (rawProfit>=0?'+':'') + Math.round(rawProfit).toLocaleString() + '원', rawProfit>=0?'var(--text-danger)':'var(--text-info)')}
+      <div style="border-top:0.5px solid var(--border-tertiary); margin:4px 0;"></div>
+      ${line(taxLabel, '− ' + tax.toLocaleString() + '원')}
+      ${line('거래수수료(추정)', '− ' + fee.toLocaleString() + '원')}
+      <div style="font-size:9px; color:var(--text-tertiary); padding:2px 0 6px;">${taxDetail}</div>
+      <div style="border-top:1px solid var(--border-secondary); margin:4px 0;"></div>
+      <div style="display:flex; justify-content:space-between; padding:8px 0 2px;">
+        <span style="font-size:13px; font-weight:700;">실수령액</span>
+        <span style="font-size:16px; font-weight:800;">${Math.round(netReceive).toLocaleString()}원</span>
+      </div>
+      <div style="display:flex; justify-content:space-between;">
+        <span style="font-size:11px; color:var(--text-tertiary);">세후 실현손익</span>
+        <span style="font-size:12px; font-weight:700; color:${pColor};">
+          ${netProfit>=0?'+':''}${Math.round(netProfit).toLocaleString()}원 (${netProfit>=0?'+':''}${netProfitPct.toFixed(2)}%)
+        </span>
+      </div>
+    </div>
+  `;
 }
 
 // 🔧 종목 상세 카드 HTML 생성 (매입/평가/환차손익/보유기간)
@@ -8850,6 +9127,9 @@ function buildAssetDetailCard(a, live) {
         <button onclick="editAsset(${a.id})" style="flex:1; border:none; background:var(--accent-primary, #5E5CE6); color:white; padding:12px; border-radius:10px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">✏️ 수정</button>
         ${a.ticker ? `<button onclick="manualRefreshAssetPrices()" style="flex:1; border:none; background:var(--bg-tertiary); color:var(--text-secondary); padding:12px; border-radius:10px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit;">🔄 시세 갱신</button>` : ''}
       </div>
+      ${isStock ? `
+      <button onclick="openSellSimulator(${a.id})" style="width:100%; margin-top:8px; border:none; background:var(--bg-secondary); color:var(--text-secondary); padding:12px; border-radius:10px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit;">💰 매도 시 실수령액 계산하기</button>
+      ` : ''}
     </div>`;
 }
 
@@ -12393,7 +12673,15 @@ async function loadAIAssetCoach(total, byType, expected1Y, expected3Y, expected1
     (bk.other > 0 ? `\n- 기타: ${bk.other.toLocaleString()}원 (${bpct(bk.other).toFixed(1)}%)` : '');
 
   // ★ 사용자가 설정한 목표 자산 배분 (있을 때만)
-  const target = settings.allocation || null;
+  // 🔧 목표 배분 — 7항목이면 5항목으로 합쳐서 AI에 전달 (현재 자산 5버킷과 비교 맞춤)
+  const target7 = migrateAlloc(settings.allocation);
+  const target = target7 ? {
+    stockKr: (target7.stockKr || 0) + (target7.etfKr || 0),
+    stockUs: (target7.stockUs || 0) + (target7.etfUs || 0),
+    bonds: target7.bonds || 0,
+    gold: target7.gold || 0,
+    cash: target7.cash || 0,
+  } : null;
   let targetSummary = '(사용자가 목표 배분을 아직 설정하지 않음)';
   let gapSummary = '';
   if (target) {
@@ -12661,8 +12949,45 @@ function deleteAIKey() {
 }
 
 // AI API 키 입력 모달 (자산 배분 모달 위에 위치)
+// 🔧 목표 배분 7항목 정의 (순서·라벨 통일)
+const ALLOC_KEYS7 = ['stockKr','stockUs','etfKr','etfUs','bonds','gold','cash'];
+const ALLOC_LABELS7 = {
+  stockKr: '국내주식 (개별 종목)',
+  stockUs: '미국주식 (개별 종목)',
+  etfKr: '국내 ETF·펀드',
+  etfUs: '미국 ETF·펀드',
+  bonds: '채권 (국채·회사채)',
+  gold: '금 (KRX 금현물·금 ETF)',
+  cash: '현금/예적금',
+};
+// 옛 5항목 배분을 7항목으로 변환 (하위호환)
+function migrateAlloc(a) {
+  if (!a) return null;
+  if (a.etfKr != null || a.etfUs != null) return a; // 이미 7항목
+  // 옛 5항목 → 주식 비중을 개별주식/ETF 반반으로 쪼갬
+  return {
+    stockKr: Math.round((a.stockKr || 0) / 2),
+    etfKr: Math.round((a.stockKr || 0) / 2),
+    stockUs: Math.round((a.stockUs || 0) / 2),
+    etfUs: Math.round((a.stockUs || 0) / 2),
+    bonds: a.bonds || 0,
+    gold: a.gold || 0,
+    cash: a.cash || 0,
+  };
+}
+
 function openAllocationModal() {
-  const alloc = settings.allocation || { stockKr: 20, stockUs: 30, bonds: 20, gold: 10, cash: 20 };
+  const alloc = migrateAlloc(settings.allocation) ||
+    { stockKr: 10, stockUs: 15, etfKr: 10, etfUs: 25, bonds: 20, gold: 10, cash: 10 };
+
+  const sliderRow = (key) => `
+      <div class="field">
+        <div class="field-label">${ALLOC_LABELS7[key]}</div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <input type="range" id="al-${key}" min="0" max="100" step="1" value="${alloc[key] || 0}" oninput="updateAllocLabel(); updateAllocSum();" style="flex:1;" />
+          <span id="al-${key}-val" style="font-size:13px; font-weight:600; min-width:40px; text-align:right;">${alloc[key] || 0}%</span>
+        </div>
+      </div>`;
 
   modal.innerHTML = `
     <div class="modal">
@@ -12688,45 +13013,7 @@ function openAllocationModal() {
         </div>
       </div>
 
-      <div class="field">
-        <div class="field-label">국내주식 (코스피/코스닥)</div>
-        <div style="display:flex; align-items:center; gap:8px;">
-          <input type="range" id="al-stockKr" min="0" max="100" value="${alloc.stockKr}" oninput="updateAllocLabel(); updateAllocSum();" style="flex:1;" />
-          <span id="al-stockKr-val" style="font-size:13px; font-weight:600; min-width:40px; text-align:right;">${alloc.stockKr}%</span>
-        </div>
-      </div>
-
-      <div class="field">
-        <div class="field-label">미국주식 (S&P500, 나스닥 등)</div>
-        <div style="display:flex; align-items:center; gap:8px;">
-          <input type="range" id="al-stockUs" min="0" max="100" value="${alloc.stockUs}" oninput="updateAllocLabel(); updateAllocSum();" style="flex:1;" />
-          <span id="al-stockUs-val" style="font-size:13px; font-weight:600; min-width:40px; text-align:right;">${alloc.stockUs}%</span>
-        </div>
-      </div>
-
-      <div class="field">
-        <div class="field-label">채권 (국채, 회사채 ETF)</div>
-        <div style="display:flex; align-items:center; gap:8px;">
-          <input type="range" id="al-bonds" min="0" max="100" value="${alloc.bonds}" oninput="updateAllocLabel(); updateAllocSum();" style="flex:1;" />
-          <span id="al-bonds-val" style="font-size:13px; font-weight:600; min-width:40px; text-align:right;">${alloc.bonds}%</span>
-        </div>
-      </div>
-
-      <div class="field">
-        <div class="field-label">금 (KRX 금현물, 금 ETF)</div>
-        <div style="display:flex; align-items:center; gap:8px;">
-          <input type="range" id="al-gold" min="0" max="100" value="${alloc.gold}" oninput="updateAllocLabel(); updateAllocSum();" style="flex:1;" />
-          <span id="al-gold-val" style="font-size:13px; font-weight:600; min-width:40px; text-align:right;">${alloc.gold}%</span>
-        </div>
-      </div>
-
-      <div class="field">
-        <div class="field-label">현금/예적금 (비상금)</div>
-        <div style="display:flex; align-items:center; gap:8px;">
-          <input type="range" id="al-cash" min="0" max="100" value="${alloc.cash}" oninput="updateAllocLabel(); updateAllocSum();" style="flex:1;" />
-          <span id="al-cash-val" style="font-size:13px; font-weight:600; min-width:40px; text-align:right;">${alloc.cash}%</span>
-        </div>
-      </div>
+      ${ALLOC_KEYS7.map(sliderRow).join('')}
 
       <div id="alloc-sum" style="padding:14px; border-radius:var(--radius-md); text-align:center; font-size:14px; font-weight:600;">
         합계: <span id="alloc-sum-val">100</span>%
@@ -12739,33 +13026,27 @@ function openAllocationModal() {
 
 function setAllocPreset(preset) {
   const presets = {
-    conservative: { stockKr: 10, stockUs: 20, bonds: 40, gold: 10, cash: 20 },
-    balanced: { stockKr: 20, stockUs: 30, bonds: 20, gold: 10, cash: 20 },
-    aggressive: { stockKr: 30, stockUs: 45, bonds: 10, gold: 5, cash: 10 },
-    allweather: { stockKr: 10, stockUs: 20, bonds: 55, gold: 7.5, cash: 7.5 }, // 레이 달리오 올웨더 변형
+    conservative: { stockKr: 5, stockUs: 10, etfKr: 5, etfUs: 10, bonds: 40, gold: 10, cash: 20 },
+    balanced:     { stockKr: 10, stockUs: 15, etfKr: 10, etfUs: 25, bonds: 20, gold: 10, cash: 10 },
+    aggressive:   { stockKr: 15, stockUs: 25, etfKr: 15, etfUs: 25, bonds: 10, gold: 5, cash: 5 },
+    allweather:   { stockKr: 5, stockUs: 10, etfKr: 5, etfUs: 10, bonds: 55, gold: 7, cash: 8 },
   };
   const p = presets[preset];
   if (!p) return;
-  document.getElementById('al-stockKr').value = p.stockKr;
-  document.getElementById('al-stockUs').value = p.stockUs;
-  document.getElementById('al-bonds').value = p.bonds;
-  document.getElementById('al-gold').value = p.gold;
-  document.getElementById('al-cash').value = p.cash;
+  ALLOC_KEYS7.forEach(k => { document.getElementById('al-' + k).value = p[k] || 0; });
   updateAllocLabel();
   updateAllocSum();
 }
 
 function updateAllocLabel() {
-  ['stockKr', 'stockUs', 'bonds', 'gold', 'cash'].forEach(k => {
+  ALLOC_KEYS7.forEach(k => {
     const v = document.getElementById('al-' + k).value;
     document.getElementById('al-' + k + '-val').textContent = v + '%';
   });
 }
 
 function updateAllocSum() {
-  const sum = ['stockKr', 'stockUs', 'bonds', 'gold', 'cash'].reduce((s, k) => {
-    return s + Number(document.getElementById('al-' + k).value);
-  }, 0);
+  const sum = ALLOC_KEYS7.reduce((s, k) => s + Number(document.getElementById('al-' + k).value), 0);
   const el = document.getElementById('alloc-sum');
   const val = document.getElementById('alloc-sum-val');
   val.textContent = sum;
@@ -12779,20 +13060,14 @@ function updateAllocSum() {
 }
 
 function saveAllocation() {
-  const sum = ['stockKr', 'stockUs', 'bonds', 'gold', 'cash'].reduce((s, k) => {
-    return s + Number(document.getElementById('al-' + k).value);
-  }, 0);
+  const sum = ALLOC_KEYS7.reduce((s, k) => s + Number(document.getElementById('al-' + k).value), 0);
   if (sum !== 100) {
     showToast(`합계가 ${sum}%입니다. 100%이 되어야 저장 가능해요`);
     return;
   }
-  settings.allocation = {
-    stockKr: Number(document.getElementById('al-stockKr').value),
-    stockUs: Number(document.getElementById('al-stockUs').value),
-    bonds: Number(document.getElementById('al-bonds').value),
-    gold: Number(document.getElementById('al-gold').value),
-    cash: Number(document.getElementById('al-cash').value),
-  };
+  const newAlloc = {};
+  ALLOC_KEYS7.forEach(k => { newAlloc[k] = Number(document.getElementById('al-' + k).value); });
+  settings.allocation = newAlloc;
   saveData();
   showToast('자산 배분 저장됨');
   closeModal();
@@ -12848,6 +13123,35 @@ function classifyAssetBucket(a) {
     return 'stockKr';
   }
   return 'other';
+}
+
+// 🔧 7버킷 분류 — 목표 자산배분 상세화용
+// 'stockKr' | 'stockUs' | 'etfKr' | 'etfUs' | 'bonds' | 'gold' | 'cash'
+// classifyAssetBucket과 달리 ETF를 주식에서 분리한다.
+function classifyAssetBucket7(a) {
+  const base = classifyAssetBucket(a); // 미국/국내·채권형·금형 판별 재사용
+  const type = a.type || '';
+  // 채권·금·현금성은 5버킷과 동일
+  if (base === 'bonds') return 'bonds';
+  if (base === 'gold') return 'gold';
+  if (base === 'cash') return 'cash';
+  if (base === 'dollar') return 'cash';   // 외화현금 → 현금
+  if (base === 'other') return 'cash';    // 부동산 등 → 일단 현금성으로(목표엔 미포함 취급)
+  // 주식 계열: ETF면 etf*, 아니면 stock*
+  if (type === 'ETF') return base === 'stockUs' ? 'etfUs' : 'etfKr';
+  // 펀드는 성격상 ETF에 가까우니 etf*로 묶음
+  if (type === '펀드') return base === 'stockUs' ? 'etfUs' : 'etfKr';
+  // 개별 주식
+  return base === 'stockUs' ? 'stockUs' : 'stockKr';
+}
+
+// 7버킷 합계
+function getAllocationBuckets7() {
+  const b = { stockKr: 0, stockUs: 0, etfKr: 0, etfUs: 0, bonds: 0, gold: 0, cash: 0 };
+  (assets || []).forEach(a => {
+    b[classifyAssetBucket7(a)] += assetKrwValue(a);
+  });
+  return b;
 }
 
 // 자산 1개의 원화 평가액
@@ -12912,26 +13216,23 @@ function getDetailGroups() {
 
 // ★ 자산 플랜 탭
 function renderAssetPlan(total, byType) {
-  // 자산별 비중 계산 (세분화) — ETF 포함, 미국/국내 자동 판별
-  const _bk = getAllocationBuckets();
-  const stockKr = _bk.stockKr;
-  const stockUs = _bk.stockUs;
-  const bonds = _bk.bonds;
-  const gold = _bk.gold;
-  // 현금에는 예적금/현금/청약 + 달러(외화현금) 포함
-  const cash = _bk.cash + _bk.dollar;
-  const other = Math.max(0, total - stockKr - stockUs - bonds - gold - cash);
+  // 🔧 7버킷 현재 비중 (국내주식/미국주식/국내ETF·펀드/미국ETF·펀드/채권/금/현금)
+  const _bk = getAllocationBuckets7();
+  const cur = {
+    stockKr: _bk.stockKr,
+    stockUs: _bk.stockUs,
+    etfKr: _bk.etfKr,
+    etfUs: _bk.etfUs,
+    bonds: _bk.bonds,
+    gold: _bk.gold,
+    cash: _bk.cash,
+  };
 
   const pct = (v) => total > 0 ? ((v / total) * 100) : 0;
 
-  // 사용자 직접 설정 가능 (settings.allocation 없으면 기본값)
-  const alloc = settings.allocation || {
-    stockKr: 20,
-    stockUs: 30,
-    bonds: 20,
-    gold: 10,
-    cash: 20,
-  };
+  // 🔧 목표 배분 (7항목). 옛 5항목 데이터는 migrateAlloc으로 변환
+  const alloc = migrateAlloc(settings.allocation) ||
+    { stockKr: 10, stockUs: 15, etfKr: 10, etfUs: 25, bonds: 20, gold: 10, cash: 10 };
 
   // 시뮬레이션
   const monthlySaving = settings.savingsGoal || 0;
@@ -12948,69 +13249,42 @@ function renderAssetPlan(total, byType) {
         </button>
       </div>
       <h3>내가 정한 목표 비중</h3>
-      <div style="display:flex; height:10px; border-radius:5px; overflow:hidden; margin: 10px 0 8px;">
-        <div style="width:${alloc.stockKr}%; background:#4A90E2;"></div>
-        <div style="width:${alloc.stockUs}%; background:#5D7CE0;"></div>
-        <div style="width:${alloc.bonds}%; background:#9B7BC9;"></div>
-        <div style="width:${alloc.gold}%; background:#E2A04A;"></div>
-        <div style="width:${alloc.cash}%; background:#7BC97B;"></div>
-      </div>
-      <div style="display:flex; gap:6px; flex-wrap:wrap; font-size:10px; opacity:0.9;">
-        <span><span style="display:inline-block; width:8px; height:8px; border-radius:2px; background:#4A90E2; margin-right:4px;"></span>국내주식 ${alloc.stockKr}%</span>
-        <span><span style="display:inline-block; width:8px; height:8px; border-radius:2px; background:#5D7CE0; margin-right:4px;"></span>미국주식 ${alloc.stockUs}%</span>
-        <span><span style="display:inline-block; width:8px; height:8px; border-radius:2px; background:#9B7BC9; margin-right:4px;"></span>채권 ${alloc.bonds}%</span>
-        <span><span style="display:inline-block; width:8px; height:8px; border-radius:2px; background:#E2A04A; margin-right:4px;"></span>금 ${alloc.gold}%</span>
-        <span><span style="display:inline-block; width:8px; height:8px; border-radius:2px; background:#7BC97B; margin-right:4px;"></span>현금/예적금 ${alloc.cash}%</span>
-      </div>
+      ${(() => {
+        const colors = {
+          stockKr:'#4A90E2', stockUs:'#5D7CE0', etfKr:'#4AB0C9', etfUs:'#5BC9A8',
+          bonds:'#9B7BC9', gold:'#E2A04A', cash:'#7BC97B',
+        };
+        const labels = {
+          stockKr:'국내주식', stockUs:'미국주식', etfKr:'국내 ETF·펀드', etfUs:'미국 ETF·펀드',
+          bonds:'채권', gold:'금', cash:'현금/예적금',
+        };
+        let bar = '<div style="display:flex; height:10px; border-radius:5px; overflow:hidden; margin:10px 0 8px;">';
+        ALLOC_KEYS7.forEach(k => {
+          const w = alloc[k] || 0;
+          if (w > 0) bar += `<div style="width:${w}%; background:${colors[k]};"></div>`;
+        });
+        bar += '</div>';
+        const legend = ALLOC_KEYS7.map(k =>
+          `<span><span style="display:inline-block; width:8px; height:8px; border-radius:2px; background:${colors[k]}; margin-right:4px;"></span>${labels[k]} ${alloc[k] || 0}%</span>`
+        ).join('');
+        return bar + `<div style="display:flex; gap:6px; flex-wrap:wrap; font-size:10px; opacity:0.9;">${legend}</div>`;
+      })()}
       <div style="font-size:10px; opacity:0.6; margin-top:10px; line-height:1.5;">
-        ※ 일반적인 다자산 분산투자 원칙 (주식+채권+금+현금) 기반.<br>
+        ※ 개별주식과 ETF·펀드를 따로 목표 설정할 수 있어요.<br>
         본인 상황(나이, 부채, 목표)에 따라 조정하세요.
       </div>
     </div>
 
     <div style="font-size:14px; font-weight:600; margin: 18px 0 8px;">현재 → 목표 차이</div>
     <div class="card" style="padding:0 14px; margin-bottom:14px;">
-      ${planRow('국내주식', pct(stockKr), alloc.stockKr, total)}
-      ${planRow('미국주식', pct(stockUs), alloc.stockUs, total)}
-      ${planRow('채권', pct(bonds), alloc.bonds, total)}
-      ${planRow('금', pct(gold), alloc.gold, total)}
-      ${planRow('현금/예적금', pct(cash), alloc.cash, total)}
+      ${planRow('국내주식', pct(cur.stockKr), alloc.stockKr, total)}
+      ${planRow('미국주식', pct(cur.stockUs), alloc.stockUs, total)}
+      ${planRow('국내 ETF·펀드', pct(cur.etfKr), alloc.etfKr, total)}
+      ${planRow('미국 ETF·펀드', pct(cur.etfUs), alloc.etfUs, total)}
+      ${planRow('채권', pct(cur.bonds), alloc.bonds, total)}
+      ${planRow('금', pct(cur.gold), alloc.gold, total)}
+      ${planRow('현금/예적금', pct(cur.cash), alloc.cash, total)}
     </div>
-
-    ${(() => {
-      // 🔧 현재 자산 상세 구성 — 주식/ETF/펀드/채권/금 등을 잘게 쪼개 표시
-      const groups = getDetailGroups();
-      if (groups.length === 0 || total <= 0) return '';
-      let bar = '<div style="display:flex; height:12px; border-radius:6px; overflow:hidden; margin:10px 0 10px;">';
-      groups.forEach(g => {
-        const w = (g.value / total) * 100;
-        if (w > 0) bar += `<div style="width:${w}%; background:${g.color};" title="${g.label}"></div>`;
-      });
-      bar += '</div>';
-      const rows = groups.map(g => {
-        const p = (g.value / total) * 100;
-        return `<div style="display:flex; align-items:center; justify-content:space-between; padding:7px 0; border-bottom:0.5px solid var(--border-tertiary);">
-          <span style="font-size:12px; display:flex; align-items:center; gap:6px;">
-            <span style="display:inline-block; width:9px; height:9px; border-radius:2px; background:${g.color};"></span>
-            ${g.label} <span style="font-size:10px; color:var(--text-tertiary);">${g.count}개</span>
-          </span>
-          <span style="font-size:12px; font-weight:600;">
-            ${Math.round(g.value).toLocaleString()}원
-            <span style="font-size:10px; color:var(--text-tertiary); font-weight:500; margin-left:4px;">${p.toFixed(1)}%</span>
-          </span>
-        </div>`;
-      }).join('');
-      return `
-        <div style="font-size:14px; font-weight:600; margin: 18px 0 8px;">현재 자산 상세 구성</div>
-        <div class="card" style="padding:12px 14px 4px; margin-bottom:14px;">
-          <div style="font-size:10px; color:var(--text-tertiary);">${groups.length}개 자산군 · 총 ${Math.round(total).toLocaleString()}원</div>
-          ${bar}
-          ${rows}
-          <div style="font-size:9px; color:var(--text-tertiary); padding:8px 0 6px; line-height:1.5;">
-            ※ ETF·펀드는 이름·티커로 미국/국내·채권형·금형을 자동 분류해요. 분류가 어긋나면 자산명에 '미국'·'채권' 같은 키워드를 넣거나 티커를 정확히 입력하세요.
-          </div>
-        </div>`;
-    })()}
 
     <div style="font-size:14px; font-weight:600; margin: 18px 0 8px;">💡 이번 달 AI 맞춤 액션</div>
     <div id="ai-action-advice">
