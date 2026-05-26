@@ -2705,7 +2705,21 @@ function renderChallengeCard(c) {
     progressText = `${successes} / ${totalDays}일 성공`;
   } else if (c.type === 'count') {
     progressPct = Math.min(100, (checkedDays / c.targetCount) * 100);
-    progressText = `${checkedDays} / ${c.targetCount}회`;
+    if (c.perWeek) {
+      // 🔧 주 N회 챌린지 — 이번 주 달성 현황도 함께 표시
+      const now = new Date();
+      const dow = now.getDay();
+      const weekStart = new Date(now); weekStart.setDate(now.getDate() - dow); weekStart.setHours(0,0,0,0);
+      const weekEnd = new Date(weekStart); weekEnd.setDate(weekStart.getDate() + 6);
+      const thisWeekCount = Object.keys(c.checks || {}).filter(k => {
+        if (c.checks[k] !== true) return false;
+        const d = new Date(k + 'T00:00:00');
+        return d >= weekStart && d <= weekEnd;
+      }).length;
+      progressText = `이번 주 ${thisWeekCount}/${c.perWeek}회 · 누적 ${checkedDays}/${c.targetCount}`;
+    } else {
+      progressText = `${checkedDays} / ${c.targetCount}회`;
+    }
   }
 
   const isCompleted = progressPct >= 100;
@@ -2782,7 +2796,8 @@ function getChallengePresets() {
     { title:'야식 끊기', type:'forbidden', totalDays:14 },
     { title:'매일 만보 걷기', type:'daily', totalDays:30 },
     { title:'100일 책 읽기', type:'daily', totalDays:100 },
-    { title:'주 3회 운동', type:'count', totalDays:30, targetCount:12 },
+    { title:'주 3회 운동', type:'count', totalDays:30, perWeek:3 },
+    { title:'주 4일 운동', type:'count', totalDays:30, perWeek:4 },
     { title:'매일 일기', type:'daily', totalDays:30 },
     { title:'배달음식 끊기', type:'forbidden', totalDays:14 },
     { title:'금주 챌린지', type:'forbidden', totalDays:30 },
@@ -2792,12 +2807,18 @@ function getChallengePresets() {
 
 function quickChallenge(preset) {
   const startDate = dateKey(currentYear, currentMonth, today);
+  // 🔧 주 N회 프리셋이면 전체 목표 횟수 자동 계산
+  let targetCount = preset.targetCount || null;
+  if (preset.perWeek && !targetCount) {
+    targetCount = Math.round(preset.perWeek * (preset.totalDays / 7));
+  }
   challenges.push({
     id: Date.now(),
     title: preset.title,
     type: preset.type,
     totalDays: preset.totalDays,
-    targetCount: preset.targetCount || null,
+    targetCount,
+    perWeek: preset.perWeek || null,
     startDate,
     checks: {},
     completed: false,
@@ -2923,14 +2944,29 @@ function openChallengeModal() {
       </div>
 
       <div class="field" id="ch-count-field" style="display:none;">
-        <div class="field-label">총 목표 횟수</div>
-        <input type="number" id="ch-count" placeholder="예: 12 (한달에 12번)" value="12" />
+        <div class="field-label">목표 횟수</div>
+        <div style="display:flex; gap:6px; margin-bottom:8px;" id="ch-count-mode">
+          <button class="chip active" data-cm="week">📆 주 N회</button>
+          <button class="chip" data-cm="total">🔢 총 N회</button>
+        </div>
+        <div id="ch-count-week">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-size:12px; color:var(--text-secondary);">매주</span>
+            <input type="number" id="ch-count-perweek" placeholder="4" value="4" min="1" max="7" style="width:70px;" />
+            <span style="font-size:12px; color:var(--text-secondary);">일/회</span>
+          </div>
+          <div style="font-size:10px; color:var(--text-tertiary); margin-top:6px;" id="ch-count-week-info">예: 주 4일 운동 → 그 주에 4일 채우면 100%</div>
+        </div>
+        <div id="ch-count-total" style="display:none;">
+          <input type="number" id="ch-count" placeholder="예: 12 (전체 기간 12번)" value="12" />
+          <div style="font-size:10px; color:var(--text-tertiary); margin-top:6px;">챌린지 전체 기간 동안의 총 목표 횟수</div>
+        </div>
       </div>
 
       <div style="font-size:12px; color:var(--text-secondary); margin: 16px 0 8px;">⚡ 빠른 시작</div>
       <div style="display:flex; flex-wrap:wrap; gap:6px;">
         ${getChallengePresets().map(p => `
-          <button onclick="fillPreset('${p.title}', '${p.type}', ${p.totalDays}, ${p.targetCount || 'null'})" class="chip" style="padding:8px 12px; font-size:11px;">${p.title}</button>
+          <button onclick="fillPreset('${p.title}', '${p.type}', ${p.totalDays}, ${p.targetCount || 'null'}, ${p.perWeek || 'null'})" class="chip" style="padding:8px 12px; font-size:11px;">${p.title}</button>
         `).join('')}
       </div>
     </div>
@@ -2975,6 +3011,17 @@ function openChallengeModal() {
       });
     });
 
+    // 🔧 횟수 모드 전환 (주 N회 / 총 N회)
+    document.querySelectorAll('#ch-count-mode .chip').forEach(b => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('#ch-count-mode .chip').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        const cm = b.dataset.cm;
+        document.getElementById('ch-count-week').style.display = cm === 'week' ? 'block' : 'none';
+        document.getElementById('ch-count-total').style.display = cm === 'total' ? 'block' : 'none';
+      });
+    });
+
     // 시작일/종료일 변경 시 일수 계산
     function updateChDaysInfo() {
       const startV = document.getElementById('ch-start')?.value;
@@ -2996,7 +3043,7 @@ function openChallengeModal() {
   }, 50);
 }
 
-function fillPreset(title, type, totalDays, targetCount) {
+function fillPreset(title, type, totalDays, targetCount, perWeek) {
   document.getElementById('ch-title').value = title;
   document.querySelectorAll('#ch-type .chip').forEach(x => {
     x.classList.toggle('active', x.dataset.t === type);
@@ -3008,21 +3055,32 @@ function fillPreset(title, type, totalDays, targetCount) {
   if (!document.querySelector('#ch-days .chip.active')) {
     document.querySelector('#ch-days .chip').classList.add('active');
   }
-  if (type === 'count') {
-    document.getElementById('ch-count-field').style.display = 'block';
-    document.getElementById('ch-count').value = targetCount;
-  } else {
-    document.getElementById('ch-count-field').style.display = 'none';
-  }
-  // desc 업데이트
+  // desc 업데이트 (count 필드 표시 토글 포함)
   document.querySelector(`#ch-type .chip[data-t="${type}"]`).click();
+
+  if (type === 'count') {
+    if (perWeek) {
+      // 주 N회 모드로
+      document.querySelectorAll('#ch-count-mode .chip').forEach(x =>
+        x.classList.toggle('active', x.dataset.cm === 'week'));
+      document.getElementById('ch-count-week').style.display = 'block';
+      document.getElementById('ch-count-total').style.display = 'none';
+      document.getElementById('ch-count-perweek').value = perWeek;
+    } else if (targetCount) {
+      // 총 N회 모드로
+      document.querySelectorAll('#ch-count-mode .chip').forEach(x =>
+        x.classList.toggle('active', x.dataset.cm === 'total'));
+      document.getElementById('ch-count-week').style.display = 'none';
+      document.getElementById('ch-count-total').style.display = 'block';
+      document.getElementById('ch-count').value = targetCount;
+    }
+  }
 }
 
 function saveChallenge() {
   const title = document.getElementById('ch-title').value.trim();
   if (!title) { showToast('챌린지 이름을 입력해주세요'); return; }
   const type = document.querySelector('#ch-type .chip.active').dataset.t;
-  const targetCount = type === 'count' ? Number(document.getElementById('ch-count').value) : null;
 
   // 기간 모드 확인
   const mode = document.querySelector('#ch-mode .chip.active')?.dataset.m || 'preset';
@@ -3047,9 +3105,24 @@ function saveChallenge() {
     startDate = dateKey(currentYear, currentMonth, today);
   }
 
+  // 🔧 횟수형 챌린지 — 주 N회 / 총 N회
+  let targetCount = null, perWeek = null;
+  if (type === 'count') {
+    const cm = document.querySelector('#ch-count-mode .chip.active')?.dataset.cm || 'week';
+    if (cm === 'week') {
+      perWeek = Number(document.getElementById('ch-count-perweek').value) || 0;
+      if (perWeek <= 0) { showToast('주 몇 회인지 입력해주세요'); return; }
+      // 전체 기간 목표 횟수 = 주당 횟수 × 전체 주 수
+      targetCount = Math.round(perWeek * (totalDays / 7));
+    } else {
+      targetCount = Number(document.getElementById('ch-count').value) || 0;
+      if (targetCount <= 0) { showToast('목표 횟수를 입력해주세요'); return; }
+    }
+  }
+
   challenges.push({
     id: Date.now(),
-    title, type, totalDays, targetCount,
+    title, type, totalDays, targetCount, perWeek,
     startDate,
     checks: {},
     completed: false,
@@ -5209,6 +5282,16 @@ function openFixedAddModal() {
       </div>
 
       <div class="field">
+        <button type="button" onclick="document.getElementById('fixed-capture-input').click()" style="width:100%; border:1px dashed var(--border-secondary); background:var(--bg-secondary); color:var(--text-secondary); padding:12px; border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">
+          📸 고정지출 명세 캡처로 가져오기
+        </button>
+        <input type="file" id="fixed-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processFixedCapture(this)" />
+        <div style="font-size:9px; color:var(--text-tertiary); margin-top:5px; line-height:1.5;">
+          은행 자동이체 내역, 구독 목록 등을 캡처하면 항목을 자동으로 읽어 추가하거나 기존 항목을 수정해요.
+        </div>
+      </div>
+
+      <div class="field">
         <div class="field-label">이름</div>
         <input type="text" id="fx-name" placeholder="예: 월세, 주식 자동매수, 적금" />
       </div>
@@ -5713,6 +5796,48 @@ function resetSimSettings() {
 // ===== 매수 기록 (lots) 시스템 =====
 
 // ====== AI 투자 분석 ======
+// 🔧 자산 하위탭 'analysis' 화면 (모달이 아니라 탭 안에 직접 렌더)
+function renderAssetAnalysis() {
+  const investAssets = (assets || []).filter(a =>
+    ['주식', 'ETF', '펀드'].includes(a.type) && a.name
+  ).slice(0, 10);
+
+  return `
+    <div style="padding-bottom:20px;">
+      <div style="padding:14px; background:linear-gradient(135deg, #FEE7DC 0%, #FFF4E5 100%); border-radius:12px; margin-bottom:14px; font-size:12px; color:#8B4513; line-height:1.6;">
+        🔍 <b>AI 투자 분석</b><br>
+        종목명이나 티커를 입력하면 Gemini AI가 비즈니스 모델·최근 실적·성장 모멘텀·투자 매력도를 분석해줘요.
+      </div>
+
+      <div class="field">
+        <div class="field-label">종목명 또는 티커</div>
+        <input type="text" id="ai-stock-name" placeholder="예: 삼성전자, AAPL, SPY, KODEX 200"
+          onkeydown="if(event.key==='Enter') runAIStockAnalysis()" />
+      </div>
+
+      ${investAssets.length > 0 ? `
+        <div style="margin-bottom:14px;">
+          <div class="field-label" style="margin-bottom:6px;">📊 내 보유 종목 빠른 분석</div>
+          <div style="display:flex; gap:5px; flex-wrap:wrap;">
+            ${investAssets.map(a => `
+              <button onclick="document.getElementById('ai-stock-name').value='${a.name.replace(/'/g, "\\'")}'; runAIStockAnalysis();"
+                style="padding:7px 12px; border:0.5px solid var(--border-tertiary); background:var(--bg-secondary); border-radius:999px; font-size:11px; color:var(--text-secondary); cursor:pointer; font-family:inherit;">
+                ${a.name.length > 12 ? a.name.substring(0, 12) + '…' : a.name}
+              </button>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      <button onclick="runAIStockAnalysis()" style="width:100%; padding:14px; border:none; background:linear-gradient(135deg, #FF6B6B 0%, #FF8E72 100%); color:white; border-radius:12px; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit; margin-bottom:14px;">
+        ✨ AI 분석 시작
+      </button>
+
+      <div id="ai-analysis-status" style="display:none; padding:14px; background:var(--bg-secondary); border-radius:12px; text-align:center; font-size:12px; color:var(--text-secondary);"></div>
+      <div id="ai-analysis-result" style="display:none; margin-top:6px; padding:14px; background:var(--bg-secondary); border-radius:12px; line-height:1.7; font-size:12px;"></div>
+    </div>`;
+}
+
 function openAIAnalysisModal(prefillName) {
   // 보유 종목 빠른 선택 (주식/ETF/펀드만)
   const investAssets = (assets || []).filter(a =>
@@ -8014,6 +8139,181 @@ async function processAssetCapture(input) {
   input.value = '';
 }
 
+// 🔧 가계부 고정지출 OCR — 자동이체/구독 명세 캡처에서 항목 추출
+async function processFixedCapture(input) {
+  const files = Array.from(input.files || []);
+  if (files.length === 0) return;
+  if (!window.GEMINI_API_KEY) {
+    showToast('AI 키를 먼저 설정해주세요 (설정 → AI 키)');
+    return;
+  }
+
+  showToast('🔄 캡처 분석 중...');
+  const allItems = [];
+  let failCount = 0;
+
+  for (let idx = 0; idx < files.length; idx++) {
+    const file = files[idx];
+    try {
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const mimeType = file.type || 'image/jpeg';
+
+      const prompt = `은행 자동이체 내역, 구독 서비스 목록, 정기결제 명세 화면에서 '고정지출' 항목을 추출해 JSON으로 반환해.
+
+각 항목: {name, amt, cycle, day}
+- name: 항목 이름 (예: "넷플릭스", "월세", "통신비", "실손보험")
+- amt: 1회 결제 금액 (숫자만, 원). 예: 17000
+- cycle: 결제 주기 — "monthly"(매월) / "weekly"(매주) / "biweekly"(격주). 대부분 monthly
+- day: 매월 결제일 (1~31 숫자). 화면에 보이면 넣고, 없으면 생략
+
+📤 출력 (JSON만, 설명 없이):
+{"items":[
+  {"name":"넷플릭스","amt":17000,"cycle":"monthly","day":15},
+  {"name":"월세","amt":500000,"cycle":"monthly","day":25},
+  {"name":"통신비","amt":55000,"cycle":"monthly"}
+]}
+
+화면에 고정지출 항목이 하나도 없으면: {"items":[],"error":"이유"}
+
+⚠️ 일회성 지출(한 번만 쓴 것)은 제외하고, 정기적으로 빠져나가는 것만 추출해.`;
+
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${window.GEMINI_API_KEY}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [
+            { text: prompt },
+            { inline_data: { mime_type: mimeType, data: base64 } },
+          ]}],
+          generationConfig: { temperature: 0.1, maxOutputTokens: 2000 },
+        }),
+      });
+      const data = await res.json();
+      const txt = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      const m = txt.match(/\{[\s\S]*\}/);
+      if (m) {
+        const parsed = JSON.parse(m[0]);
+        (parsed.items || []).forEach(it => {
+          if (it.name && Number(it.amt) > 0) allItems.push(it);
+        });
+      }
+    } catch (e) {
+      console.warn('고정지출 OCR 실패', e);
+      failCount++;
+    }
+  }
+
+  input.value = ''; // 재선택 가능하게
+
+  if (allItems.length === 0) {
+    showToast(failCount > 0 ? '캡처 분석에 실패했어요. 다시 시도해주세요' : '캡처에서 고정지출을 찾지 못했어요');
+    return;
+  }
+  openFixedReviewModal(allItems);
+}
+
+// 🔧 고정지출 OCR 결과 검토 모달 — 기존 항목과 겹치면 수정, 아니면 추가
+function openFixedReviewModal(items) {
+  // 기존 고정지출과 이름으로 매칭 (겹치면 'update', 아니면 'new')
+  const reviewed = items.map((it, i) => {
+    const norm = (s) => (s || '').replace(/\s/g, '').toLowerCase();
+    const existing = (budget.fixed || []).find(f => norm(f.name) === norm(it.name));
+    return {
+      ...it,
+      _idx: i,
+      _existingId: existing ? existing.id : null,
+      _action: existing ? 'update' : 'new', // update | new | skip
+      _existingAmt: existing ? existing.amt : null,
+    };
+  });
+  window._fixedReviewItems = reviewed;
+
+  const rows = reviewed.map((it, i) => {
+    const cycleLabel = it.cycle === 'weekly' ? '매주' : it.cycle === 'biweekly' ? '격주' : '매월';
+    return `
+      <div style="padding:12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:8px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <span style="font-size:13px; font-weight:600;">${it.name}</span>
+          <span style="font-size:13px; font-weight:700;">${Number(it.amt).toLocaleString()}원</span>
+        </div>
+        <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:8px;">
+          ${cycleLabel}${it.day ? ` · 매월 ${it.day}일` : ''}
+          ${it._existingId ? ` · ⚠️ 기존 항목 있음 (현재 ${Number(it._existingAmt).toLocaleString()}원)` : ' · ✨ 새 항목'}
+        </div>
+        <div style="display:flex; gap:4px;">
+          ${it._existingId ? `
+            <button onclick="setFixedReviewAction(${i},'update')" class="chip ${it._action==='update'?'active':''}" style="flex:1; font-size:10px;">🔄 수정</button>
+          ` : `
+            <button onclick="setFixedReviewAction(${i},'new')" class="chip ${it._action==='new'?'active':''}" style="flex:1; font-size:10px;">✨ 추가</button>
+          `}
+          <button onclick="setFixedReviewAction(${i},'skip')" class="chip ${it._action==='skip'?'active':''}" style="flex:1; font-size:10px;">🚫 건너뛰기</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">취소</button>
+        <h2>고정지출 ${reviewed.length}개 인식됨</h2>
+        <button class="modal-save" onclick="applyFixedReview()">적용</button>
+      </div>
+      <div style="padding:10px 12px; background:var(--bg-info); border-radius:10px; margin-bottom:12px; font-size:11px; color:var(--text-info); line-height:1.6;">
+        캡처에서 찾은 항목이에요. 기존에 있는 건 <b>수정</b>, 없는 건 <b>추가</b>로 처리돼요. 원하지 않으면 건너뛰기를 누르세요.
+      </div>
+      ${rows}
+    </div>
+  `;
+  modal.classList.add('show');
+}
+
+function setFixedReviewAction(idx, action) {
+  if (!window._fixedReviewItems || !window._fixedReviewItems[idx]) return;
+  window._fixedReviewItems[idx]._action = action;
+  openFixedReviewModal(window._fixedReviewItems); // 다시 그리기
+}
+
+function applyFixedReview() {
+  const items = window._fixedReviewItems || [];
+  let added = 0, updated = 0;
+  items.forEach(it => {
+    if (it._action === 'skip') return;
+    if (it._action === 'update' && it._existingId) {
+      const f = budget.fixed.find(x => x.id === it._existingId);
+      if (f) {
+        f.amt = Number(it.amt);
+        if (it.cycle) f.cycle = it.cycle;
+        if (it.day) f.day = Number(it.day);
+        updated++;
+      }
+    } else if (it._action === 'new') {
+      budget.fixed.push({
+        id: Date.now() + Math.random(),
+        name: it.name,
+        amt: Number(it.amt),
+        cycle: it.cycle || 'monthly',
+        day: it.day ? Number(it.day) : 1,
+        dow: 1,
+        paid: false,
+        autoBuy: false,
+      });
+      added++;
+    }
+  });
+  window._fixedReviewItems = null;
+  saveData();
+  closeModal();
+  showToast(`고정지출 ${added}개 추가, ${updated}개 수정됨`);
+  renderMoney();
+}
+
 function openAssetReviewModal(items) {
   // 각 항목에 기존 자산 매칭 (티커 우선) + 액션
   window._assetReviewItems = items.map((it, i) => {
@@ -8494,14 +8794,26 @@ async function processCardCapture(input) {
 
 // 카드 캡처 검토 모달 - 추출된 항목 확인 + 일괄 추가
 function openCardReviewModal(items) {
-  window._cardReviewItems = items.map((it, i) => ({ ...it, _checked: true, _id: i }));
+  // 🔧 중복 감지 — 날짜+금액+가맹점이 같은 지출이 이미 가계부에 있으면 표시
+  const norm = (s) => (s || '').replace(/\s/g, '').toLowerCase();
+  window._cardReviewItems = items.map((it, i) => {
+    const dup = (budget.expenses || []).some(e =>
+      e.type !== 'income' &&
+      e.dateKey === it.date &&
+      Number(e.amt) === Number(it.amount) &&
+      norm(e.memo).includes(norm(it.store).slice(0, 4)) // 가맹점 앞부분 일치
+    );
+    return { ...it, _checked: !dup, _id: i, _dup: dup }; // 중복 의심이면 기본 체크 해제
+  });
+
+  const dupCount = window._cardReviewItems.filter(it => it._dup).length;
 
   const renderList = () => {
     return window._cardReviewItems.map((it, i) => `
       <div style="display:flex; align-items:center; gap:8px; padding:10px 0; border-bottom:0.5px solid var(--border-tertiary);">
         <input type="checkbox" id="cr-${i}" ${it._checked ? 'checked' : ''} onchange="window._cardReviewItems[${i}]._checked = this.checked;" style="width:18px; height:18px; cursor:pointer;" />
         <div style="flex:1; min-width:0;">
-          <div style="font-size:13px; font-weight:500;">${it.store}</div>
+          <div style="font-size:13px; font-weight:500;">${it.store}${it._dup ? ' <span style="font-size:9px; color:var(--text-warning); font-weight:600;">⚠️ 이미 있을 수 있음</span>' : ''}</div>
           <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">${it.date} · ${it.category}</div>
         </div>
         <span style="font-weight:600; color:var(--text-primary); font-size:13px;">-${Number(it.amount).toLocaleString()}원</span>
@@ -8520,6 +8832,7 @@ function openCardReviewModal(items) {
 
       <div style="padding:10px 12px; background:var(--bg-info); border-radius:8px; margin-bottom:12px; font-size:11px; color:var(--text-info); line-height:1.5;">
         💡 ${items.length}개 항목 추출. 체크된 것만 가계부에 추가됩니다.
+        ${dupCount > 0 ? `<br>⚠️ ${dupCount}개는 이미 가계부에 있는 것 같아 체크를 꺼뒀어요. 확인 후 필요하면 체크하세요.` : ''}
       </div>
 
       <div style="max-height:60vh; overflow-y:auto;">
@@ -8550,7 +8863,17 @@ function saveCardReviewItems() {
     return;
   }
 
+  const norm = (s) => (s || '').replace(/\s/g, '').toLowerCase();
+  let added = 0, skipped = 0;
   selected.forEach(it => {
+    // 🔧 저장 직전 최종 중복 확인 (같은 캡처 두 번 저장 등 방지)
+    const already = (budget.expenses || []).some(e =>
+      e.type !== 'income' &&
+      e.dateKey === it.date &&
+      Number(e.amt) === Number(it.amount) &&
+      norm(e.memo).includes(norm(it.store).slice(0, 4))
+    );
+    if (already) { skipped++; return; }
     const [y, m, d] = (it.date || todayKey()).split('-').map(Number);
     budget.expenses.push({
       id: Date.now() + Math.random(),
@@ -8561,10 +8884,13 @@ function saveCardReviewItems() {
       date: d,
       type: 'expense',
     });
+    added++;
   });
 
   saveData();
-  showToast(`✨ ${selected.length}개 항목 추가됨`);
+  showToast(skipped > 0
+    ? `✨ ${added}개 추가 (중복 ${skipped}개 제외)`
+    : `✨ ${added}개 항목 추가됨`);
   closeModal();
   renderMoney();
   delete window._cardReviewItems;
@@ -9263,8 +9589,8 @@ function renderAsset() {
   const tabs = [
     { id:'holdings', label:'보유' },
     { id:'plan',     label:'플랜' },
-    { id:'briefing', label:'브리핑' },
-    { id:'news',     label:'뉴스' },
+    { id:'analysis', label:'🔍 AI분석' },
+    { id:'market',   label:'시장·뉴스' },
     { id:'youtube',  label:'유튜브' },
   ];
   html += `<div style="display:flex; gap:4px; margin-bottom:14px; border-bottom:0.5px solid var(--border-tertiary); padding-bottom:6px; overflow-x:auto;">`;
@@ -9463,10 +9789,10 @@ function renderAsset() {
     }
   } else if (assetTab === 'plan') {
     html += renderAssetPlan(total, byType);
-  } else if (assetTab === 'briefing') {
-    html += renderAssetBriefing(total, byType);
-  } else if (assetTab === 'news') {
-    html += renderAssetNews();
+  } else if (assetTab === 'analysis') {
+    html += renderAssetAnalysis();
+  } else if (assetTab === 'market') {
+    html += renderAssetMarket(total, byType);
   } else if (assetTab === 'youtube') {
     html += renderAssetYoutube();
   }
@@ -9476,22 +9802,16 @@ function renderAsset() {
   // 시장 지수 로드
   loadMarketIndices();
 
-  // 뉴스 탭이면 RSS 로드
-  if (assetTab === 'news') {
+  // 시장·뉴스 통합 탭 — RSS + AI 뉴스요약 + AI 시장 브리핑 모두 로드
+  if (assetTab === 'market') {
     setTimeout(() => loadNewsRSS(), 50);
     setTimeout(() => loadAINewsSummary(), 100);
+    setTimeout(async () => { await loadAIBriefing(false); }, 150);
   }
 
   // 플랜 탭이면 AI 액션 호출
   if (assetTab === 'plan') {
     setTimeout(() => loadAIActionAdvice(), 100);
-  }
-
-  // 브리핑 탭이면 AI 시장 브리핑 로드 (순차적으로 호출 - 429 방지)
-  if (assetTab === 'briefing') {
-    setTimeout(async () => {
-      await loadAIBriefing(false);
-    }, 100);
   }
 
   // 자산 시세 자동 갱신 (보유 탭에 있을 때만, 5분에 한 번)
@@ -10473,7 +10793,7 @@ async function loadAIBriefing(forceRefresh, retryCount = 0) {
     </div>`;
     if (window._aiInFlight[briefingCacheKey]) {
       window._aiInFlight[briefingCacheKey].then(() => {
-        if (currentTab === 'asset' && assetTab === 'briefing') {
+        if (currentTab === 'asset' && assetTab === 'market') {
           loadAIBriefing(false);
         }
       });
@@ -10822,7 +11142,7 @@ async function loadAINewsSummary(forceRefresh = false) {
     </div>`;
     if (window._aiInFlight[cacheKey]) {
       window._aiInFlight[cacheKey].then(() => {
-        if (currentTab === 'asset' && assetTab === 'news') {
+        if (currentTab === 'asset' && assetTab === 'market') {
           loadAINewsSummary(false);
         }
       });
@@ -11787,95 +12107,6 @@ async function loadVideosInto(containerId, query, maxResults = 8, order = 'relev
   container.innerHTML = result.map(renderVideoCard).join('');
 }
 
-// ====== 자산 - 오늘의 브리핑 ======
-function renderAssetBriefing(total, byType) {
-  const dateStr = `${currentMonth+1}월 ${today}일`;
-  const stockNames = assets.filter(a => a.type === '주식' || a.type === '펀드').map(a => a.name);
-  const hasCoin = assets.some(a => a.type === '코인');
-  const stockPct = ((byType['주식'] || 0) + (byType['펀드'] || 0)) / Math.max(total, 1) * 100;
-
-  // 오늘의 코칭 한 줄 (자산 기반)
-  let coachMsg = '';
-  if (total === 0) {
-    coachMsg = '먼저 보유 탭에서 자산을 추가해주세요.';
-  } else if (stockPct > 70) {
-    coachMsg = '주식 비중이 높아요. 시장 하락에 대비한 안전자산 확보를 고려하세요.';
-  } else if (stockPct < 20 && total > 5000000) {
-    coachMsg = '안전자산 위주예요. 인플레이션 헤지를 위해 적립식 ETF로 주식 비중을 늘려보세요.';
-  } else {
-    coachMsg = '균형 잡힌 포트폴리오를 유지 중. 매월 정기 적립으로 자산을 키워가세요.';
-  }
-
-  let html = '';
-
-  // ★ AI 시장 브리핑 (제일 위)
-  html += `
-    <div id="ai-market-briefing" style="margin-bottom:14px;">
-      <div style="padding:18px; background:linear-gradient(135deg, #1A1A1A 0%, #2D2D2D 100%); border-radius:14px; color:white;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-          <div style="display:flex; align-items:center; gap:6px;">
-            <i class="ti ti-sparkles" style="font-size:14px; color:#FFD700;"></i>
-            <span style="font-size:11px; font-weight:600; letter-spacing:0.5px;">AI 시장 브리핑</span>
-          </div>
-          <button onclick="loadAIBriefing(true)" style="border:none; background:rgba(255,255,255,0.15); color:white; padding:5px 10px; border-radius:6px; font-size:10px; cursor:pointer; font-family:inherit;">
-            <i class="ti ti-refresh" style="font-size:11px;"></i> 새로고침
-          </button>
-        </div>
-        <div id="ai-briefing-content" style="font-size:12px; line-height:1.7; opacity:0.92;">
-          <div style="display:flex; align-items:center; gap:8px; padding:14px 0;">
-            <div class="spinner" style="border-color:rgba(255,255,255,0.3); border-top-color:white;"></div>
-            <span style="font-size:11px; opacity:0.8;">AI가 시장 상황 분석 중...</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
-
-  // 내 경제 사이트
-  html += `
-    <div style="display:flex; align-items:center; justify-content:space-between; margin: 18px 0 8px;">
-      <div style="font-size:14px; font-weight:600;">내 경제 사이트 ${economySites.length}개</div>
-      <button onclick="openAddSiteModal()" style="border:none; background:var(--text-info); color:white; padding:6px 12px; border-radius:999px; font-size:11px; font-weight:500; cursor:pointer; font-family:inherit;">+ 사이트 추가</button>
-    </div>
-
-    <div style="padding:10px 12px; background:var(--bg-secondary); border-radius:var(--radius-md); margin-bottom:12px; font-size:11px; color:var(--text-secondary); line-height:1.5;">
-      <i class="ti ti-info-circle" style="font-size:12px; vertical-align:-1px;"></i>
-      카드를 탭하면 사이트가 열려요. 길게 누르거나 우측 메뉴로 수정/삭제 가능.
-    </div>
-  `;
-
-  if (economySites.length === 0) {
-    html += `<div class="empty-state" style="padding:30px 20px;">
-      <i class="ti ti-link"></i>
-      등록된 사이트가 없어요<br>
-      <span style="font-size:11px; opacity:0.7;">+ 사이트 추가로 등록하세요</span>
-    </div>`;
-  } else {
-    economySites.forEach(s => {
-      const domain = (s.url.match(/https?:\/\/([^\/]+)/) || [])[1] || s.url;
-      html += `
-        <div style="display:flex; gap:10px; padding:12px 14px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); margin-bottom:8px; align-items:center; background:white;">
-          <button onclick="openExt('${s.url}')" style="flex:1; min-width:0; display:flex; gap:10px; align-items:center; border:none; background:transparent; cursor:pointer; padding:0; text-align:left; font-family:inherit;">
-            <div style="width:36px; height:36px; border-radius:8px; background:var(--bg-info); color:var(--text-info); display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:600; flex-shrink:0;">
-              ${s.name[0]}
-            </div>
-            <div style="flex:1; min-width:0;">
-              <div style="font-size:13px; font-weight:500; color:var(--text-primary);">${s.name}</div>
-              <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${s.desc || domain}</div>
-            </div>
-            <i class="ti ti-external-link" style="font-size:14px; color:var(--text-tertiary); flex-shrink:0;"></i>
-          </button>
-          <button onclick="editSite(${s.id})" style="border:none; background:transparent; cursor:pointer; padding:6px; color:var(--text-tertiary); font-family:inherit;" aria-label="수정">
-            <i class="ti ti-edit" style="font-size:16px;"></i>
-          </button>
-        </div>
-      `;
-    });
-  }
-
-  return html;
-}
-
 // ====== 경제 사이트 추가/수정/삭제 ======
 function openAddSiteModal() {
   modal.innerHTML = `
@@ -12194,47 +12425,101 @@ async function fetchNewsRSS() {
   return finalItems;
 }
 
-function renderAssetNews() {
-  const stockNames = assets.filter(a => a.type === '주식' || a.type === '펀드').map(a => a.name);
+// 🔧 시장·뉴스 통합 탭 — AI 시장 브리핑 + AI 뉴스요약 + 경제뉴스 + 보유종목 뉴스 + 내 경제 사이트
+function renderAssetMarket(total, byType) {
+  let html = '';
 
-  let html = `
-    <!-- AI 뉴스 요약 -->
-    <div id="ai-news-summary"></div>
+  // 1) AI 시장 브리핑
+  html += `
+    <div id="ai-market-briefing" style="margin-bottom:14px;">
+      <div style="padding:18px; background:linear-gradient(135deg, #1A1A1A 0%, #2D2D2D 100%); border-radius:14px; color:white;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+          <div style="display:flex; align-items:center; gap:6px;">
+            <i class="ti ti-sparkles" style="font-size:14px; color:#FFD700;"></i>
+            <span style="font-size:11px; font-weight:600; letter-spacing:0.5px;">AI 시장 브리핑</span>
+          </div>
+          <button onclick="loadAIBriefing(true)" style="border:none; background:rgba(255,255,255,0.15); color:white; padding:5px 10px; border-radius:6px; font-size:10px; cursor:pointer; font-family:inherit;">
+            <i class="ti ti-refresh" style="font-size:11px;"></i> 새로고침
+          </button>
+        </div>
+        <div id="ai-briefing-content" style="font-size:12px; line-height:1.7; opacity:0.92;">
+          <div style="display:flex; align-items:center; gap:8px; padding:14px 0;">
+            <div class="spinner" style="border-color:rgba(255,255,255,0.3); border-top-color:white;"></div>
+            <span style="font-size:11px; opacity:0.8;">AI가 시장 상황 분석 중...</span>
+          </div>
+        </div>
+      </div>
+    </div>`;
 
+  // 2) AI 뉴스 요약
+  html += `<div id="ai-news-summary" style="margin-bottom:14px;"></div>`;
+
+  // 3) 오늘의 경제 뉴스 (RSS)
+  html += `
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
       <span style="font-size:13px; font-weight:600;">📰 오늘의 경제 뉴스</span>
       <button onclick="refreshNews()" style="border:none; background:transparent; color:var(--text-info); font-size:11px; cursor:pointer; font-family:inherit;">
         <i class="ti ti-refresh" style="font-size:12px;"></i> 새로고침
       </button>
     </div>
-
     <div style="padding:10px 12px; background:var(--bg-info); border-radius:var(--radius-md); margin-bottom:14px; font-size:11px; color:var(--text-info); line-height:1.5;">
       <i class="ti ti-info-circle" style="font-size:12px; vertical-align:-1px;"></i>
       인베스팅닷컴, 한경증권, 한국경제, Yahoo Finance에서 자동으로 가져와요 (5분마다 갱신)
     </div>
-
     <div id="news-list">
       <div style="text-align:center; padding:30px 20px; color:var(--text-tertiary); font-size:12px;">
         <div class="spinner" style="margin:0 auto 10px;"></div>
         뉴스 불러오는 중...
       </div>
-    </div>
-  `;
+    </div>`;
 
-  // 내 종목 검색
+  // 4) 내 보유 종목 뉴스
+  const stockNames = assets.filter(a => a.type === '주식' || a.type === '펀드').map(a => a.name);
   if (stockNames.length > 0) {
     html += `<div style="font-size:13px; font-weight:600; margin: 18px 0 8px;">내 보유 종목 뉴스</div>`;
     stockNames.slice(0, 5).forEach(name => {
       html += `
-        <div onclick="openNews('${name} 주가 뉴스')" style="padding:10px 12px; margin-bottom:6px; background:var(--bg-secondary); border-radius:var(--radius-md); cursor:pointer; display:flex; align-items:center; gap:10px;">
+        <div onclick="openNews('${name.replace(/'/g, "\\'")} 주가 뉴스')" style="padding:10px 12px; margin-bottom:6px; background:var(--bg-secondary); border-radius:var(--radius-md); cursor:pointer; display:flex; align-items:center; gap:10px;">
           <div style="width:32px; height:32px; border-radius:8px; background:white; display:flex; align-items:center; justify-content:center; color:var(--text-info); font-size:13px; font-weight:600; flex-shrink:0;">${name[0]}</div>
           <div style="flex:1; min-width:0;">
             <div style="font-size:13px; font-weight:500;">${name} 관련 뉴스 검색</div>
             <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">네이버 뉴스에서 보기</div>
           </div>
           <i class="ti ti-external-link" style="font-size:14px; color:var(--text-tertiary);"></i>
-        </div>
-      `;
+        </div>`;
+    });
+  }
+
+  // 5) 내 경제 사이트
+  html += `
+    <div style="display:flex; align-items:center; justify-content:space-between; margin: 22px 0 8px;">
+      <div style="font-size:14px; font-weight:600;">🔖 내 경제 사이트 ${economySites.length}개</div>
+      <button onclick="openAddSiteModal()" style="border:none; background:var(--text-info); color:white; padding:6px 12px; border-radius:999px; font-size:11px; font-weight:500; cursor:pointer; font-family:inherit;">+ 사이트 추가</button>
+    </div>`;
+
+  if (economySites.length === 0) {
+    html += `<div class="empty-state" style="padding:24px 20px;">
+      <i class="ti ti-link"></i>
+      등록된 사이트가 없어요<br>
+      <span style="font-size:11px; opacity:0.7;">+ 사이트 추가로 등록하세요</span>
+    </div>`;
+  } else {
+    economySites.forEach(s => {
+      const domain = (s.url.match(/https?:\/\/([^\/]+)/) || [])[1] || s.url;
+      html += `
+        <div style="display:flex; gap:10px; padding:12px 14px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); margin-bottom:8px; align-items:center; background:white;">
+          <button onclick="openExt('${s.url}')" style="flex:1; min-width:0; display:flex; gap:10px; align-items:center; border:none; background:transparent; cursor:pointer; padding:0; text-align:left; font-family:inherit;">
+            <div style="width:36px; height:36px; border-radius:8px; background:var(--bg-info); color:var(--text-info); display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:600; flex-shrink:0;">${s.name[0]}</div>
+            <div style="flex:1; min-width:0;">
+              <div style="font-size:13px; font-weight:500; color:var(--text-primary);">${s.name}</div>
+              <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${s.desc || domain}</div>
+            </div>
+            <i class="ti ti-external-link" style="font-size:14px; color:var(--text-tertiary); flex-shrink:0;"></i>
+          </button>
+          <button onclick="editSite(${s.id})" style="border:none; background:transparent; cursor:pointer; padding:6px; color:var(--text-tertiary); font-family:inherit;" aria-label="수정">
+            <i class="ti ti-edit" style="font-size:16px;"></i>
+          </button>
+        </div>`;
     });
   }
 
@@ -12614,7 +12899,7 @@ async function loadAIAssetCoach(total, byType, expected1Y, expected3Y, expected1
     if (window._aiInFlight[cacheKey]) {
       window._aiInFlight[cacheKey].then(() => {
         // 결과 받으면 다시 렌더 (현재 탭이 자산이면)
-        if (currentTab === 'asset' && assetTab === 'briefing') {
+        if (currentTab === 'asset' && assetTab === 'market') {
           loadAIAssetCoach(total, byType, expected1Y, expected3Y, expected10Y, false);
         }
       });
@@ -12922,9 +13207,12 @@ async function saveAIKey() {
 
   // 현재 탭에 AI 카드 있으면 새로 로드
   if (currentTab === 'asset') {
-    if (assetTab === 'briefing') loadAIBriefing(true);
-    else if (assetTab === 'plan') loadAIActionAdvice();
-    else if (assetTab === 'news') loadAINewsSummary();
+    if (assetTab === 'market') {
+      loadAIBriefing(true);
+      loadAINewsSummary();
+    } else if (assetTab === 'plan') {
+      loadAIActionAdvice();
+    }
   }
 }
 
