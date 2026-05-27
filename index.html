@@ -5933,6 +5933,25 @@ async function runAIStockAnalysis() {
     console.warn('기술적 지표 계산 건너뜀', e);
   }
 
+  // 🔧 종목 최신 뉴스 — 구글뉴스 RSS로 받아 프롬프트에 공급 (옛 정보 단정 방지)
+  let newsText = '';
+  try {
+    statusEl.innerHTML = `<div style="display:flex; align-items:center; justify-content:center; gap:8px;"><div class="spinner" style="width:14px; height:14px;"></div>"${stockName}" 최신 뉴스 수집 중...</div>`;
+    const stockNews = await fetchStockNews(stockName);
+    if (stockNews && stockNews.length > 0) {
+      const lines = stockNews.map(n => `- ${n.date ? `(${n.date}) ` : ''}${n.title}`).join('\n');
+      newsText = `
+
+## 참고: '${stockName}' 최근 뉴스 헤드라인 (구글뉴스 실시간 수집)
+${lines}
+
+위 뉴스는 방금 수집한 실제 최신 헤드라인이야. 2번 섹션(최근 실적·이벤트)과 5번(성장 모멘텀)에서 이 뉴스 흐름을 반드시 반영해줘. 뉴스에 없는 옛날 정보를 "최근"이라고 단정하지 마.`;
+    }
+    statusEl.innerHTML = `<div style="display:flex; align-items:center; justify-content:center; gap:8px;"><div class="spinner" style="width:14px; height:14px;"></div>"${stockName}" 분석 중...</div>`;
+  } catch (e) {
+    console.warn('종목 뉴스 수집 건너뜀', e);
+  }
+
   const _now = new Date();
   const _todayStr = `${_now.getFullYear()}년 ${_now.getMonth()+1}월`;
 
@@ -5991,7 +6010,10 @@ async function runAIStockAnalysis() {
 ⚠️ 본 분석은 일반적인 정보 제공 목적이며, 모든 투자 책임은 본인에게 있습니다.
 
 답변은 **존댓말**로, 객관적이고 담백하게. 구체적 숫자·예시 포함, 추측은 "(추정)" 표시. 감탄사나 과장 없이 사실 위주로.
-⚠️ 중요: 최근 실적·이벤트는 시점이 불확실할 수 있으니, 확실하지 않은 날짜·수치는 "(추정)" 또는 "(약 ~분기)"로 표시하고 단정하지 마. 모르는 최신 정보는 "최신 공시를 확인하세요"라고 안내해.${techText}`;
+⚠️ 정보 처리 원칙:
+- 아래 '최근 뉴스 헤드라인'이 제공되면 그걸 최신 사실의 근거로 삼아. 뉴스에 나온 내용은 자신있게 분석해도 돼.
+- 뉴스에 없고 너도 확실하지 않은 수치(정확한 분기 영업이익 등)는 "(${_todayStr} 기준 공시 확인 필요)"라고 표시해.
+- 단, 사업 구조·산업 특성·밸류에이션 개념처럼 잘 변하지 않는 내용은 그렇게 표시하지 말고 정상적으로 분석해. 모든 문장에 단서를 달지 마.${techText}${newsText}`;
 
   try {
     // 🔧 공용 askGemini 사용 — 자산코치·뉴스요약과 같은 경로(모델 폴백·재시도 공유)
@@ -12556,6 +12578,65 @@ function deleteSite(id) {
 
 // ====== 자산 - 뉴스 (RSS 자동 피드) ======
 let newsCache = null;
+
+// 🔧 특정 종목 뉴스 — 구글 뉴스 RSS로 종목명 검색 (AI 투자분석에 최신 뉴스 공급용)
+async function fetchStockNews(stockName) {
+  if (!stockName) return [];
+  const query = encodeURIComponent(stockName + ' 주가');
+  const rssUrl = `https://news.google.com/rss/search?q=${query}&hl=ko&gl=KR&ceid=KR:ko`;
+
+  const proxies = [
+    url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
+    url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
+    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    url => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`,
+  ];
+
+  for (const proxyFn of proxies) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(proxyFn(rssUrl), { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (!res.ok) continue;
+
+      let xml;
+      const ct = res.headers.get('content-type') || '';
+      if (ct.includes('json')) {
+        const w = await res.json();
+        xml = w.contents || '';
+      } else {
+        xml = await res.text();
+      }
+      if (!xml || !xml.includes('<item')) continue;
+
+      // <item> 파싱
+      const items = [];
+      const itemMatches = xml.match(/<item>[\s\S]*?<\/item>/g) || [];
+      for (const block of itemMatches.slice(0, 8)) {
+        const titleM = block.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
+        const dateM = block.match(/<pubDate>([\s\S]*?)<\/pubDate>/);
+        if (titleM) {
+          let title = titleM[1].trim().replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;/g,"'");
+          let dateStr = '';
+          if (dateM) {
+            const d = new Date(dateM[1]);
+            if (!isNaN(d)) dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+          }
+          items.push({ title, date: dateStr });
+        }
+      }
+      if (items.length > 0) {
+        console.log(`📰 ${stockName} 뉴스 ${items.length}건 수집`);
+        return items;
+      }
+    } catch (e) {
+      continue;
+    }
+  }
+  console.warn(`${stockName} 뉴스 수집 실패`);
+  return [];
+}
 
 async function fetchNewsRSS() {
   if (newsCache && Date.now() - newsCache.time < 5 * 60 * 1000) {
