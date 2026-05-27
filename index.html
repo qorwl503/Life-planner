@@ -9239,6 +9239,36 @@ function openSellSimulator(assetId) {
       </div>
       ` : ''}
 
+      <div class="field">
+        <div class="field-label">증권사 수수료</div>
+        <select id="sell-broker" onchange="onSellBrokerChange(${assetId})" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit;">
+          ${isUS ? `
+            <option value="0.07">키움증권 미국 (0.07%)</option>
+            <option value="0.25">토스증권 미국 (0.25%)</option>
+            <option value="0.25">미래에셋 미국 (0.25%)</option>
+            <option value="0.20">삼성증권 미국 (0.20%)</option>
+            <option value="0.09">나무증권 미국 (0.09%)</option>
+          ` : `
+            <option value="0.015">키움증권 (0.015%)</option>
+            <option value="0.015">토스증권 (0.015%)</option>
+            <option value="0.014">미래에셋 (0.014%)</option>
+            <option value="0.0036363">삼성증권 (0.0036%)</option>
+            <option value="0.015">NH나무 (0.015%)</option>
+          `}
+          <option value="custom">직접 입력</option>
+        </select>
+        <div id="sell-fee-custom" style="display:none; margin-top:8px;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <input type="number" id="sell-fee-rate" value="${isUS ? '0.07' : '0.015'}" step="0.001" min="0"
+              oninput="calcSellResult(${assetId})" style="flex:1;" />
+            <span style="font-size:12px; color:var(--text-secondary);">%</span>
+          </div>
+        </div>
+        <div style="font-size:9px; color:var(--text-tertiary); margin-top:3px; line-height:1.5;">
+          증권사·계좌·이벤트에 따라 실제 수수료는 다를 수 있어요. 정확한 값은 본인 계좌에서 확인하세요.
+        </div>
+      </div>
+
       <input type="hidden" id="sell-krwavg" value="${krwAvg}" />
       <input type="hidden" id="sell-isus" value="${isUS ? '1' : '0'}" />
 
@@ -9254,6 +9284,22 @@ function openSellSimulator(assetId) {
   setTimeout(() => calcSellResult(assetId), 50);
 }
 
+// 🔧 증권사 선택 변경 — '직접 입력'이면 입력칸 표시
+function onSellBrokerChange(assetId) {
+  const sel = document.getElementById('sell-broker');
+  const customWrap = document.getElementById('sell-fee-custom');
+  if (!sel || !customWrap) return;
+  if (sel.value === 'custom') {
+    customWrap.style.display = 'block';
+  } else {
+    customWrap.style.display = 'none';
+    // 선택한 증권사 수수료율을 직접입력칸에도 반영(계산은 이 값을 읽음)
+    const rateInput = document.getElementById('sell-fee-rate');
+    if (rateInput) rateInput.value = sel.value;
+  }
+  calcSellResult(assetId);
+}
+
 function calcSellResult(assetId) {
   const sellQty = Number(document.getElementById('sell-qty')?.value) || 0;
   const sellPrice = Number(document.getElementById('sell-price')?.value) || 0;
@@ -9262,6 +9308,18 @@ function calcSellResult(assetId) {
   const priorProfit = Number(document.getElementById('sell-prior')?.value) || 0;
   const resultEl = document.getElementById('sell-result');
   if (!resultEl) return;
+
+  // 🔧 수수료율 — 증권사 선택값 또는 직접입력값
+  const brokerSel = document.getElementById('sell-broker');
+  let feeRatePct;
+  if (brokerSel && brokerSel.value === 'custom') {
+    feeRatePct = Number(document.getElementById('sell-fee-rate')?.value) || 0;
+  } else if (brokerSel) {
+    feeRatePct = Number(brokerSel.value) || 0;
+  } else {
+    feeRatePct = isUS ? 0.07 : 0.015;
+  }
+  const feeRate = feeRatePct / 100; // % → 비율
 
   if (sellQty <= 0 || sellPrice <= 0) {
     resultEl.innerHTML = `<div style="padding:14px; text-align:center; color:var(--text-tertiary); font-size:12px;">매도 수량과 단가를 입력하세요.</div>`;
@@ -9289,8 +9347,8 @@ function calcSellResult(assetId) {
     taxDetail = `매도금액 ${Math.round(grossSell).toLocaleString()}원 × 0.18%`;
   }
 
-  // 거래수수료 (매도, 대략 0.015%)
-  const fee = Math.round(grossSell * 0.00015);
+  // 거래수수료 (매도, 선택한 증권사 수수료율)
+  const fee = Math.round(grossSell * feeRate);
   const netReceive = grossSell - tax - fee;     // 최종 실수령액
   const netProfit = netReceive - buyValue;      // 세후 실현손익
   const netProfitPct = buyValue > 0 ? (netProfit / buyValue * 100) : 0;
@@ -9309,7 +9367,7 @@ function calcSellResult(assetId) {
       ${line('세전 매매차익', (rawProfit>=0?'+':'') + Math.round(rawProfit).toLocaleString() + '원', rawProfit>=0?'var(--text-danger)':'var(--text-info)')}
       <div style="border-top:0.5px solid var(--border-tertiary); margin:4px 0;"></div>
       ${line(taxLabel, '− ' + tax.toLocaleString() + '원')}
-      ${line('거래수수료(추정)', '− ' + fee.toLocaleString() + '원')}
+      ${line(`거래수수료 (${feeRatePct}%)`, '− ' + fee.toLocaleString() + '원')}
       <div style="font-size:9px; color:var(--text-tertiary); padding:2px 0 6px;">${taxDetail}</div>
       <div style="border-top:1px solid var(--border-secondary); margin:4px 0;"></div>
       <div style="display:flex; justify-content:space-between; padding:8px 0 2px;">
@@ -9599,7 +9657,6 @@ function renderAsset() {
     <h1>자산</h1>
     <div class="header-actions">
       <button onclick="manualRefreshPrices()" aria-label="새로고침" id="refresh-btn"><i class="ti ti-refresh"></i></button>
-      <button onclick="goAIAnalysisTab()" aria-label="AI 투자 분석"><i class="ti ti-search"></i></button>
       <button onclick="openAssetCoachSettings()" aria-label="AI 자산 코치 설정"><i class="ti ti-target"></i></button>
       <button onclick="openAssetAddModal()" aria-label="추가"><i class="ti ti-plus"></i></button>
     </div>
