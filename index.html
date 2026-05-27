@@ -5708,7 +5708,7 @@ function saveFixed() {
   saveData();
   showToast(`${name} 추가됨${autoBuy ? ' (자동매수 활성)' : ''}`);
   closeModal();
-  renderMoney();
+  render(); // 🔧 현재 탭에 맞게 렌더 (가계부서 추가하면 가계부, 자산서 추가하면 자산)
 }
 
 // 시뮬레이션 직접 조정
@@ -5887,29 +5887,56 @@ async function runAIStockAnalysis() {
   const statusEl = document.getElementById('ai-analysis-status');
   const resultEl = document.getElementById('ai-analysis-result');
 
-  // 24시간 캐시 체크
+  // 캐시 키 (askGemini가 24시간 캐시 처리)
   const cacheKey = `ai_analysis_${stockName.toLowerCase()}`;
-  const cached = JSON.parse(localStorage.getItem(cacheKey) || 'null');
-  if (cached && Date.now() - cached.time < 24 * 60 * 60 * 1000) {
-    statusEl.style.display = 'none';
-    resultEl.style.display = 'block';
-    resultEl.innerHTML = `
-      <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:8px; text-align:right;">
-        🕐 ${new Date(cached.time).toLocaleString('ko-KR', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})} 분석 (24시간 캐시)
-        · <a href="#" onclick="event.preventDefault(); localStorage.removeItem('${cacheKey}'); runAIStockAnalysis();" style="color:var(--text-info);">새로 분석</a>
-      </div>
-      ${markdownToHTML(cached.result)}
-    `;
-    return;
-  }
 
   statusEl.style.display = 'block';
   statusEl.innerHTML = `<div style="display:flex; align-items:center; justify-content:center; gap:8px;"><div class="spinner" style="width:14px; height:14px;"></div>"${stockName}" 분석 중...</div>`;
   resultEl.style.display = 'none';
 
-  const prompt = `너는 15년차 주식 애널리스트야. 사용자가 '${stockName}' 종목 투자 분석을 요청했어.
+  // 🔧 기술적 지표 — 입력 종목이 보유 자산이면 차트 데이터로 지표 계산해 프롬프트에 추가
+  let techText = '';
+  try {
+    const norm = (s) => (s || '').replace(/\s/g, '').toLowerCase();
+    const matchAsset = (assets || []).find(a =>
+      ['주식','ETF','펀드'].includes(a.type) && a.ticker &&
+      (norm(a.name) === norm(stockName) || norm(a.ticker) === norm(stockName))
+    );
+    if (matchAsset && matchAsset.ticker) {
+      let t = matchAsset.ticker.trim();
+      if (/^\d{6}$/.test(t)) t = t + '.KS';
+      let cached = histPriceCache[t];
+      if (!cached || !cached.series) {
+        await fetchYahooHistorical(t);
+        cached = histPriceCache[t];
+      }
+      if (cached && cached.series) {
+        const ti = calcTechnicalIndicators(cached.series);
+        if (ti) {
+          const f = (v) => v == null ? '-' : Math.round(v).toLocaleString();
+          techText = `
+
+## 참고: 실제 시세 기반 기술적 지표 (앱이 계산한 객관적 수치)
+- 현재가: ${f(ti.current)}원
+- 이동평균: 20일 ${f(ti.ma20)} / 60일 ${f(ti.ma60)} / 120일 ${f(ti.ma120)}
+- RSI(14): ${ti.rsi != null ? ti.rsi.toFixed(1) : '-'}
+- 최근 1년 고점 ${f(ti.high)} / 저점 ${f(ti.low)} (현재가는 그 범위의 ${ti.posInRange.toFixed(0)}% 지점)
+- 최근 1개월 ${ti.chg1m != null ? ti.chg1m.toFixed(1)+'%' : '-'} / 3개월 ${ti.chg3m != null ? ti.chg3m.toFixed(1)+'%' : '-'}
+- 추세: ${ti.trend}
+- 기술적 신호(단순 규칙 기반): ${ti.signal} (${ti.signalReason})
+
+위 수치는 앱이 야후 시세로 계산한 실제값이야. 5번 섹션(성장 모멘텀)과 7번(투자 의견)에서 이 기술적 지표를 반드시 반영해서 분석해줘.`;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('기술적 지표 계산 건너뜀', e);
+  }
+
+  const prompt = `너는 증권사 리서치센터의 주식 애널리스트야. 사용자가 '${stockName}' 종목 투자 분석을 요청했어.
 
 다음 7개 섹션으로 **전문적이고 구체적으로** 분석해줘. Markdown 형식 사용, 한국어로.
+말투는 **존댓말**로, 차분하고 객관적인 리서치 보고서 톤을 유지해. 과장된 표현·감탄사·농담은 쓰지 말고, 사실과 수치 중심으로 담백하게 작성해.
 
 ## 📊 1. 기업 개요 & 현재 사업
 - 회사명/티커, 시가총액, 섹터/산업
@@ -5953,36 +5980,50 @@ async function runAIStockAnalysis() {
 ---
 ⚠️ 본 분석은 일반적인 정보 제공 목적이며, 모든 투자 책임은 본인에게 있습니다.
 
-답변은 친근하게 (반말 OK), 구체적 숫자/예시 포함, 추측은 "(추정)" 표시.
-⚠️ 중요: 최근 실적·이벤트는 시점이 불확실할 수 있으니, 확실하지 않은 날짜·수치는 "(추정)" 또는 "(약 ~분기)"로 표시하고 단정하지 마. 모르는 최신 정보는 "최신 공시를 확인하세요"라고 안내해.`;
+답변은 **존댓말**로, 객관적이고 담백하게. 구체적 숫자·예시 포함, 추측은 "(추정)" 표시. 감탄사나 과장 없이 사실 위주로.
+⚠️ 중요: 최근 실적·이벤트는 시점이 불확실할 수 있으니, 확실하지 않은 날짜·수치는 "(추정)" 또는 "(약 ~분기)"로 표시하고 단정하지 마. 모르는 최신 정보는 "최신 공시를 확인하세요"라고 안내해.${techText}`;
 
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${window.GEMINI_API_KEY}`;
-    const body = {
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.3, maxOutputTokens: 6000 }
-    };
-
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+    // 🔧 공용 askGemini 사용 — 자산코치·뉴스요약과 같은 경로(모델 폴백·재시도 공유)
+    // askGemini는 실패해도 throw하지 않고 {error} 객체를 반환함
+    const resp = await askGemini(prompt, {
+      useCache: true,
+      cacheKey: cacheKey,
+      maxRetries: 2,
     });
 
-    const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error?.message || `HTTP ${res.status}`);
+    // 실패 응답 처리
+    if (!resp || resp.error) {
+      const errMsg = (resp && resp.error) ? resp.error : '응답을 받지 못했어요';
+      const low = errMsg.toLowerCase();
+      let friendly;
+      if (low.includes('429') || low.includes('quota') || low.includes('resource_exhausted')) {
+        friendly = `⏳ 오늘 AI 무료 사용량을 다 썼어요.<br>
+          <span style="font-size:10px; color:var(--text-tertiary);">Gemini 무료 등급은 하루·분당 호출 제한이 있어요. 1~2분 후 또는 내일 다시 시도하거나 다른 API 키를 등록해보세요.</span>`;
+      } else if (low.includes('503') || low.includes('unavailable') || low.includes('overload')) {
+        friendly = `🔄 AI 서버가 잠시 혼잡해요.<br><span style="font-size:10px; color:var(--text-tertiary);">잠시 후 다시 시도해주세요.</span>`;
+      } else if (low.includes('403') || low.includes('forbidden') || low.includes('api key') || low.includes('api_key')) {
+        friendly = `🔑 API 키에 문제가 있어요.<br><span style="font-size:10px; color:var(--text-tertiary);">설정에서 키를 다시 확인하거나 새로 등록해주세요.</span>`;
+      } else {
+        friendly = `❌ 분석 실패: ${errMsg}`;
+      }
+      statusEl.style.display = 'block';
+      statusEl.innerHTML = `<div style="color:var(--text-danger); line-height:1.6; text-align:center;">${friendly}</div>`;
+      return;
+    }
 
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    if (!text) throw new Error('빈 응답');
-
-    // 캐시 저장
-    localStorage.setItem(cacheKey, JSON.stringify({ result: text, time: Date.now() }));
+    const text = resp.text || '';
+    if (!text) {
+      statusEl.style.display = 'block';
+      statusEl.innerHTML = `<div style="color:var(--text-danger); text-align:center;">❌ AI가 빈 응답을 보냈어요. 다시 시도해주세요.</div>`;
+      return;
+    }
 
     statusEl.style.display = 'none';
     resultEl.style.display = 'block';
     resultEl.innerHTML = `
       <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:10px; text-align:right;">
-        ✨ ${new Date().toLocaleString('ko-KR', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})} 새 분석
+        ✨ ${new Date().toLocaleString('ko-KR', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})} 분석${resp.cached ? ' (캐시)' : ''}
       </div>
       ${markdownToHTML(text)}
       <div style="margin-top:14px; padding-top:12px; border-top:0.5px solid var(--border-tertiary); font-size:9px; color:var(--text-tertiary); line-height:1.5;">
@@ -8028,7 +8069,7 @@ async function processAssetCapture(input) {
 - 매입단가/평균단가가 직접 있으면 → 그 값 그대로
 - 예: "평가금액 2,800,000원 / 100주" → price=28000, qty=100`;
 
-    const ocrModels = ['gemini-flash-latest', 'gemini-2.5-flash'];
+    const ocrModels = ['gemini-2.5-flash', 'gemini-flash-latest'];
     const body = {
       contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64 } }] }],
       generationConfig: { temperature: 0.1, maxOutputTokens: 8000 }
@@ -8170,7 +8211,7 @@ async function processFixedCapture(input) {
 
 ⚠️ 일회성 지출(한 번만 쓴 것)은 제외하고, 정기적으로 빠져나가는 것만 추출해.`;
 
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${window.GEMINI_API_KEY}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${window.GEMINI_API_KEY}`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -8299,7 +8340,7 @@ function applyFixedReview() {
   saveData();
   closeModal();
   showToast(`고정지출 ${added}개 추가, ${updated}개 수정됨`);
-  renderMoney();
+  render(); // 🔧 현재 탭 유지
 }
 
 function openAssetReviewModal(items) {
@@ -8717,7 +8758,7 @@ async function processCardCapture(input) {
 
 만약 분석 불가하면: {"items":[],"error":"이유"}`;
 
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${window.GEMINI_API_KEY}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${window.GEMINI_API_KEY}`;
 
       const body = {
         contents: [{
@@ -9386,6 +9427,67 @@ function calcSellResult(assetId) {
 
 // 🔧 주가 차트 SVG 생성 — 1년치 종가 선그래프 + 거래량 막대
 // series: [{date, close, volume}], buyPrice: 평단가(원), period: 표시 기간(일)
+// 🔧 기술적 지표 계산 — series: [{date, close, volume}]
+// AI 분석에 넘길 수치들을 만든다 (이동평균·RSI·52주 고저·추세)
+function calcTechnicalIndicators(series) {
+  if (!series || series.length < 20) return null;
+  const closes = series.map(s => s.close).filter(c => c != null);
+  const n = closes.length;
+  const cur = closes[n - 1];
+
+  const sma = (days) => {
+    if (n < days) return null;
+    return closes.slice(-days).reduce((a, b) => a + b, 0) / days;
+  };
+  const ma20 = sma(20), ma60 = sma(60), ma120 = sma(120);
+
+  // RSI (14일)
+  let rsi = null;
+  if (n >= 15) {
+    let gain = 0, loss = 0;
+    for (let i = n - 14; i < n; i++) {
+      const diff = closes[i] - closes[i - 1];
+      if (diff >= 0) gain += diff; else loss -= diff;
+    }
+    const avgGain = gain / 14, avgLoss = loss / 14;
+    rsi = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss));
+  }
+
+  const hi = Math.max(...closes);
+  const lo = Math.min(...closes);
+  const posInRange = hi > lo ? ((cur - lo) / (hi - lo) * 100) : 50;
+
+  const chg1m = n >= 21 ? ((cur - closes[n - 21]) / closes[n - 21] * 100) : null;
+  const chg3m = n >= 61 ? ((cur - closes[n - 61]) / closes[n - 61] * 100) : null;
+
+  let trend = '판단보류';
+  if (ma20 && ma60) {
+    if (cur > ma20 && ma20 > ma60) trend = '상승추세 (정배열)';
+    else if (cur < ma20 && ma20 < ma60) trend = '하락추세 (역배열)';
+    else trend = '횡보/혼조';
+  }
+
+  let score = 0;
+  const signalReason = [];
+  if (ma20) { if (cur > ma20) { score++; signalReason.push('20일선 상회'); } else { score--; signalReason.push('20일선 하회'); } }
+  if (ma60) { if (cur > ma60) score++; else score--; }
+  if (rsi != null) {
+    if (rsi >= 70) { score--; signalReason.push(`RSI ${rsi.toFixed(0)} 과매수`); }
+    else if (rsi <= 30) { score++; signalReason.push(`RSI ${rsi.toFixed(0)} 과매도`); }
+    else signalReason.push(`RSI ${rsi.toFixed(0)} 중립권`);
+  }
+  let signal = '중립';
+  if (score >= 2) signal = '매수 우위';
+  else if (score <= -2) signal = '매도 우위';
+
+  return {
+    current: cur, ma20, ma60, ma120, rsi,
+    high: hi, low: lo, posInRange,
+    chg1m, chg3m, trend, signal,
+    signalReason: signalReason.join(', '),
+  };
+}
+
 function buildPriceChartSVG(series, opts) {
   opts = opts || {};
   if (!series || series.length < 2) {
@@ -10719,7 +10821,7 @@ async function askGemini(prompt, options = {}) {
     return { error: 'AI 키가 설정되지 않았어요. 우측 상단 톱니바퀴에서 키를 입력하세요.', needsKey: true };
   }
 
-  const models = ['gemini-flash-latest', 'gemini-2.5-flash'];
+  const models = ['gemini-2.5-flash', 'gemini-flash-latest'];
   let lastError = '알 수 없는 오류';
 
   try {
@@ -10736,7 +10838,7 @@ async function askGemini(prompt, options = {}) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               contents: [{ parts: [{ text: prompt }] }],
-              generationConfig: { temperature: 0.7, maxOutputTokens: 8000 },
+              generationConfig: { temperature: 0.7, maxOutputTokens: 6000 },
             }),
             signal: controller.signal,
           });
@@ -10763,6 +10865,7 @@ async function askGemini(prompt, options = {}) {
               break;
             }
             lastError = `${res.status}: ${errData?.error?.message || '오류'}`;
+            console.warn(`⚠️ ${model} 실패 — ${lastError}`, errData);
             break; 
           }
 
