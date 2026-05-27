@@ -7085,27 +7085,34 @@ async function processAutoBuy(fixed) {
       addedDates.push(d);
       console.log(`💰 ${asset.name} 납입 lot 추가: ${dateStr}, ${fixed.amt.toLocaleString()}원`);
     } else if (currPrice > 0) {
-      // 🔧 그 회차 날짜의 매입가 — 정기매수는 장중 체결되므로 '그날 평균가' 우선 사용
-      //    (종가만 쓰면 실제 체결가와 더 벌어짐). 평균가 없으면 종가, 그것도 없으면 현재가.
-      let lotPrice = currPrice;
-      let lotBuyRate = null;     // 이 회차에 적용된 원/달러 환율 (USD 자산만)
-      let priceSrc = '현재가';
+      // 🔧 그 회차 날짜의 정확한 매입가가 있어야만 lot 생성 (없으면 보류)
+      //    예전엔 그날 데이터 없으면 7일 역추적 또는 현재가로 폴백 → 다른 회차와 같은 값 들어가는 버그
+      //    예: 수요일 매수일인데 한국 시각 오전이라 야후에 아직 그날 종가 없음 → 화요일 값이 복사됨
       let histTickerForAvg = asset.ticker ? asset.ticker.trim() : '';
       if (/^\d{6}$/.test(histTickerForAvg)) histTickerForAvg = histTickerForAvg + '.KS';
 
-      const histClose = getHistPriceOn(histMap, dateStr);
-      const histAvg = getHistAvgPriceOn(histTickerForAvg, dateStr);
-      const basePrice = (histAvg != null) ? histAvg : histClose; // 평균가 우선
-      if (basePrice != null) {
-        priceSrc = (histAvg != null) ? '그날 평균가' : '그날 종가';
-        if (histIsUSD) {
-          // 🔧 그 매수일의 과거 환율을 우선 사용 → 없으면 오늘 환율로 폴백
-          const histFx = getHistPriceOn(fxHistMap, dateStr);
-          lotBuyRate = histFx != null ? histFx * fxSpreadMul : buyRateForHist;
-          lotPrice = basePrice * lotBuyRate;
-        } else {
-          lotPrice = basePrice;
+      const exactClose = getHistPriceExact(histMap, dateStr);
+      const exactAvg = getHistAvgPriceExact(histTickerForAvg, dateStr);
+      const basePrice = (exactAvg != null) ? exactAvg : exactClose;
+
+      if (basePrice == null) {
+        console.log(`⏳ ${asset.name} ${dateStr} 그날 시세 미확정 → 회차 보류 (다음에 정확한 값으로 처리)`);
+        skippedDates.push(d);
+        return;
+      }
+
+      let lotPrice = basePrice;
+      let lotBuyRate = null;
+      let priceSrc = (exactAvg != null) ? '그날 평균가' : '그날 종가';
+      if (histIsUSD) {
+        const histFx = getHistPriceExact(fxHistMap, dateStr);
+        if (histFx == null) {
+          console.log(`⏳ ${asset.name} ${dateStr} 그날 환율 미확정 → 회차 보류`);
+          skippedDates.push(d);
+          return;
         }
+        lotBuyRate = histFx * fxSpreadMul;
+        lotPrice = basePrice * lotBuyRate;
       }
 
       // 🔧 거래수수료 반영 — 정기매수도 매수수수료가 붙어 실제 매입원가가 약간 높음.
@@ -9851,6 +9858,19 @@ function renderAsset() {
     </div>
   `;
 
+  // 🔧 종목 상세 화면은 시장지수·자산추이·도넛 등을 건너뛰고 바로 상세만 표시
+  //    (스크롤 내려야 정보 보이던 문제 해결)
+  if (assetTab === 'holdings' && window._assetDetailId) {
+    const detailAsset = assets.find(a => a.id === window._assetDetailId);
+    if (detailAsset) {
+      screen.innerHTML = buildAssetDetailCard(detailAsset, liveAssetData[detailAsset.id]);
+      if (['주식','ETF','펀드'].includes(detailAsset.type) && detailAsset.ticker) {
+        setTimeout(() => loadAssetChart(detailAsset.id, window._chartPeriod || 180), 60);
+      }
+      return;
+    }
+  }
+
   // 라이브 시세 반영해서 자산별 평가금액 계산
   const total = assets.reduce((s, a) => {
     const live = liveAssetData[a.id];
@@ -9981,19 +10001,6 @@ function renderAsset() {
   html += `</div>`;
 
   if (assetTab === 'holdings') {
-    // 🔧 종목 상세 뷰 (특정 종목 선택 시 목록 대신 전체화면 상세)
-    const detailAsset = window._assetDetailId
-      ? assets.find(a => a.id === window._assetDetailId)
-      : null;
-    if (detailAsset) {
-      html += buildAssetDetailCard(detailAsset, liveAssetData[detailAsset.id]);
-      screen.innerHTML = html;
-      // 🔧 주가 차트 비동기 로드 (주식·ETF·펀드 + 티커 있을 때)
-      if (['주식','ETF','펀드'].includes(detailAsset.type) && detailAsset.ticker) {
-        setTimeout(() => loadAssetChart(detailAsset.id, window._chartPeriod || 180), 60);
-      }
-      return;
-    }
     if (assets.length === 0) {
       html += `<div class="empty-state"><i class="ti ti-chart-pie"></i>등록된 자산이 없어요<br><span style="font-size:11px; opacity:0.7;">+ 버튼으로 자산을 추가하세요</span>
         <div style="margin-top:14px;">
@@ -11835,6 +11842,20 @@ function getHistAvgPriceOn(ticker, dateStr) {
     if (pick(key) != null) return pick(key);
   }
   return null;
+}
+
+// 🔧 자동매수 전용 — '정확히 그 날짜'의 데이터만 반환 (역추적 안 함)
+//    수요일 매수일인데 야후에 아직 수요일 데이터가 없으면 null 반환 → 회차 보류
+function getHistAvgPriceExact(ticker, dateStr) {
+  const cached = ticker ? histPriceCache[ticker] : null;
+  const ohlc = cached?.ohlc;
+  if (!ohlc || !ohlc[dateStr]) return null;
+  return ohlc[dateStr].avg != null ? ohlc[dateStr].avg : null;
+}
+
+function getHistPriceExact(histMap, dateStr) {
+  if (!histMap) return null;
+  return histMap[dateStr] != null ? histMap[dateStr] : null;
 }
 
 // 환율 조회 (USD → KRW)
