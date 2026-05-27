@@ -5852,72 +5852,21 @@ function renderAssetAnalysis() {
     </div>`;
 }
 
-function openAIAnalysisModal(prefillName) {
-  // 보유 종목 빠른 선택 (주식/ETF/펀드만)
-  const investAssets = (assets || []).filter(a =>
-    ['주식', 'ETF', '펀드'].includes(a.type) && a.name
-  ).slice(0, 8);
-
-  modal.innerHTML = `
-    <div class="modal">
-      <div class="modal-handle"></div>
-      <div class="modal-header">
-        <button class="modal-cancel" onclick="closeModal()">닫기</button>
-        <h2>🔍 AI 투자 분석</h2>
-        <div></div>
-      </div>
-
-      <div style="padding:12px; background:linear-gradient(135deg, #FEE7DC 0%, #FFF4E5 100%); border-radius:12px; margin-bottom:14px; font-size:11px; color:#8B4513; line-height:1.6;">
-        💡 종목명이나 티커를 입력하면 Gemini AI가<br>
-        <b>비즈니스 모델 · 성장 모멘텀 · 투자 매력도</b>를 분석해줍니다
-      </div>
-
-      <div class="field">
-        <div class="field-label">종목명 또는 티커</div>
-        <input type="text" id="ai-stock-name" value="${prefillName || ''}" placeholder="예: 삼성전자, AAPL, SPY, KODEX 200" autofocus
-          list="ai-stock-suggest-m" autocomplete="off"
-          onkeydown="if(event.key==='Enter') runAIStockAnalysis()" />
-        <datalist id="ai-stock-suggest-m">
-          ${(() => {
-            const owned = (assets || []).filter(a => ['주식','ETF','펀드'].includes(a.type) && a.name).map(a => a.name);
-            const popular = [
-              '삼성전자','SK하이닉스','NAVER','카카오','현대차','LG에너지솔루션','기아','셀트리온',
-              'KODEX 200','TIGER 미국S&P500','KODEX 미국나스닥100','TIGER 미국나스닥100',
-              'AAPL','MSFT','NVDA','GOOGL','AMZN','TSLA','META','SPY','QQQ','SCHD','VOO',
-            ];
-            return [...new Set([...owned, ...popular])].map(n => `<option value="${n.replace(/"/g,'&quot;')}"></option>`).join('');
-          })()}
-        </datalist>
-      </div>
-
-      ${investAssets.length > 0 ? `
-        <div style="margin-bottom:14px;">
-          <div class="field-label" style="margin-bottom:6px;">📊 내 보유 종목 빠른 분석</div>
-          <div style="display:flex; gap:5px; flex-wrap:wrap;">
-            ${investAssets.map(a => `
-              <button onclick="document.getElementById('ai-stock-name').value='${a.name.replace(/'/g, "\\'")}'; runAIStockAnalysis();"
-                style="padding:7px 12px; border:0.5px solid var(--border-tertiary); background:white; border-radius:999px; font-size:11px; color:var(--text-secondary); cursor:pointer; font-family:inherit;">
-                ${a.name.length > 12 ? a.name.substring(0, 12) + '…' : a.name}
-              </button>
-            `).join('')}
-          </div>
-        </div>
-      ` : ''}
-
-      <button onclick="runAIStockAnalysis()" style="width:100%; padding:14px; border:none; background:linear-gradient(135deg, #FF6B6B 0%, #FF8E72 100%); color:white; border-radius:12px; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit; margin-bottom:14px;">
-        ✨ AI 분석 시작
-      </button>
-
-      <div id="ai-analysis-status" style="display:none; padding:14px; background:var(--bg-secondary); border-radius:12px; text-align:center; font-size:12px; color:var(--text-secondary);"></div>
-
-      <div id="ai-analysis-result" style="display:none; margin-top:14px; padding:14px; background:white; border:0.5px solid var(--border-tertiary); border-radius:12px; line-height:1.7; font-size:12px;"></div>
-    </div>
-  `;
-  modal.classList.add('show');
-
-  if (prefillName) {
-    setTimeout(() => runAIStockAnalysis(), 300);
-  }
+// 🔧 돋보기 버튼 → AI분석 탭으로 이동 (모달 대신 탭 사용, ID 중복 충돌 방지)
+function goAIAnalysisTab(prefillName) {
+  assetTab = 'analysis';
+  window._assetDetailId = null;
+  renderAsset();
+  setTimeout(() => {
+    if (screen) screen.scrollTop = 0;
+    if (prefillName) {
+      const input = document.getElementById('ai-stock-name');
+      if (input) {
+        input.value = prefillName;
+        runAIStockAnalysis();
+      }
+    }
+  }, 60);
 }
 
 async function runAIStockAnalysis() {
@@ -6042,7 +5991,20 @@ async function runAIStockAnalysis() {
     `;
   } catch (e) {
     console.error('AI 분석 오류:', e);
-    statusEl.innerHTML = `<span style="color:var(--text-danger);">❌ ${e.message}</span>`;
+    const msg = (e.message || '').toLowerCase();
+    let friendly;
+    if (msg.includes('429') || msg.includes('quota') || msg.includes('exceeded') || msg.includes('resource_exhausted')) {
+      friendly = `⏳ 오늘 AI 무료 사용량을 다 썼어요.<br>
+        <span style="font-size:10px; color:var(--text-tertiary);">Gemini 무료 등급은 하루·분당 호출 수 제한이 있어요. 잠시(1~2분) 후 또는 내일 다시 시도하거나, 설정에서 다른 API 키를 등록해보세요.</span>`;
+    } else if (msg.includes('503') || msg.includes('unavailable')) {
+      friendly = `🔄 AI 서버가 잠시 혼잡해요.<br><span style="font-size:10px; color:var(--text-tertiary);">잠시 후 다시 시도해주세요.</span>`;
+    } else if (msg.includes('403') || msg.includes('forbidden') || msg.includes('api key')) {
+      friendly = `🔑 API 키에 문제가 있어요.<br><span style="font-size:10px; color:var(--text-tertiary);">설정에서 키를 다시 확인하거나 새로 등록해주세요.</span>`;
+    } else {
+      friendly = `❌ 분석에 실패했어요: ${e.message}`;
+    }
+    statusEl.style.display = 'block';
+    statusEl.innerHTML = `<div style="color:var(--text-danger); line-height:1.6; text-align:center;">${friendly}</div>`;
   }
 }
 
@@ -8066,7 +8028,7 @@ async function processAssetCapture(input) {
 - 매입단가/평균단가가 직접 있으면 → 그 값 그대로
 - 예: "평가금액 2,800,000원 / 100주" → price=28000, qty=100`;
 
-    const ocrModels = ['gemini-flash-latest', 'gemini-2.0-flash', 'gemini-2.5-flash'];
+    const ocrModels = ['gemini-flash-latest', 'gemini-2.5-flash'];
     const body = {
       contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64 } }] }],
       generationConfig: { temperature: 0.1, maxOutputTokens: 8000 }
@@ -9637,7 +9599,7 @@ function renderAsset() {
     <h1>자산</h1>
     <div class="header-actions">
       <button onclick="manualRefreshPrices()" aria-label="새로고침" id="refresh-btn"><i class="ti ti-refresh"></i></button>
-      <button onclick="openAIAnalysisModal()" aria-label="AI 투자 분석"><i class="ti ti-search"></i></button>
+      <button onclick="goAIAnalysisTab()" aria-label="AI 투자 분석"><i class="ti ti-search"></i></button>
       <button onclick="openAssetCoachSettings()" aria-label="AI 자산 코치 설정"><i class="ti ti-target"></i></button>
       <button onclick="openAssetAddModal()" aria-label="추가"><i class="ti ti-plus"></i></button>
     </div>
@@ -10700,7 +10662,7 @@ async function askGemini(prompt, options = {}) {
     return { error: 'AI 키가 설정되지 않았어요. 우측 상단 톱니바퀴에서 키를 입력하세요.', needsKey: true };
   }
 
-  const models = ['gemini-flash-latest', 'gemini-2.0-flash', 'gemini-2.5-flash'];
+  const models = ['gemini-flash-latest', 'gemini-2.5-flash'];
   let lastError = '알 수 없는 오류';
 
   try {
@@ -14473,7 +14435,7 @@ function editAsset(id) {
       </div>
 
       ${['주식','ETF','펀드'].includes(a.type) ? `
-        <button onclick="closeModal(); setTimeout(()=>openAIAnalysisModal('${a.name.replace(/'/g, "\\'")}'), 200);"
+        <button onclick="closeModal(); setTimeout(()=>goAIAnalysisTab('${a.name.replace(/'/g, "\\'")}'), 200);"
           style="width:100%; padding:10px; border:none; background:linear-gradient(135deg, #FFEFE5 0%, #FFE0CC 100%); color:#D14343; border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; margin-bottom:12px;">
           🔍 ${a.name} AI 투자 분석 보기
         </button>
