@@ -1773,7 +1773,14 @@ function renderCalendar() {
     const k = dayKey(d);
     if (workoutLog[k]?.done) dots.push('w');
     const dayExpenses = budget.expenses.filter(e => (e.dateKey === k) || (e.date === d && (!e.dateKey) && isViewingCurrentMonth()));
-    if (dayExpenses.length > 0) dots.push('m');
+    // 🔧 고정지출 결제일도 money 점에 포함
+    const lastDayOfMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+    const hasFixedToday = (budget.fixed || []).some(f => {
+      if ((f.cycle || 'monthly') !== 'monthly') return false;
+      const eff = Math.min(Number(f.day) || 1, lastDayOfMonth);
+      return eff === d;
+    });
+    if (dayExpenses.length > 0 || hasFixedToday) dots.push('m');
     const dayTodos = todos.filter(t => t.dateKey === k);
     if (dayTodos.length > 0) dots.push('t');
     // 챌린지 점 - 시작일 ~ 종료일 사이만 표시
@@ -1992,6 +1999,26 @@ function getEventsForDay(d) {
       sub: e.cat,
       amount: `${isIncome ? '+' : '-'}${Number(e.amt).toLocaleString()}원`,
       isIncome,
+    });
+  });
+
+  // 🔧 고정지출 — 매월 결제일(day)에 표시 (monthly 주기만)
+  (budget.fixed || []).forEach(f => {
+    const cycle = f.cycle || 'monthly';
+    if (cycle !== 'monthly') return; // 매주/격주는 날짜 특정이 어려워 제외
+    const payDay = Number(f.day) || 1;
+    // 그 달에 결제일이 없는 경우(예: 31일인데 2월) 말일로 보정
+    const lastDay = new Date(currentYear, currentMonth + 1, 0).getDate();
+    const effectiveDay = Math.min(payDay, lastDay);
+    if (effectiveDay !== d) return;
+    events.push({
+      type: 'money',
+      icon: 'ti-calendar-repeat',
+      title: f.name + ' (고정지출)',
+      sub: f.autoBuy ? '자동매수' : '고정지출',
+      amount: `-${Number(f.amt).toLocaleString()}원`,
+      isIncome: false,
+      isFixed: true,
     });
   });
 
