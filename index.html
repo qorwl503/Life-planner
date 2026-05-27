@@ -6002,6 +6002,8 @@ async function runAIStockAnalysis() {
           <span style="font-size:10px; color:var(--text-tertiary);">Gemini 무료 등급은 하루·분당 호출 제한이 있어요. 1~2분 후 또는 내일 다시 시도하거나 다른 API 키를 등록해보세요.</span>`;
       } else if (low.includes('503') || low.includes('unavailable') || low.includes('overload')) {
         friendly = `🔄 AI 서버가 잠시 혼잡해요.<br><span style="font-size:10px; color:var(--text-tertiary);">잠시 후 다시 시도해주세요.</span>`;
+      } else if (low.includes('abort') || low.includes('timeout') || low.includes('시간')) {
+        friendly = `⏱️ 응답이 오래 걸려 중단됐어요.<br><span style="font-size:10px; color:var(--text-tertiary);">잠시 후 다시 시도하면 대개 됩니다.</span>`;
       } else if (low.includes('403') || low.includes('forbidden') || low.includes('api key') || low.includes('api_key')) {
         friendly = `🔑 API 키에 문제가 있어요.<br><span style="font-size:10px; color:var(--text-tertiary);">설정에서 키를 다시 확인하거나 새로 등록해주세요.</span>`;
       } else {
@@ -6039,6 +6041,8 @@ async function runAIStockAnalysis() {
         <span style="font-size:10px; color:var(--text-tertiary);">Gemini 무료 등급은 하루·분당 호출 수 제한이 있어요. 잠시(1~2분) 후 또는 내일 다시 시도하거나, 설정에서 다른 API 키를 등록해보세요.</span>`;
     } else if (msg.includes('503') || msg.includes('unavailable')) {
       friendly = `🔄 AI 서버가 잠시 혼잡해요.<br><span style="font-size:10px; color:var(--text-tertiary);">잠시 후 다시 시도해주세요.</span>`;
+    } else if (msg.includes('abort') || msg.includes('timeout')) {
+      friendly = `⏱️ 응답이 오래 걸려 중단됐어요.<br><span style="font-size:10px; color:var(--text-tertiary);">잠시 후 다시 시도하면 대개 됩니다.</span>`;
     } else if (msg.includes('403') || msg.includes('forbidden') || msg.includes('api key')) {
       friendly = `🔑 API 키에 문제가 있어요.<br><span style="font-size:10px; color:var(--text-tertiary);">설정에서 키를 다시 확인하거나 새로 등록해주세요.</span>`;
     } else {
@@ -10831,7 +10835,8 @@ async function askGemini(prompt, options = {}) {
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 12000); 
+          // 🔧 AI 응답은 길면 20~30초 걸림 (7섹션 분석 등) → 40초로 여유있게
+          const timeoutId = setTimeout(() => controller.abort(), 40000);
 
           const res = await fetch(url, {
             method: 'POST',
@@ -12095,7 +12100,38 @@ async function fetchNaverExchange() {
     }
   }
 
-  // 우선순위 2: basic API (종가 기반 - 폴백)
+  // 우선순위 2: prices API (2일치 받아 직접 계산 — 가장 안정적)
+  const pricesTarget = 'https://api.stock.naver.com/marketindex/exchange/FX_USDKRW/prices?page=1&pageSize=2';
+
+  for (const proxyFn of proxies) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const res = await fetch(proxyFn(pricesTarget), { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (!res.ok) continue;
+
+      let text = await res.text();
+      try { const j = JSON.parse(text); if (j.contents) text = j.contents; } catch (e) {}
+
+      const items = JSON.parse(text);
+      if (!Array.isArray(items) || items.length < 2) continue;
+
+      const price = Number(String(items[0].closePrice || '').replace(/,/g, '')) || 0;
+      const prevPrice = Number(String(items[1].closePrice || '').replace(/,/g, '')) || 0;
+      if (!price || !prevPrice) continue;
+
+      const change = price - prevPrice;
+      const changePct = (change / prevPrice) * 100;
+
+      console.log(`✅ 네이버 환율: ${price}원, ${changePct.toFixed(2)}%`);
+      return { price, previousClose: prevPrice, change, changePct, currency: 'KRW', time: Date.now() };
+    } catch (e) {
+      continue;
+    }
+  }
+
+  // 우선순위 3: basic API (폴백 — 일부 환경에서 403으로 막힐 수 있음)
   const targets = [
     'https://api.stock.naver.com/marketindex/exchange/FX_USDKRW/basic',
     'https://m.stock.naver.com/api/marketindex/exchange/FX_USDKRW/basic',
@@ -12116,55 +12152,18 @@ async function fetchNaverExchange() {
         let data;
         try { data = JSON.parse(text); } catch (e) { continue; }
 
-        console.log('💱 네이버 환율 basic 응답:', data);
-
         const price = Number(String(data.closePrice || '').replace(/,/g, '')) || 0;
         const change = Number(String(data.compareToPreviousClosePrice || '').replace(/,/g, '')) || 0;
         let changePct = Number(data.fluctuationsRatio) || 0;
-
-        // 🔧 부호 보정: fluctuationsRatio가 양수만 주는 경우 → change의 부호 따라감
         if (change < 0 && changePct > 0) changePct = -changePct;
 
         if (price > 1000 && price < 2000) {
-          console.log(`✅ 네이버 환율 basic: ${price}원, ${changePct}%`);
+          console.log(`✅ 네이버 환율(basic): ${price}원, ${changePct}%`);
           return { price, previousClose: price - change, change, changePct, currency: 'KRW', time: Date.now() };
         }
       } catch (e) {
         continue;
       }
-    }
-  }
-
-  // 우선순위 3: prices API (2일치 받아 직접 계산)
-  const pricesTarget = 'https://api.stock.naver.com/marketindex/exchange/FX_USDKRW/prices?page=1&pageSize=2';
-
-  for (const proxyFn of proxies) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
-      const res = await fetch(proxyFn(pricesTarget), { signal: controller.signal });
-      clearTimeout(timeoutId);
-      if (!res.ok) continue;
-
-      let text = await res.text();
-      try { const j = JSON.parse(text); if (j.contents) text = j.contents; } catch (e) {}
-
-      const items = JSON.parse(text);
-      console.log('💱 네이버 환율 prices 응답:', items);
-
-      if (!Array.isArray(items) || items.length < 2) continue;
-
-      const price = Number(String(items[0].closePrice || '').replace(/,/g, '')) || 0;
-      const prevPrice = Number(String(items[1].closePrice || '').replace(/,/g, '')) || 0;
-      if (!price || !prevPrice) continue;
-
-      const change = price - prevPrice;
-      const changePct = (change / prevPrice) * 100;
-
-      console.log(`✅ 네이버 환율 prices: ${price}원, ${changePct.toFixed(2)}%`);
-      return { price, previousClose: prevPrice, change, changePct, currency: 'KRW', time: Date.now() };
-    } catch (e) {
-      continue;
     }
   }
 
