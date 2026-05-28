@@ -10485,10 +10485,11 @@ function buildAssetDetailCard(a, live) {
 
     const usdAvg = isUSD && live.currentPrice && krwNow ? (krwAvg / krwNow * live.currentPrice) : null;
 
+    const qtyDisp = Number.isInteger(qty) ? qty.toLocaleString() : qty.toFixed(4).replace(/\.?0+$/, '');
     body = `
       <div style="display:flex; gap:12px; margin-bottom:10px;">
-        ${row('매입가', isUSD && usdAvg ? `$${usdAvg.toFixed(2)}` : `${Math.round(krwAvg).toLocaleString()}원`, isUSD ? `₩${Math.round(krwAvg).toLocaleString()}` : `${qty}주`)}
-        ${row('총 매입금액', `${Math.round(totalBuy).toLocaleString()}원`, '')}
+        ${row('매입가', isUSD && usdAvg ? `$${usdAvg.toFixed(2)}` : `${Math.round(krwAvg).toLocaleString()}원`, isUSD ? `₩${Math.round(krwAvg).toLocaleString()}` : `${qtyDisp}주`)}
+        ${row('총 매입금액', `${Math.round(totalBuy).toLocaleString()}원`, `${qtyDisp}주 보유`)}
       </div>
       <div style="display:flex; gap:12px; margin-bottom:10px;">
         ${row('현재가', isUSD ? `$${(live.currentPrice||0).toFixed(2)}` : `${Math.round(krwNow).toLocaleString()}원`, isUSD ? `₩${Math.round(krwNow).toLocaleString()}` : '')}
@@ -11050,7 +11051,12 @@ function renderAsset() {
           const estTag = (_hasAuto && !_isCorrected)
             ? `<span onclick="event.stopPropagation(); openAssetCaptureForCorrection();" style="color:var(--text-tertiary); font-size:9px; cursor:pointer; text-decoration:underline dotted;" title="자동매수 추정치예요. 탭하면 증권사 캡처로 보정할 수 있어요.">≈추정</span>`
             : '';
-          priceInfo = `<div style="font-size:10px; display:flex; gap:8px; justify-content:flex-end; margin-top:2px;">
+          // 🔧 보유 수량 표시 (정수면 그대로, 소수면 4자리)
+          const qtyStr = Number.isInteger(Number(a.qty))
+            ? Number(a.qty).toLocaleString()
+            : Number(a.qty).toFixed(4).replace(/\.?0+$/, '');
+          priceInfo = `<div style="font-size:10px; display:flex; gap:8px; justify-content:flex-end; margin-top:2px; flex-wrap:wrap;">
+            <span style="color:var(--text-secondary);">${qtyStr}주</span>
             <span style="color:${changeColor};">오늘 ${changePct >= 0 ? '▲' : '▼'}${Math.abs(changePct).toFixed(2)}%</span>
             ${showProfit ? `<span style="color:${profitColor};">수익 ${profitPct >= 0 ? '+' : ''}${profitPct.toFixed(1)}%</span>` : `<span style="color:var(--text-tertiary);" title="평단가 확인 필요">수익 -</span>`}
             ${estTag}
