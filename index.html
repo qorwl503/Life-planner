@@ -2386,6 +2386,9 @@ function renderTodo() {
 
   let html = '';
 
+  // 🔧 오늘의 추천 액션 카드 (가계부에서 옮김 — 미룬 할일·운동 등은 할일 도메인)
+  html += renderTodayActionsCard();
+
   // ★ 챌린지 섹션
   html += renderChallengeSection();
 
@@ -3921,17 +3924,32 @@ function renderMoneyInsightCards(opts) {
     }
   }
 
-  // ============== 3) 오늘의 추천 액션 3개 ==============
-  // 데이터 보고 사용자에게 우선순위 액션 제안
+  return html;
+}
+
+// 🔧 오늘의 추천 액션 카드 — 할일 탭 상단에 표시 (가계부가 아니라 할일 도메인)
+function renderTodayActionsCard() {
   const actions = [];
 
-  // 액션 1: 소비 페이스가 초과면 절약 추천
+  // 액션 1: 소비 페이스가 초과면 절약 추천 (가계부 데이터 참조)
+  const now = new Date();
+  const monthKeyForGoal = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const livingGoal = (settings.livingGoals && settings.livingGoals[monthKeyForGoal])
+    || settings.defaultLivingGoal || 0;
+  const viewMonthPrefix = monthKeyForGoal;
+  const monthExpenses = (budget.expenses || []).filter(e =>
+    e.dateKey && e.dateKey.startsWith(viewMonthPrefix) && e.type !== 'income'
+  );
+  const monthSpent = monthExpenses.reduce((s, e) => s + (Number(e.amt) || 0), 0);
+  const daysPassed = today;
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+
   if (livingGoal > 0 && monthSpent > 0 && daysPassed >= 3) {
     const dailyPace = monthSpent / daysPassed;
     const projected = dailyPace * daysInMonth;
     if (projected > livingGoal * 1.1) {
       const daysLeft = Math.max(0, daysInMonth - daysPassed);
-      const remainingBudget = Math.max(0, livingGoal - monthSpent - fixedRemaining);
+      const remainingBudget = Math.max(0, livingGoal - monthSpent);
       const recommendedDaily = daysLeft > 0 ? Math.floor(remainingBudget / daysLeft) : 0;
       actions.push({
         icon: '💰',
@@ -3941,22 +3959,19 @@ function renderMoneyInsightCards(opts) {
   }
 
   // 액션 2: 미룬 할일 있으면 처리 권장
-  if (typeof todos !== 'undefined') {
-    const today = todayKey();
-    const overdueTodos = (todos || []).filter(t =>
-      !t.done && t.dateKey && t.dateKey < today
-    );
-    if (overdueTodos.length > 0) {
-      actions.push({
-        icon: '📌',
-        text: `미룬 할일 <b>${overdueTodos.length}개</b> 중 가장 급한 것 1개 처리하기`
-      });
-    }
+  const todayK = todayKey();
+  const overdueTodos = (todos || []).filter(t =>
+    !t.done && t.dateKey && t.dateKey < todayK
+  );
+  if (overdueTodos.length > 0) {
+    actions.push({
+      icon: '📌',
+      text: `미룬 할일 <b>${overdueTodos.length}개</b> 중 가장 급한 것 1개 처리하기`
+    });
   }
 
   // 액션 3: 오늘 운동 안 했으면 권장
   if (typeof workoutLog !== 'undefined') {
-    const todayK = todayKey();
     const todayWorkout = workoutLog[todayK];
     if (!todayWorkout || !todayWorkout.done) {
       actions.push({
@@ -3967,20 +3982,11 @@ function renderMoneyInsightCards(opts) {
   }
 
   // 액션 4: 오늘 가계부 입력 없으면 권장
-  const todayK = todayKey();
-  const todayExpenses = expenseItems.filter(e => e.dateKey === todayK);
+  const todayExpenses = monthExpenses.filter(e => e.dateKey === todayK);
   if (todayExpenses.length === 0 && actions.length < 3) {
     actions.push({
       icon: '📝',
       text: `오늘 지출 가계부에 기록하기`
-    });
-  }
-
-  // 액션 5: 고정지출 결제 잔여 있으면
-  if (fixedRemaining > 0 && actions.length < 3) {
-    actions.push({
-      icon: '💳',
-      text: `이번 달 고정지출 <b>${fixedRemaining.toLocaleString()}원</b> 결제 확인하기`
     });
   }
 
@@ -3989,9 +3995,8 @@ function renderMoneyInsightCards(opts) {
     actions.push({ icon: '✨', text: '오늘은 페이스가 좋아요. 이대로 유지!' });
   }
 
-  // 최대 3개만
   const top3 = actions.slice(0, 3);
-  html += `
+  return `
     <div style="padding:14px; background:rgba(94,92,230,0.06); border-radius:12px; margin-bottom:14px; border:0.5px solid rgba(94,92,230,0.25);">
       <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">
         <span style="font-size:14px;">🎯</span>
@@ -4005,8 +4010,6 @@ function renderMoneyInsightCards(opts) {
         </div>
       `).join('')}
     </div>`;
-
-  return html;
 }
 
 // 🔧 월말 자동 리뷰 — 과거 달 가계부 볼 때 한 달 요약 카드
@@ -4242,11 +4245,16 @@ function renderMoney() {
     </div>
   `;
 
-  // 🔧 가계부 인사이트 카드 — 오늘의 액션, 새는 돈, 소비 페이스 (이번 달만)
+  // 🔧 진짜 목표 생활비 (사용자가 설정한 값) — variableBudget이 아님
+  const monthKeyForGoal = `${budgetViewYear}-${String(budgetViewMonth + 1).padStart(2, '0')}`;
+  const goalLivingForInsight = (settings.livingGoals && settings.livingGoals[monthKeyForGoal])
+    || settings.defaultLivingGoal || 0;
+
+  // 🔧 가계부 인사이트 카드 — 소비 페이스 + 새는 돈 (이번 달만)
   html += renderMoneyInsightCards({
     viewMonthExpenses,
     monthSpent: variableSpent,
-    livingGoal: variableBudget,
+    livingGoal: goalLivingForInsight,
     daysPassed: isCurrentMonth ? today : new Date(budgetViewYear, budgetViewMonth + 1, 0).getDate(),
     daysInMonth: new Date(budgetViewYear, budgetViewMonth + 1, 0).getDate(),
     isCurrentMonth,
