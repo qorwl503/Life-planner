@@ -1421,6 +1421,15 @@ function escapeAttr(value) {
   return escapeHTML(value);
 }
 
+// 🔧 자산 종류 분류 헬퍼 — 새 분류(국내주식/미국주식/국내ETF/해외ETF 등)를 안전하게 묶음
+// 시세·차트·AI분석이 동작해야 하는 '증권성 자산' 판별
+const STOCK_LIKE_TYPES = ['주식','국내주식','미국주식','해외주식','ETF','국내ETF','해외ETF','펀드'];
+function isStockLikeType(type) {
+  return STOCK_LIKE_TYPES.includes(type);
+}
+// 전체 자산 종류 목록 (순서대로 표시됨)
+const ASSET_TYPES = ['국내주식','미국주식','국내ETF','해외ETF','펀드','채권','금','달러','예적금','청약','현금','부동산'];
+
 function nav(tab) {
   currentTab = tab;
   window._assetDetailId = null; // 자산 상세 뷰 초기화
@@ -1756,7 +1765,7 @@ function renderMonthlyReportCard() {
 
   // 6. 비상금 (목표 - 사용)
   const livingGoal = settings.livingGoals?.[targetMStr] || settings.defaultLivingGoal || 0;
-  const investCats = ['투자', '주식', 'ETF', '펀드', '채권', '금', '달러', '예적금', '청약', '현금', '부동산'];
+  const investCats = ['투자', '주식', '국내주식', '미국주식', 'ETF', '국내ETF', '해외ETF', '펀드', '채권', '금', '달러', '예적금', '청약', '현금', '부동산'];
   const variableSpent = Math.max(0, monthExp
     .filter(e => e.type !== 'income' && !investCats.includes(e.cat))
     .reduce((s, e) => s + Number(e.amt), 0) - monthDeposit);
@@ -4287,7 +4296,7 @@ function renderMoney() {
   const monthDepositTotal = monthDeposits.reduce((s, e) => s + Number(e.amt), 0);
 
   // 투자 카테고리 분류 (자산 종류) - 지출만 대상
-  const investCategories = ['투자', '주식', 'ETF', '펀드', '채권', '금', '달러', '예적금', '청약', '현금', '부동산'];
+  const investCategories = ['투자', '주식', '국내주식', '미국주식', 'ETF', '국내ETF', '해외ETF', '펀드', '채권', '금', '달러', '예적금', '청약', '현금', '부동산'];
   const variableInvestSpent = monthSpending
     .filter(e => investCategories.includes(e.cat))
     .reduce((s, e) => s + Number(e.amt), 0);
@@ -5254,7 +5263,7 @@ function editFixed(id) {
         <div class="field">
           <div class="field-label">자산 종류</div>
           <div style="display:flex; gap:4px; flex-wrap:wrap;" id="ef-asset-type">
-            ${['주식','ETF','펀드','채권','금','달러','예적금','청약','현금','부동산'].map(t =>
+            ${ASSET_TYPES.map(t =>
               `<button class="chip ${f.assetInfo?.type===t?'active':''}" data-t="${t}">${t}</button>`
             ).join('')}
           </div>
@@ -5281,7 +5290,7 @@ function editFixed(id) {
     if (!container) return;
     const ai = f.assetInfo || {};
     let h = '';
-    if (['주식', 'ETF', '펀드'].includes(type)) {
+    if (isStockLikeType(type)) {
       h = `
         <div class="field">
           <div class="field-label">자산명</div>
@@ -5958,7 +5967,7 @@ function openFixedAddModal() {
     if (!container) return;
     let h = '';
 
-    if (['주식', 'ETF', '펀드'].includes(type)) {
+    if (isStockLikeType(type)) {
       h = `
         <div class="field">
           <div class="field-label">자산명</div>
@@ -6237,7 +6246,7 @@ function saveFixed() {
         note: `🤖 자동매수: ${cycle === 'monthly' ? '매월' : cycle === 'weekly' ? '매주' : '격주'} ${amt.toLocaleString()}원`,
       };
       // 🔧 자동매수 lot은 매수일 환율로 원화 환산되어 저장 → 자산은 원화 기준
-      if (['주식','ETF','펀드'].includes(assetInfo.type)) newAuto.priceCurrency = 'KRW';
+      if (isStockLikeType(assetInfo.type)) newAuto.priceCurrency = 'KRW';
       assets.push(newAuto);
     } else if (!existing.ticker && assetInfo.ticker) {
       // 기존 자산에 티커가 없으면 채워줌 (이후 매칭 정확도 ↑)
@@ -6344,7 +6353,7 @@ function resetSimSettings() {
 // 🔧 자산 하위탭 'analysis' 화면 (모달이 아니라 탭 안에 직접 렌더)
 function renderAssetAnalysis() {
   const investAssets = (assets || []).filter(a =>
-    ['주식', 'ETF', '펀드'].includes(a.type) && a.name
+    isStockLikeType(a.type) && a.name
   ).slice(0, 10);
 
   return `
@@ -6362,7 +6371,7 @@ function renderAssetAnalysis() {
         <datalist id="ai-stock-suggest">
           ${(() => {
             // 보유 종목 + 인기 종목 합쳐서 중복 제거
-            const owned = (assets || []).filter(a => ['주식','ETF','펀드'].includes(a.type) && a.name).map(a => a.name);
+            const owned = (assets || []).filter(a => isStockLikeType(a.type) && a.name).map(a => a.name);
             const popular = [
               '삼성전자','SK하이닉스','NAVER','카카오','현대차','LG에너지솔루션','기아','셀트리온',
               'KODEX 200','TIGER 미국S&P500','KODEX 미국나스닥100','TIGER 미국나스닥100',
@@ -6444,7 +6453,7 @@ async function runAIStockAnalysis() {
   try {
     const norm = (s) => (s || '').replace(/\s/g, '').toLowerCase();
     const matchAsset = (assets || []).find(a =>
-      ['주식','ETF','펀드'].includes(a.type) && a.ticker &&
+      isStockLikeType(a.type) && a.ticker &&
       (norm(a.name) === norm(stockName) || norm(a.ticker) === norm(stockName))
     );
     if (matchAsset && matchAsset.ticker) {
@@ -8486,7 +8495,7 @@ function deleteExpense(id) {
   if (!e) return;
 
   // 투자 카테고리면 → 연결된 자산도 함께 처리
-  const investCategories = ['투자', '주식', 'ETF', '펀드', '채권', '금', '달러', '예적금', '청약', '현금', '부동산'];
+  const investCategories = ['투자', '주식', '국내주식', '미국주식', 'ETF', '국내ETF', '해외ETF', '펀드', '채권', '금', '달러', '예적금', '청약', '현금', '부동산'];
   const isInvestExpense = e.type !== 'income' && investCategories.includes(e.cat);
 
   // 연결된 자산 찾기 - linkedAssetName 또는 memo
@@ -9143,57 +9152,40 @@ function saveAssetReviewItems() {
     }
 
     if (it._action === 'correct' && it._existingId) {
-      // 🎯 보정 모드: 자동매수 연동·회차 기록은 그대로, 현재 보유분만 캡처값으로 교정
+      // 🎯 보정 모드: 캡처 시점의 '실제 보유'를 단일 lot으로 확정.
+      //    이후 자동매수는 이 위에 자연스럽게 쌓임 (recalcAssetFromLots가 항상 정답).
       const existing = assets.find(a => a.id === it._existingId);
       if (existing) {
         if (!existing.ticker && it.ticker) existing.ticker = it.ticker;
 
-        // 보정 lot: 기존 자동매수 lot 누적분과 실제(캡처) 보유분의 차이를 메우는 조정 기록
-        const autoLots = (existing.lots || []).filter(l => l.autoBuy);
-        const autoQty = autoLots.reduce((s, l) => s + Number(l.qty || 0), 0);
-        const autoCost = autoLots.reduce((s, l) => {
-          // 🔧 exactAmount 있으면 그걸 우선 (recalcAssetFromLots와 동일 기준)
-          const c = (l.exactAmount != null && Number(l.exactAmount) > 0)
-            ? Number(l.exactAmount)
-            : Number(l.qty || 0) * Number(l.price || 0);
-          return s + c;
-        }, 0);
-
         // 캡처에서 읽은 "실제 총 보유분" (원화 기준)
         const realQty = qty;
         const realAvg = price; // 위에서 이미 원화 환산됨
-        const realCost = realQty * realAvg;
+        const realCost = Math.round(realQty * realAvg);
 
-        // 자동매수 lot은 보존, 그 외 lot(과거 수동/OCR)은 보정값으로 대체
-        existing.lots = autoLots.slice();
+        // 🔧 기존 lot(자동매수 포함)을 전부 치우고, 캡처 기준 단일 lot으로 교체.
+        //    "보정 시점까지의 실제 보유"를 한 줄로 확정 → 이후 자동매수가 이 위에 쌓임.
+        //    이렇게 하면 나중에 자동매수가 더 들어와도 합계가 정확히 맞음.
+        existing.lots = [{
+          id: Date.now() + Math.random(),
+          source: `🎯 캡처 보정 ${today}`,
+          qty: realQty,
+          price: realAvg,
+          date: today,
+          fxDiscount: existing.fxDiscount || null,
+          buyRate: null,
+          autoBuy: false,
+          fixedId: null,
+          exactAmount: realCost, // 증권사 실제 금액 정확 보존
+          isCaptureBase: true,   // 🔧 캡처 기준점 표시 (이후 자동매수가 이 위에 쌓임)
+          note: `증권사 캡처 기준 확정 (${today})` + priceNote,
+        }];
 
-        // 조정분 = 실제 - 자동매수누적. 양수면 추가 매수분, 음수면 차감(매도/평가차)
-        const adjQty = parseFloat((realQty - autoQty).toFixed(4));
-        const adjCost = realCost - autoCost;
-        if (Math.abs(adjQty) > 0.0001 || Math.abs(adjCost) > 1) {
-          const adjPrice = Math.abs(adjQty) > 0.0001
-            ? Math.round(adjCost / adjQty)
-            : realAvg;
-          existing.lots.push({
-            id: Date.now() + Math.random(),
-            source: `🎯 캡처 보정 ${today}`,
-            qty: adjQty,
-            price: adjPrice,
-            date: today,
-            fxDiscount: existing.fxDiscount || null,
-            buyRate: null,
-            autoBuy: false,
-            fixedId: null,
-            exactAmount: Math.round(adjCost), // 🔧 조정 금액 정확 보존
-            note: `증권사 캡처 기준 보정 (자동매수 ${autoLots.length}회차는 유지)` + priceNote,
-          });
-        }
         recalcAssetFromLots(existing);
-        // 보정 후 최종 보유분을 캡처값으로 정확히 고정 (lot 합산 반올림 오차 제거)
-        existing.qty = realQty;
-        existing.price = realAvg;
+        // 🔧 qty/price 강제 고정 제거 — lot 합계가 항상 정답이 되게.
+        //    (예전엔 여기서 덮어쓴 뒤 자동매수 들어오면 recalc가 다시 돌며 어긋남)
 
-        // 🔧 OCR이 읽은 평가금액·수익률을 그대로 신뢰 → 라이브 데이터에 직접 반영
+        // OCR이 읽은 평가금액·수익률 → ocrSnapshot 기록 (≈추정 표시 제거용)
         //    평가금액·수익률을 못 읽었어도 ocrSnapshot은 항상 만든다(보정 날짜 기록 → ≈추정 표시 제거)
         const evalAmt = Number(it.evalAmount) || 0;
         const ocrProfitPct = (it.profitPct != null && isFinite(Number(it.profitPct)))
@@ -9206,7 +9198,7 @@ function saveAssetReviewItems() {
             ? Number(it.profitAmount) : null,
         };
         // lot이 원화 환산 저장됐으므로 자산은 원화 기준
-        if (['주식','ETF','펀드'].includes(existing.type)) {
+        if (isStockLikeType(existing.type)) {
           existing.priceCurrency = 'KRW';
           delete existing.avgBuyRate;
         }
@@ -9237,7 +9229,7 @@ function saveAssetReviewItems() {
           });
           if (!existing.ticker && it.ticker) existing.ticker = it.ticker;
           // 🔧 lot은 모두 원화로 환산 저장됨 → 자산도 원화 기준으로 정정 (이중 환산 방지)
-          if (['주식','ETF','펀드'].includes(existing.type)) {
+          if (isStockLikeType(existing.type)) {
             existing.priceCurrency = 'KRW';
             delete existing.avgBuyRate;
           }
@@ -9280,7 +9272,7 @@ function saveAssetReviewItems() {
         lots: [],
       };
       // 🔧 lot은 원화로 환산됐으므로 자산 자체는 원화 기준
-      if (['주식','ETF','펀드'].includes(type)) newAsset.priceCurrency = 'KRW';
+      if (isStockLikeType(type)) newAsset.priceCurrency = 'KRW';
       assets.push(newAsset);
       newlyCreated.push(newAsset);
       addAssetLot(newAsset, {
@@ -9773,7 +9765,7 @@ function saveExpense() {
   });
 
   // 투자 카테고리면 → 자산 자동 추가/업데이트
-  const investCats = ['주식', 'ETF', '펀드', '채권', '금', '달러', '예적금', '청약', '현금', '부동산'];
+  const investCats = ['주식', '국내주식', '미국주식', 'ETF', '국내ETF', '해외ETF', '펀드', '채권', '금', '달러', '예적금', '청약', '현금', '부동산'];
   let assetAdded = false;
   if (investCats.includes(cat)) {
     const invName = document.getElementById('inv-name')?.value?.trim() || '';
@@ -10037,7 +10029,7 @@ function closeAssetDetail() {
 function openSellSimulator(assetId) {
   const a = assets.find(x => x.id === assetId);
   if (!a) return;
-  if (!['주식','ETF','펀드'].includes(a.type)) {
+  if (!isStockLikeType(a.type)) {
     showToast('주식·ETF·펀드만 매도 계산이 가능해요');
     return;
   }
@@ -10364,7 +10356,7 @@ function buildPriceChartSVG(series, opts) {
 
 // 🔧 종목 상세 카드 HTML 생성 (매입/평가/환차손익/보유기간)
 function buildAssetDetailCard(a, live) {
-  const isStock = ['주식','ETF','펀드'].includes(a.type);
+  const isStock = isStockLikeType(a.type);
   const row = (label, mainVal, subVal) =>
     `<div style="flex:1;">
       <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:2px;">${label}</div>
@@ -10641,7 +10633,7 @@ function renderAsset() {
     const detailAsset = assets.find(a => a.id === window._assetDetailId);
     if (detailAsset) {
       screen.innerHTML = buildAssetDetailCard(detailAsset, liveAssetData[detailAsset.id]);
-      if (['주식','ETF','펀드'].includes(detailAsset.type) && detailAsset.ticker) {
+      if (isStockLikeType(detailAsset.type) && detailAsset.ticker) {
         setTimeout(() => loadAssetChart(detailAsset.id, window._chartPeriod || 180), 60);
       }
       return;
@@ -10670,15 +10662,19 @@ function renderAsset() {
   saveAssetSnapshot(total, byType);
 
   const typeColors = {
-    '주식':'#8AB4F8',    // 파스텔 파랑
-    'ETF':'#A78BFA',     // 파스텔 보라
-    '펀드':'#7BC8B5',    // 파스텔 청록
-    '채권':'#9CD3A5',    // 파스텔 초록
-    '금':'#F6C76D',      // 파스텔 골드
-    '달러':'#85D4D6',    // 파스텔 시안
-    '예적금':'#A8E6CF',  // 파스텔 민트
-    '청약':'#FFC9A8',    // 파스텔 살구
-    '현금':'#C9C5D9',    // 파스텔 그레이
+    '국내주식':'#8AB4F8',  // 파스텔 파랑
+    '미국주식':'#5B8DEF',  // 진한 파랑
+    '주식':'#8AB4F8',      // (구버전 호환)
+    '국내ETF':'#A78BFA',   // 파스텔 보라
+    '해외ETF':'#C4A0F5',   // 연보라
+    'ETF':'#A78BFA',       // (구버전 호환)
+    '펀드':'#7BC8B5',      // 파스텔 청록
+    '채권':'#9CD3A5',      // 파스텔 초록
+    '금':'#F6C76D',        // 파스텔 골드
+    '달러':'#85D4D6',      // 파스텔 시안
+    '예적금':'#A8E6CF',    // 파스텔 민트
+    '청약':'#FFC9A8',      // 파스텔 살구
+    '현금':'#C9C5D9',      // 파스텔 그레이
     '부동산':'#F6A8A8',  // 파스텔 핑크
     '코인':'#FFD66E',    // 파스텔 옐로
     '기타':'#D5D5D5',    // 라이트 그레이
@@ -10846,8 +10842,8 @@ function renderAsset() {
       }
 
       // 🔧 자산을 종류별로 그룹핑해서 표시 (청약·주식·ETF 섞이지 않게)
-      const GROUP_ORDER = ['주식','ETF','펀드','채권','금','달러','예적금','청약','현금','부동산'];
-      const GROUP_ICON = { '주식':'📈','ETF':'📊','펀드':'🧺','채권':'📜','금':'🪙','달러':'💵','예적금':'🏦','청약':'🏠','현금':'💴','부동산':'🏢' };
+      const GROUP_ORDER = ASSET_TYPES;
+      const GROUP_ICON = { '국내주식':'📈','미국주식':'🇺🇸','주식':'📈','국내ETF':'📊','해외ETF':'🌐','ETF':'📊','펀드':'🧺','채권':'📜','금':'🪙','달러':'💵','예적금':'🏦','청약':'🏠','현금':'💴','부동산':'🏢' };
       // 원본 인덱스 보존하며 그룹 구성
       const groups = {};
       assets.forEach((a, idx) => {
@@ -10878,6 +10874,25 @@ function renderAsset() {
               ${Math.round(groupTotal).toLocaleString()}원 · ${groupPct.toFixed(0)}%
             </div>
           </div>`;
+
+        // 🔧 그룹 안에 종목이 2개 이상이면 — 종목별 비중 미니 막대바
+        if (groupItems.length > 1 && groupTotal > 0) {
+          const segColors = ['#5B8DEF','#A78BFA','#7BC8B5','#F6C76D','#FF8E72','#54A0FF','#FB7185','#34D399','#FBBF24','#C9C5D9'];
+          const segs = groupItems.map(({ a }, i) => {
+            const lv = liveAssetData[a.id];
+            const sv = lv?.hasLive && lv.krwValue ? lv.krwValue : Number(a.qty) * Number(a.price);
+            return { name: a.name, pct: sv / groupTotal * 100, color: segColors[i % segColors.length] };
+          }).sort((x, y) => y.pct - x.pct);
+          html += `
+            <div style="margin:0 2px 8px;">
+              <div style="display:flex; height:6px; border-radius:999px; overflow:hidden; background:rgba(0,0,0,0.05);">
+                ${segs.map(s => `<div style="width:${Math.max(1, s.pct)}%; background:${s.color};" title="${escapeAttr(s.name)} ${s.pct.toFixed(0)}%"></div>`).join('')}
+              </div>
+              <div style="display:flex; flex-wrap:wrap; gap:6px 10px; margin-top:5px;">
+                ${segs.slice(0, 5).map(s => `<span style="font-size:9px; color:var(--text-tertiary);"><b style="color:${s.color};">●</b> ${escapeHTML(s.name.length > 8 ? s.name.slice(0,8)+'…' : s.name)} ${s.pct.toFixed(0)}%</span>`).join('')}
+              </div>
+            </div>`;
+        }
 
         groupItems.forEach(({ a, idx: assetIdx }) => {
         const live = liveAssetData[a.id];
@@ -10951,6 +10966,7 @@ function renderAsset() {
           </div>
           <div style="text-align:right;">
             <div style="font-size:14px; font-weight:600;">${Math.round(v).toLocaleString()}원</div>
+            ${groupItems.length > 1 && groupTotal > 0 ? `<div style="font-size:9px; color:var(--text-tertiary); margin-top:1px;">${gKey} 내 ${(v / groupTotal * 100).toFixed(0)}%</div>` : ''}
             ${priceInfo}
           </div>
           ${!editing ? `<div style="margin-left:6px; color:var(--text-tertiary); font-size:13px; align-self:center;">›</div>` : ''}
@@ -11933,9 +11949,6 @@ ${newsHeadlines || '(뉴스 없음)'}
 **💼 내 자산 관점**
 (보유 자산이 국내/해외 어느 쪽에 노출됐는지 + 오늘 시황과의 연관성)
 
-**🔍 주목할 뉴스**
-(미국/한국 헤드라인 중 가장 중요한 1-2개)
-
 **🎯 오늘의 한 마디**
 (액션 아이템 또는 관망 이유 1줄)
 
@@ -12281,14 +12294,14 @@ async function generateNewsSummary(forceRefresh = false) {
   const news = await fetchNewsRSS();
   if (!news || news.length === 0) return { error: '뉴스 없음' };
 
-  // 한국/미국 뉴스 분리
-  const koreaNews = news.filter(n => !n.tag?.includes('🇺🇸')).slice(0, 10);
-  const usNews = news.filter(n => n.tag?.includes('🇺🇸')).slice(0, 10);
+  // 한국/미국 뉴스 분리 (더 많이 수집)
+  const koreaNews = news.filter(n => !n.tag?.includes('🇺🇸')).slice(0, 15);
+  const usNews = news.filter(n => n.tag?.includes('🇺🇸')).slice(0, 15);
 
   const koreaHeadlines = koreaNews.map((n, i) => `${i+1}. [${n.source}] ${n.title}`).join('\n');
   const usHeadlines = usNews.map((n, i) => `${i+1}. [${n.source}] ${n.title}`).join('\n');
 
-  const prompt = `한국 투자자를 위한 글로벌 뉴스 요약입니다. 한국과 미국 시장 뉴스를 균형있게 요약해주세요.
+  const prompt = `한국 투자자를 위한 오늘의 경제 뉴스 요약입니다. 아래 헤드라인을 바탕으로, 단순 나열이 아니라 **맥락과 배경까지 친절하게 설명**해주세요.
 
 ## 🇰🇷 한국 경제 뉴스
 ${koreaHeadlines || '(데이터 없음)'}
@@ -12298,20 +12311,21 @@ ${usHeadlines || '(데이터 없음)'}
 
 ---
 
-다음 형식으로 한국어 요약. 미국+한국 둘 다 다루기:
+다음 형식으로 한국어 요약을 작성하세요. 마크다운 사용. 미국+한국 균형있게 다루세요:
 
-**🇺🇸 미국 핵심**
-1. (미국 가장 중요한 흐름, 1문장)
-2. (두번째, 1문장)
+**🇺🇸 미국 시장**
+- 핵심 흐름 3가지를 각각 2~3문장으로. 무슨 일이 있었는지 + 왜 중요한지 + 시장에 어떤 영향인지까지 설명.
 
-**🇰🇷 한국 핵심**
-1. (한국 가장 중요한 흐름, 1문장)
-2. (두번째, 1문장)
+**🇰🇷 한국 시장**
+- 핵심 흐름 3가지를 각각 2~3문장으로. 배경과 의미를 함께.
 
-**💡 종합 시사점**
-(미국+한국 흐름이 한국 투자자에게 주는 의미 2문장)
+**🏢 기업·산업 이슈**
+- 오늘 눈에 띄는 기업/산업 뉴스 2가지를 골라 각각 2문장으로 (실적, 신제품, M&A, 규제 등)
 
-각 문장 짧고 명확하게. 광고/홍보 톤 X.`;
+**💡 한국 투자자 관점 종합**
+- 위 흐름들이 한국 투자자에게 주는 의미를 3~4문장으로 정리. 어떤 자산군(국내주식/미국주식/환율/금 등)에 주목할 만한지.
+
+설명은 친절하지만 과장·광고 톤 없이. 헤드라인에 없는 내용을 지어내지 말고, 헤드라인에서 읽을 수 있는 범위로 맥락을 더해주세요.`;
 
   return await askGemini(prompt, { useCache: !forceRefresh, cacheKey });
 }
@@ -14113,7 +14127,7 @@ function renderAICoaching(total, byType) {
     const now = new Date();
     let totalInvest = 0;
     let months = 0;
-    const investCats = ['주식','ETF','펀드','채권','금','달러','예적금','청약','부동산','투자'];
+    const investCats = ['주식','국내주식','미국주식','ETF','국내ETF','해외ETF','펀드','채권','금','달러','예적금','청약','부동산','투자'];
 
     // 자동매수 (고정지출 - 투자) 월별 합계
     let autoBuyPerMonth = 0;
@@ -15459,7 +15473,11 @@ function renderAssetFormFields(type) {
 
 function getNamePlaceholder(type) {
   const map = {
+    '국내주식': '예: 삼성전자, SK하이닉스',
+    '미국주식': '예: 테슬라, 애플(AAPL)',
     '주식': '예: 삼성전자, 테슬라',
+    '국내ETF': '예: TIGER 200, KODEX 200',
+    '해외ETF': '예: SPY, QQQ, SCHD',
     'ETF': '예: TIGER 200, SPY',
     '펀드': '예: KB증권 차이나포커스펀드',
     '채권': '예: 국고채 3년물',
@@ -15476,7 +15494,11 @@ function getNamePlaceholder(type) {
 
 function getNotePlaceholder(type) {
   const map = {
+    '국내주식': '예: 키움증권',
+    '미국주식': '예: 키움 해외주식',
     '주식': '예: 토스증권',
+    '국내ETF': '예: 미래에셋',
+    '해외ETF': '예: 키움 해외',
     'ETF': '예: 미래에셋',
     '펀드': '예: 운용보수 0.5%',
     '채권': '예: 만기 2027.01',
@@ -15525,7 +15547,7 @@ function saveAsset() {
 
   const asset = { id: Date.now(), name, ticker, type, region, qty, price, note };
   // 타입별 추가 정보
-  if (['주식','ETF','펀드'].includes(type)) {
+  if (isStockLikeType(type)) {
     asset.priceCurrency = priceCurrency;
     if (priceCurrency === 'USD' && avgBuyRate > 0) asset.avgBuyRate = avgBuyRate;
   }
@@ -15558,13 +15580,13 @@ function editAsset(id) {
       <div class="field">
         <div class="field-label">자산 종류</div>
         <div style="display:flex; gap:4px; flex-wrap:wrap;" id="e-type">
-          ${['주식','ETF','펀드','채권','금','달러','예적금','청약','현금','부동산'].map(t =>
+          ${ASSET_TYPES.map(t =>
             `<button class="chip ${a.type===t?'active':''}" data-t="${t}">${t}</button>`
           ).join('')}
         </div>
       </div>
 
-      ${['주식','ETF','펀드'].includes(a.type) ? `
+      ${isStockLikeType(a.type) ? `
         <button onclick="closeModal(); setTimeout(()=>goAIAnalysisTab('${a.name.replace(/'/g, "\\'")}'), 200);"
           style="width:100%; padding:10px; border:none; background:linear-gradient(135deg, #FFEFE5 0%, #FFE0CC 100%); color:#D14343; border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; margin-bottom:12px;">
           🔍 ${a.name} AI 투자 분석 보기
@@ -15619,7 +15641,7 @@ function editAsset(id) {
     if (!container) return;
     let h = '';
 
-    if (['주식', 'ETF', '펀드'].includes(type)) {
+    if (isStockLikeType(type)) {
       const lots = a.lots || [];
       const hasLots = lots.length > 0;
       const isUS = a.ticker && !/\.(KS|KQ)$/i.test(a.ticker) && !/^\d{6}/.test(a.ticker);
@@ -16027,9 +16049,9 @@ function updateAsset(id) {
 
   // 🔧 매입가 통화 (주식/ETF/펀드만, 통화 선택 UI가 있을 때만 갱신)
   const curBtn = document.querySelector('#e-price-currency .chip.active');
-  if (curBtn && ['주식','ETF','펀드'].includes(newType)) {
+  if (curBtn && isStockLikeType(newType)) {
     a.priceCurrency = curBtn.dataset.cur;
-  } else if (!['주식','ETF','펀드'].includes(newType)) {
+  } else if (!isStockLikeType(newType)) {
     delete a.priceCurrency;
   }
   // 🔧 평균 매입 환율 — 달러 단가 자산에서만 의미. 환차손익 정확 계산용
