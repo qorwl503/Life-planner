@@ -8247,12 +8247,21 @@ function openExpenseModal(forDateKey) {
         <div style="margin-bottom:8px; font-size:10px; color:var(--text-tertiary); font-weight:500;">생활비</div>
         <div class="cat-grid" id="cat-grid">
           <button class="cat-btn active" data-c="식비"><i class="ti ti-bowl"></i><span>식비</span></button>
+          <button class="cat-btn" data-c="카페"><i class="ti ti-coffee"></i><span>카페</span></button>
           <button class="cat-btn" data-c="교통"><i class="ti ti-bus"></i><span>교통</span></button>
           <button class="cat-btn" data-c="쇼핑"><i class="ti ti-shopping-bag"></i><span>쇼핑</span></button>
-          <button class="cat-btn" data-c="카페"><i class="ti ti-coffee"></i><span>카페</span></button>
-          <button class="cat-btn" data-c="문화"><i class="ti ti-movie"></i><span>문화</span></button>
+          <button class="cat-btn" data-c="문화"><i class="ti ti-movie"></i><span>문화/여가</span></button>
           <button class="cat-btn" data-c="의료"><i class="ti ti-heartbeat"></i><span>의료</span></button>
-          <button class="cat-btn" data-c="생활"><i class="ti ti-home-2"></i><span>생활</span></button>
+          <button class="cat-btn" data-c="미용"><i class="ti ti-scissors"></i><span>미용</span></button>
+          <button class="cat-btn" data-c="생활"><i class="ti ti-home-2"></i><span>생활용품</span></button>
+          <button class="cat-btn" data-c="통신"><i class="ti ti-device-mobile"></i><span>통신</span></button>
+          <button class="cat-btn" data-c="경조사"><i class="ti ti-gift"></i><span>경조사</span></button>
+          <button class="cat-btn" data-c="교육"><i class="ti ti-book"></i><span>교육</span></button>
+          <button class="cat-btn" data-c="여행"><i class="ti ti-plane"></i><span>여행</span></button>
+          <button class="cat-btn" data-c="운동"><i class="ti ti-barbell"></i><span>운동/건강</span></button>
+          <button class="cat-btn" data-c="자녀"><i class="ti ti-baby-carriage"></i><span>자녀/육아</span></button>
+          <button class="cat-btn" data-c="선물"><i class="ti ti-gift-card"></i><span>선물/기부</span></button>
+          <button class="cat-btn" data-c="학회"><i class="ti ti-stethoscope"></i><span>학회/의학</span></button>
           <button class="cat-btn" data-c="기타"><i class="ti ti-dots"></i><span>기타</span></button>
         </div>
         <div style="margin:14px 0 8px; font-size:10px; color:var(--text-tertiary); font-weight:500;">💎 자산 투자 <span style="font-size:9px; opacity:0.7;">(자산 페이지와 연동됨)</span></div>
@@ -9160,7 +9169,22 @@ function saveAssetReviewItems() {
 
         // 캡처에서 읽은 "실제 총 보유분" (원화 기준)
         const realQty = qty;
-        const realAvg = price; // 위에서 이미 원화 환산됨
+        let realAvg = price; // 위에서 이미 원화 환산됨 (OCR 매입단가)
+
+        // 🔧 평단 정확도 개선 — 평가금액·수익률을 읽었으면 거기서 평단 역산.
+        //    OCR이 매입단가를 직접 읽으면 부정확할 때가 많지만,
+        //    평가금액·수익률은 큰 숫자라 잘 읽힘 → 평단 = (평가금액/수량) / (1+수익률)
+        const evalForCalc = Number(it.evalAmount) || 0;
+        const pctForCalc = (it.profitPct != null && isFinite(Number(it.profitPct))) ? Number(it.profitPct) : null;
+        if (realQty > 0 && evalForCalc > 0 && pctForCalc != null && pctForCalc > -100) {
+          const costBasis = evalForCalc / (1 + pctForCalc / 100); // 총 매입원금
+          const calcedAvg = Math.round(costBasis / realQty);
+          if (calcedAvg > 0) {
+            realAvg = calcedAvg;
+            priceNote = ` (평가금액·수익률에서 평단 역산)`;
+          }
+        }
+
         const realCost = Math.round(realQty * realAvg);
 
         // 🔧 기존 lot(자동매수 포함)을 전부 치우고, 캡처 기준 단일 lot으로 교체.
@@ -10585,6 +10609,47 @@ function getAssetReliability(asset) {
 }
 
 // 🔧 자산 위쪽에 표시할 신뢰도 요약 막대 — 어느 비중이 정확/부정확한지 한눈에
+// 🔧 주식류(개별주+ETF+펀드) 전체를 합쳐서 종목별 비중을 한 막대로 표시
+function renderStockDistributionBar() {
+  const stockAssets = assets.filter(a => isStockLikeType(a.type));
+  if (stockAssets.length < 2) return ''; // 2개 미만이면 의미 없음
+
+  const items = stockAssets.map(a => {
+    const lv = liveAssetData[a.id];
+    const v = lv?.hasLive && lv.krwValue ? lv.krwValue : Number(a.qty) * Number(a.price);
+    return { name: a.name, type: a.type, value: v };
+  }).filter(x => x.value > 0).sort((x, y) => y.value - x.value);
+
+  const stockTotal = items.reduce((s, x) => s + x.value, 0);
+  if (stockTotal <= 0) return '';
+
+  const palette = ['#5B8DEF','#A78BFA','#7BC8B5','#F6C76D','#FF8E72','#54A0FF','#FB7185','#34D399','#FBBF24','#9CD3A5','#C4A0F5','#85D4D6'];
+  const segs = items.map((x, i) => ({ ...x, pct: x.value / stockTotal * 100, color: palette[i % palette.length] }));
+
+  return `
+    <div style="padding:12px 14px; background:var(--bg-secondary); border-radius:12px; margin-bottom:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <span style="font-size:11px; font-weight:700; color:var(--text-secondary);">📊 주식 종목 분포 <span style="font-size:9px; color:var(--text-tertiary); font-weight:500;">(개별주+ETF+펀드)</span></span>
+        <span style="font-size:10px; color:var(--text-tertiary);">${Math.round(stockTotal).toLocaleString()}원</span>
+      </div>
+      <div style="display:flex; height:10px; border-radius:999px; overflow:hidden; background:rgba(0,0,0,0.05); margin-bottom:8px;">
+        ${segs.map(s => `<div style="width:${Math.max(0.5, s.pct)}%; background:${s.color};" title="${escapeAttr(s.name)} ${s.pct.toFixed(1)}%"></div>`).join('')}
+      </div>
+      <div style="display:flex; flex-direction:column; gap:4px;">
+        ${segs.map(s => `
+          <div style="display:flex; align-items:center; justify-content:space-between; font-size:11px;">
+            <span style="display:flex; align-items:center; gap:6px; min-width:0;">
+              <span style="width:8px; height:8px; border-radius:2px; background:${s.color}; flex:0 0 auto;"></span>
+              <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHTML(s.name)}</span>
+              <span style="font-size:8px; color:var(--text-tertiary); flex:0 0 auto;">${escapeHTML(s.type)}</span>
+            </span>
+            <span style="font-weight:600; flex:0 0 auto; margin-left:8px;">${s.pct.toFixed(1)}%</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>`;
+}
+
 function renderAssetReliabilitySummary(total) {
   if (!assets || assets.length === 0 || total <= 0) return '';
   const bucket = { broker:0, live:0, manual:0, needs:0 };
@@ -10784,6 +10849,9 @@ function renderAsset() {
       // 🔧 자산 신뢰도 요약 (어느 비중이 정확/부정확한지 한눈에)
       html += renderAssetReliabilitySummary(total);
 
+      // 🔧 주식 종목 분포 (개별주+ETF+펀드 통합 막대바)
+      html += renderStockDistributionBar();
+
       const editing = !!window._assetEditMode;
       html += `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
         <span style="font-size:12px; color:var(--text-secondary);">${assets.length}개 자산</span>
@@ -10874,25 +10942,6 @@ function renderAsset() {
               ${Math.round(groupTotal).toLocaleString()}원 · ${groupPct.toFixed(0)}%
             </div>
           </div>`;
-
-        // 🔧 그룹 안에 종목이 2개 이상이면 — 종목별 비중 미니 막대바
-        if (groupItems.length > 1 && groupTotal > 0) {
-          const segColors = ['#5B8DEF','#A78BFA','#7BC8B5','#F6C76D','#FF8E72','#54A0FF','#FB7185','#34D399','#FBBF24','#C9C5D9'];
-          const segs = groupItems.map(({ a }, i) => {
-            const lv = liveAssetData[a.id];
-            const sv = lv?.hasLive && lv.krwValue ? lv.krwValue : Number(a.qty) * Number(a.price);
-            return { name: a.name, pct: sv / groupTotal * 100, color: segColors[i % segColors.length] };
-          }).sort((x, y) => y.pct - x.pct);
-          html += `
-            <div style="margin:0 2px 8px;">
-              <div style="display:flex; height:6px; border-radius:999px; overflow:hidden; background:rgba(0,0,0,0.05);">
-                ${segs.map(s => `<div style="width:${Math.max(1, s.pct)}%; background:${s.color};" title="${escapeAttr(s.name)} ${s.pct.toFixed(0)}%"></div>`).join('')}
-              </div>
-              <div style="display:flex; flex-wrap:wrap; gap:6px 10px; margin-top:5px;">
-                ${segs.slice(0, 5).map(s => `<span style="font-size:9px; color:var(--text-tertiary);"><b style="color:${s.color};">●</b> ${escapeHTML(s.name.length > 8 ? s.name.slice(0,8)+'…' : s.name)} ${s.pct.toFixed(0)}%</span>`).join('')}
-              </div>
-            </div>`;
-        }
 
         groupItems.forEach(({ a, idx: assetIdx }) => {
         const live = liveAssetData[a.id];
