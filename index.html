@@ -3927,23 +3927,23 @@ function renderMoneyInsightCards(opts) {
   return html;
 }
 
-// 🔧 오늘의 추천 액션 카드 — 할일 탭 상단에 표시 (가계부가 아니라 할일 도메인)
-function renderTodayActionsCard() {
+// 🔧 오늘의 추천 액션 카드 — 자동 추천 + 사용자 수동 편집 (할일 탭 상단)
+function getAutoActions() {
   const actions = [];
 
-  // 액션 1: 소비 페이스가 초과면 절약 추천 (가계부 데이터 참조)
   const now = new Date();
   const monthKeyForGoal = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const livingGoal = (settings.livingGoals && settings.livingGoals[monthKeyForGoal])
     || settings.defaultLivingGoal || 0;
-  const viewMonthPrefix = monthKeyForGoal;
   const monthExpenses = (budget.expenses || []).filter(e =>
-    e.dateKey && e.dateKey.startsWith(viewMonthPrefix) && e.type !== 'income'
+    e.dateKey && e.dateKey.startsWith(monthKeyForGoal) && e.type !== 'income'
   );
   const monthSpent = monthExpenses.reduce((s, e) => s + (Number(e.amt) || 0), 0);
   const daysPassed = today;
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const todayK = todayKey();
 
+  // 액션 1: 소비 페이스 초과
   if (livingGoal > 0 && monthSpent > 0 && daysPassed >= 3) {
     const dailyPace = monthSpent / daysPassed;
     const projected = dailyPace * daysInMonth;
@@ -3958,8 +3958,7 @@ function renderTodayActionsCard() {
     }
   }
 
-  // 액션 2: 미룬 할일 있으면 처리 권장
-  const todayK = todayKey();
+  // 액션 2: 미룬 할일
   const overdueTodos = (todos || []).filter(t =>
     !t.done && t.dateKey && t.dateKey < todayK
   );
@@ -3970,39 +3969,49 @@ function renderTodayActionsCard() {
     });
   }
 
-  // 액션 3: 오늘 운동 안 했으면 권장
+  // 액션 3: 오늘 운동
   if (typeof workoutLog !== 'undefined') {
     const todayWorkout = workoutLog[todayK];
     if (!todayWorkout || !todayWorkout.done) {
-      actions.push({
-        icon: '💪',
-        text: `오늘 운동 <b>20분 이상</b> 하기`
-      });
+      actions.push({ icon: '💪', text: `오늘 운동 <b>20분 이상</b> 하기` });
     }
   }
 
-  // 액션 4: 오늘 가계부 입력 없으면 권장
+  // 액션 4: 오늘 가계부 입력 없음
   const todayExpenses = monthExpenses.filter(e => e.dateKey === todayK);
   if (todayExpenses.length === 0 && actions.length < 3) {
-    actions.push({
-      icon: '📝',
-      text: `오늘 지출 가계부에 기록하기`
-    });
+    actions.push({ icon: '📝', text: `오늘 지출 가계부에 기록하기` });
   }
 
-  // 액션이 비면 긍정 메시지
   if (actions.length === 0) {
     actions.push({ icon: '✨', text: '오늘은 페이스가 좋아요. 이대로 유지!' });
   }
 
-  const top3 = actions.slice(0, 3);
+  return actions.slice(0, 3);
+}
+
+function renderTodayActionsCard() {
+  // 사용자가 직접 설정한 오늘의 액션 (날짜별 저장 — 오늘 것만)
+  const todayK = todayKey();
+  const customByDate = settings.todayActions || {};
+  const custom = customByDate[todayK] || null; // null이면 자동 모드
+
+  const isManual = !!(custom && custom.items && custom.items.length > 0);
+  const items = isManual ? custom.items : getAutoActions();
+
   return `
     <div style="padding:14px; background:rgba(94,92,230,0.06); border-radius:12px; margin-bottom:14px; border:0.5px solid rgba(94,92,230,0.25);">
-      <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">
-        <span style="font-size:14px;">🎯</span>
-        <span style="font-size:11px; font-weight:700; color:var(--accent-primary, #5E5CE6);">오늘 이것만 하면 성공</span>
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+        <div style="display:flex; align-items:center; gap:6px;">
+          <span style="font-size:14px;">🎯</span>
+          <span style="font-size:11px; font-weight:700; color:var(--accent-primary, #5E5CE6);">오늘 이것만 하면 성공</span>
+          ${isManual ? '' : `<span style="font-size:9px; padding:1px 6px; background:rgba(94,92,230,0.12); color:var(--accent-primary, #5E5CE6); border-radius:999px;">자동 추천</span>`}
+        </div>
+        <button onclick="openTodayActionsEdit()" style="border:none; background:transparent; color:var(--accent-primary, #5E5CE6); font-size:11px; cursor:pointer; font-family:inherit;">
+          ${isManual ? '✏️ 수정' : '✏️ 직접 정하기'}
+        </button>
       </div>
-      ${top3.map((a, i) => `
+      ${items.map((a, i) => `
         <div style="display:flex; gap:8px; padding:5px 0; font-size:12px; line-height:1.5;">
           <span style="font-weight:700; color:var(--text-tertiary); min-width:14px;">${i+1}.</span>
           <span style="font-size:14px;">${a.icon}</span>
@@ -4010,6 +4019,91 @@ function renderTodayActionsCard() {
         </div>
       `).join('')}
     </div>`;
+}
+
+// 🔧 오늘의 액션 수동 편집 모달
+function openTodayActionsEdit() {
+  const todayK = todayKey();
+  const customByDate = settings.todayActions || {};
+  const custom = customByDate[todayK];
+  const auto = getAutoActions();
+  // 현재 표시 중인 것을 기본값으로
+  const startItems = (custom && custom.items && custom.items.length > 0)
+    ? custom.items
+    : auto.map(a => ({ icon: a.icon, text: a.text.replace(/<[^>]+>/g, '') })); // <b> 태그 제거
+
+  // 3개 채우기 (빈 자리는 빈 문자열)
+  while (startItems.length < 3) startItems.push({ icon: '✅', text: '' });
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">취소</button>
+        <h2>🎯 오늘의 액션 3개</h2>
+        <button class="modal-save" onclick="saveTodayActions()">저장</button>
+      </div>
+
+      <div style="padding:10px 12px; background:var(--bg-info); border-radius:8px; margin-bottom:14px; font-size:11px; color:var(--text-info); line-height:1.5;">
+        오늘 집중할 3가지를 직접 정해보세요. 비워두면 그 칸은 사라져요. 모두 비우면 자동 추천으로 돌아가요.
+      </div>
+
+      ${[0,1,2].map(i => `
+        <div class="field">
+          <div class="field-label">액션 ${i+1}</div>
+          <div style="display:flex; gap:6px;">
+            <input type="text" id="ta-icon-${i}" maxlength="2" value="${escapeAttr(startItems[i].icon || '✅')}" style="width:50px; text-align:center; font-size:16px;" placeholder="🎯" />
+            <input type="text" id="ta-text-${i}" value="${escapeAttr(startItems[i].text || '')}" placeholder="예: 30분 산책하기" style="flex:1;" />
+          </div>
+        </div>
+      `).join('')}
+
+      <button onclick="resetTodayActions()" style="width:100%; padding:11px; border:0.5px solid var(--border-tertiary); background:transparent; color:var(--text-secondary); border-radius:10px; font-size:12px; cursor:pointer; font-family:inherit; margin-top:6px;">
+        🔄 자동 추천으로 되돌리기
+      </button>
+    </div>`;
+  modal.classList.add('show');
+}
+
+function saveTodayActions() {
+  const todayK = todayKey();
+  const items = [];
+  for (let i = 0; i < 3; i++) {
+    const icon = (document.getElementById(`ta-icon-${i}`)?.value || '').trim() || '✅';
+    const text = (document.getElementById(`ta-text-${i}`)?.value || '').trim();
+    if (text) items.push({ icon, text });
+  }
+
+  if (!settings.todayActions) settings.todayActions = {};
+  if (items.length === 0) {
+    // 전부 비우면 자동 모드로 (저장된 거 삭제)
+    delete settings.todayActions[todayK];
+  } else {
+    settings.todayActions[todayK] = { items, updatedAt: Date.now() };
+  }
+
+  // 옛날 날짜 정리 (30일 넘은 거)
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 30);
+  const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth()+1).padStart(2,'0')}-${String(cutoff.getDate()).padStart(2,'0')}`;
+  Object.keys(settings.todayActions).forEach(k => {
+    if (k < cutoffKey) delete settings.todayActions[k];
+  });
+
+  saveData();
+  closeModal();
+  showToast(items.length === 0 ? '자동 추천으로 돌아갔어요' : '오늘의 액션 저장됨');
+  render();
+}
+
+function resetTodayActions() {
+  if (!confirm('자동 추천으로 되돌릴까요? 직접 입력한 내용은 삭제돼요.')) return;
+  const todayK = todayKey();
+  if (settings.todayActions) delete settings.todayActions[todayK];
+  saveData();
+  closeModal();
+  showToast('자동 추천으로 되돌아갔어요');
+  render();
 }
 
 // 🔧 월말 자동 리뷰 — 과거 달 가계부 볼 때 한 달 요약 카드
