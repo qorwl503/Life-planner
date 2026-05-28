@@ -3859,27 +3859,40 @@ function renderMoneyInsightCards(opts) {
     const dailyPace = monthSpent / daysPassed;
     const projected = Math.round(dailyPace * daysInMonth);
     const daysLeft = Math.max(0, daysInMonth - daysPassed);
-    const remainingBudget = Math.max(0, livingGoal - monthSpent - fixedRemaining);
-    const recommendedDaily = daysLeft > 0 ? Math.floor(remainingBudget / daysLeft) : 0;
+    const remainingBudget = livingGoal - monthSpent; // 음수면 이미 초과
+    const recommendedDaily = (daysLeft > 0 && remainingBudget > 0) ? Math.floor(remainingBudget / daysLeft) : 0;
 
-    const overBy = projected - livingGoal;
-    const isOver = projected > livingGoal;
+    const alreadyOver = monthSpent >= livingGoal; // 🔧 이미 목표를 넘었는지
+    const projectedOver = projected > livingGoal; // 페이스대로면 넘을지
 
     let toneColor, toneBg, toneIcon, title, subtext;
-    if (isOver) {
+    if (alreadyOver) {
+      // 🔧 이미 초과 — 달성 불가능. 솔직하게 안내.
+      const overAmount = monthSpent - livingGoal;
       toneColor = 'var(--text-danger)';
       toneBg = 'rgba(232,72,61,0.08)';
       toneIcon = '🚨';
-      title = `이대로 가면 월말에 ${overBy.toLocaleString()}원 초과 예상`;
+      title = `이번 달 목표를 이미 <b>${overAmount.toLocaleString()}원</b> 초과했어요`;
       subtext = daysLeft > 0
+        ? `남은 ${daysLeft}일은 꼭 필요한 지출만 — 초과 폭을 줄이는 데 집중해요`
+        : `이번 달은 마감됐어요. 다음 달 목표를 다시 점검해보세요`;
+    } else if (projectedOver) {
+      // 아직 안 넘었지만 페이스대로면 넘을 듯
+      const overBy = projected - livingGoal;
+      toneColor = 'var(--text-warning)';
+      toneBg = 'rgba(232,155,74,0.08)';
+      toneIcon = '⚠️';
+      title = `이대로 가면 월말에 <b>${overBy.toLocaleString()}원</b> 초과 예상`;
+      subtext = (daysLeft > 0 && recommendedDaily > 0)
         ? `남은 ${daysLeft}일 동안 하루 <b>${recommendedDaily.toLocaleString()}원 이하</b>로 쓰면 목표 달성 가능`
         : `이번 달 마감 임박`;
     } else {
+      // 여유 있음
       toneColor = 'var(--text-success, #2D8B5C)';
       toneBg = 'rgba(45,139,92,0.08)';
       toneIcon = '✅';
       title = `예상 월말 지출 <b>${projected.toLocaleString()}원</b> · 목표 안에 들 듯`;
-      subtext = `현재 페이스: 하루 평균 ${Math.round(dailyPace).toLocaleString()}원`;
+      subtext = `현재 페이스: 하루 평균 ${Math.round(dailyPace).toLocaleString()}원 · 남은 예산 ${remainingBudget.toLocaleString()}원`;
     }
 
     html += `
@@ -3956,14 +3969,23 @@ function getAutoActions() {
   if (livingGoal > 0 && monthSpent > 0 && daysPassed >= 3) {
     const dailyPace = monthSpent / daysPassed;
     const projected = dailyPace * daysInMonth;
-    if (projected > livingGoal * 1.1) {
+    const alreadyOver = monthSpent >= livingGoal;
+    if (alreadyOver) {
+      // 이미 목표 초과 — 절약 독려 (0원 메시지 방지)
+      actions.push({
+        icon: '🚨',
+        text: `이번 달 목표 초과 — 오늘은 꼭 필요한 지출만 하기`
+      });
+    } else if (projected > livingGoal * 1.1) {
       const daysLeft = Math.max(0, daysInMonth - daysPassed);
       const remainingBudget = Math.max(0, livingGoal - monthSpent);
       const recommendedDaily = daysLeft > 0 ? Math.floor(remainingBudget / daysLeft) : 0;
-      actions.push({
-        icon: '💰',
-        text: `오늘 지출 <b>${recommendedDaily.toLocaleString()}원 이하</b>로 유지`
-      });
+      if (recommendedDaily > 0) {
+        actions.push({
+          icon: '💰',
+          text: `오늘 지출 <b>${recommendedDaily.toLocaleString()}원 이하</b>로 유지`
+        });
+      }
     }
   }
 
