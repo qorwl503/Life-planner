@@ -1408,6 +1408,19 @@ function showToast(msg) {
   setTimeout(() => toast.classList.remove('show'), 2000);
 }
 
+// 🔧 XSS 방지 — 사용자 입력(자산명·메모·티커 등)을 화면에 그릴 때 안전 처리
+function escapeHTML(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+function escapeAttr(value) {
+  return escapeHTML(value);
+}
+
 function nav(tab) {
   currentTab = tab;
   window._assetDetailId = null; // 자산 상세 뷰 초기화
@@ -1488,12 +1501,65 @@ function renderDdayCard() {
       })();
       html += `<div onclick="openDdayModal(${d.id})" style="flex:0 0 auto; min-width:100px; padding:12px; background:${bg}; border-radius:10px; text-align:center; cursor:pointer;">
         <div style="font-size:22px;">${d.emoji || '📅'}</div>
-        <div style="font-size:11px; font-weight:600; margin-top:4px; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:90px;">${d.title}</div>
+        <div style="font-size:11px; font-weight:600; margin-top:4px; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:90px;">${escapeHTML(d.title)}</div>
         <div style="font-size:13px; font-weight:700; margin-top:4px; color:${color};">${label}</div>
         <div style="font-size:9px; color:var(--text-tertiary); margin-top:2px;">${dateLabel}</div>
+        ${Number(d.targetAmount) > 0 ? (() => {
+          const tgt = Number(d.targetAmount);
+          const svd = Number(d.savedAmount) || 0;
+          const pct = Math.min(100, Math.round(svd / tgt * 100));
+          return `<div style="margin-top:5px; height:3px; background:rgba(0,0,0,0.08); border-radius:999px; overflow:hidden;">
+            <div style="width:${pct}%; height:100%; background:${color};"></div>
+          </div>
+          <div style="font-size:8px; color:var(--text-tertiary); margin-top:2px;">${pct}%</div>`;
+        })() : ''}
       </div>`;
     });
     html += `</div>`;
+
+    // 🔧 목표금액이 있는 D-day는 아래에 상세 진행 카드도 표시 (다가오는 것만)
+    const moneyGoals = computed.filter(d => Number(d.targetAmount) > 0 && d.diff >= 0);
+    if (moneyGoals.length > 0) {
+      moneyGoals.slice(0, 3).forEach(d => {
+        const tgt = Number(d.targetAmount);
+        const svd = Number(d.savedAmount) || 0;
+        const remaining = Math.max(0, tgt - svd);
+        const pct = Math.min(100, Math.round(svd / tgt * 100));
+        const daysLeft = Math.max(1, d.diff);
+        const dailySaving = remaining > 0 ? Math.ceil(remaining / daysLeft) : 0;
+        const monthlySaving = remaining > 0 ? Math.ceil(remaining / (daysLeft / 30)) : 0;
+        const isDone = svd >= tgt;
+        const isToday = d.diff === 0;
+
+        const color = isDone ? 'var(--text-success, #2D8B5C)' : (isToday ? 'var(--text-warning)' : 'var(--text-info)');
+
+        html += `
+          <div onclick="openDdayModal(${d.id})" style="margin-top:10px; padding:14px; background:var(--bg-secondary); border-radius:12px; cursor:pointer; border:0.5px solid ${color}33;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <div style="display:flex; align-items:center; gap:6px;">
+                <span style="font-size:18px;">${d.emoji || '🎯'}</span>
+                <span style="font-size:12px; font-weight:700;">${escapeHTML(d.title)}</span>
+                <span style="font-size:10px; color:${color}; font-weight:600;">D-${daysLeft}</span>
+              </div>
+              <span style="font-size:11px; font-weight:700; color:${color};">${pct}%</span>
+            </div>
+            <div style="height:6px; background:rgba(0,0,0,0.06); border-radius:999px; overflow:hidden; margin-bottom:8px;">
+              <div style="width:${pct}%; height:100%; background:${color};"></div>
+            </div>
+            <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-secondary); margin-bottom:4px;">
+              <span>${svd.toLocaleString()}원 모음</span>
+              <span>목표 ${tgt.toLocaleString()}원</span>
+            </div>
+            ${isDone ? `
+              <div style="font-size:11px; color:${color}; font-weight:600; margin-top:6px;">🎉 목표 달성! 축하해요</div>
+            ` : `
+              <div style="font-size:10px; color:var(--text-tertiary); line-height:1.5; margin-top:6px;">
+                남은 ${remaining.toLocaleString()}원 · 하루 <b style="color:var(--text-primary);">${dailySaving.toLocaleString()}원</b>씩 저축하면 도달
+              </div>
+            `}
+          </div>`;
+      });
+    }
   }
   html += `</div>`;
   return html;
@@ -1531,6 +1597,17 @@ function openDdayModal(id) {
         <input type="date" id="dday-date" value="${existing?.date || ''}" />
       </div>
 
+      <div class="field">
+        <div class="field-label">목표 금액 (선택) <span style="font-size:9px; color:var(--text-tertiary); font-weight:400;">— 여행·이사·구매 등 돈이 필요한 D-day일 때</span></div>
+        <input type="number" id="dday-target" placeholder="예: 2000000" value="${existing?.targetAmount || ''}" />
+      </div>
+
+      <div class="field">
+        <div class="field-label">현재까지 모은 금액 (선택)</div>
+        <input type="number" id="dday-saved" placeholder="예: 500000" value="${existing?.savedAmount || ''}" />
+        <div style="font-size:9px; color:var(--text-tertiary); margin-top:3px;">목표 금액과 함께 입력하면 진행률·하루 권장 저축액이 자동 계산돼요.</div>
+      </div>
+
       ${isEdit ? `
         <div style="display:flex; gap:6px; margin-top:14px;">
           <button onclick="deleteDday(${id})" style="flex:1; padding:10px; border:0.5px solid var(--text-danger); background:transparent; color:var(--text-danger); border-radius:var(--radius-md); font-size:12px; cursor:pointer; font-family:inherit;">🗑️ 삭제</button>
@@ -1554,6 +1631,8 @@ function saveDday(id) {
   const title = document.getElementById('dday-title').value.trim();
   const date = document.getElementById('dday-date').value;
   const emoji = document.querySelector('#dday-emoji .chip.active')?.dataset.e || '🎂';
+  const targetAmount = Number(document.getElementById('dday-target')?.value) || 0;
+  const savedAmount = Number(document.getElementById('dday-saved')?.value) || 0;
 
   if (!title || !date) {
     showToast('제목과 날짜를 입력해주세요');
@@ -1565,11 +1644,11 @@ function saveDday(id) {
   if (id) {
     const idx = settings.ddays.findIndex(d => d.id === id);
     if (idx >= 0) {
-      settings.ddays[idx] = { ...settings.ddays[idx], title, date, emoji };
+      settings.ddays[idx] = { ...settings.ddays[idx], title, date, emoji, targetAmount, savedAmount };
     }
     showToast('수정됨');
   } else {
-    settings.ddays.push({ id: Date.now(), title, date, emoji });
+    settings.ddays.push({ id: Date.now(), title, date, emoji, targetAmount, savedAmount });
     showToast(`🎂 "${title}" 추가됨`);
   }
 
@@ -3747,6 +3826,317 @@ function deleteWorkout(key) {
 }
 
 // ====== 가계부 ======
+// 🔧 가계부 인사이트 — 3가지 카드를 한꺼번에 분석해서 HTML 반환
+//    1) 오늘의 추천 액션 3개
+//    2) 새는 돈 탐지 (반복되는 소액 지출)
+//    3) 소비 페이스 예측 (이 페이스면 월말 얼마)
+function renderMoneyInsightCards(opts) {
+  // opts: { viewMonthExpenses, monthSpent, livingGoal, daysPassed, daysInMonth, isCurrentMonth, fixedRemaining, fixedTotal }
+  const { viewMonthExpenses = [], monthSpent = 0, livingGoal = 0,
+          daysPassed = 1, daysInMonth = 30, isCurrentMonth = true,
+          fixedRemaining = 0 } = opts || {};
+
+  // 이번 달이 아니면 표시 안 함 (과거 달은 페이스 예측이 무의미)
+  if (!isCurrentMonth) return '';
+
+  let html = '';
+
+  // ============== 1) 소비 페이스 예측 ==============
+  // 지금 페이스대로 가면 월말까지 얼마 쓸지
+  if (livingGoal > 0 && daysPassed >= 1 && monthSpent > 0) {
+    const dailyPace = monthSpent / daysPassed;
+    const projected = Math.round(dailyPace * daysInMonth);
+    const daysLeft = Math.max(0, daysInMonth - daysPassed);
+    const remainingBudget = Math.max(0, livingGoal - monthSpent - fixedRemaining);
+    const recommendedDaily = daysLeft > 0 ? Math.floor(remainingBudget / daysLeft) : 0;
+
+    const overBy = projected - livingGoal;
+    const isOver = projected > livingGoal;
+
+    let toneColor, toneBg, toneIcon, title, subtext;
+    if (isOver) {
+      toneColor = 'var(--text-danger)';
+      toneBg = 'rgba(232,72,61,0.08)';
+      toneIcon = '🚨';
+      title = `이대로 가면 월말에 ${overBy.toLocaleString()}원 초과 예상`;
+      subtext = daysLeft > 0
+        ? `남은 ${daysLeft}일 동안 하루 <b>${recommendedDaily.toLocaleString()}원 이하</b>로 쓰면 목표 달성 가능`
+        : `이번 달 마감 임박`;
+    } else {
+      toneColor = 'var(--text-success, #2D8B5C)';
+      toneBg = 'rgba(45,139,92,0.08)';
+      toneIcon = '✅';
+      title = `예상 월말 지출 <b>${projected.toLocaleString()}원</b> · 목표 안에 들 듯`;
+      subtext = `현재 페이스: 하루 평균 ${Math.round(dailyPace).toLocaleString()}원`;
+    }
+
+    html += `
+      <div style="padding:14px; background:${toneBg}; border-radius:12px; margin-bottom:10px; border:0.5px solid ${toneColor}33;">
+        <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+          <span style="font-size:14px;">${toneIcon}</span>
+          <span style="font-size:11px; font-weight:700; color:${toneColor};">소비 페이스 예측</span>
+        </div>
+        <div style="font-size:13px; font-weight:600; line-height:1.5; margin-bottom:3px;">${title}</div>
+        <div style="font-size:11px; color:var(--text-secondary); line-height:1.5;">${subtext}</div>
+      </div>`;
+  }
+
+  // ============== 2) 새는 돈 탐지 ==============
+  // 같은 메모/카테고리로 자주 발생하는 소액 지출 (예: 매일 카페)
+  const expenseItems = viewMonthExpenses.filter(e => e.type !== 'income');
+  if (expenseItems.length >= 5) {
+    // 카테고리별 묶기
+    const catGroups = {};
+    expenseItems.forEach(e => {
+      const cat = e.cat || '기타';
+      if (!catGroups[cat]) catGroups[cat] = { count: 0, total: 0, memos: [] };
+      catGroups[cat].count++;
+      catGroups[cat].total += Number(e.amt) || 0;
+      catGroups[cat].memos.push(e.memo || '');
+    });
+
+    // "새는 돈" 후보: 3회 이상 + 카페·편의점·구독 같은 자잘한 카테고리
+    const leakCats = ['카페', '편의점', '식비', '구독', '배달', '간식'];
+    const leaks = Object.entries(catGroups)
+      .filter(([cat, g]) => g.count >= 3 && leakCats.some(lc => cat.includes(lc)))
+      .map(([cat, g]) => ({ cat, count: g.count, total: g.total, avg: Math.round(g.total / g.count) }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 3);
+
+    if (leaks.length > 0) {
+      html += `
+        <div style="padding:14px; background:rgba(232,155,74,0.08); border-radius:12px; margin-bottom:10px; border:0.5px solid rgba(232,155,74,0.3);">
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">
+            <span style="font-size:14px;">💧</span>
+            <span style="font-size:11px; font-weight:700; color:#B86E1E;">새는 돈 탐지</span>
+          </div>
+          ${leaks.map(l => `
+            <div style="display:flex; justify-content:space-between; padding:5px 0; font-size:12px;">
+              <span style="color:var(--text-secondary);">${escapeHTML(l.cat)} · ${l.count}회</span>
+              <span style="font-weight:600;">${l.total.toLocaleString()}원 <span style="font-size:10px; color:var(--text-tertiary);">(평균 ${l.avg.toLocaleString()})</span></span>
+            </div>
+          `).join('')}
+          <div style="margin-top:6px; font-size:10px; color:var(--text-tertiary); line-height:1.5;">자잘하지만 누적되면 큰 돈이 되는 항목이에요</div>
+        </div>`;
+    }
+  }
+
+  // ============== 3) 오늘의 추천 액션 3개 ==============
+  // 데이터 보고 사용자에게 우선순위 액션 제안
+  const actions = [];
+
+  // 액션 1: 소비 페이스가 초과면 절약 추천
+  if (livingGoal > 0 && monthSpent > 0 && daysPassed >= 3) {
+    const dailyPace = monthSpent / daysPassed;
+    const projected = dailyPace * daysInMonth;
+    if (projected > livingGoal * 1.1) {
+      const daysLeft = Math.max(0, daysInMonth - daysPassed);
+      const remainingBudget = Math.max(0, livingGoal - monthSpent - fixedRemaining);
+      const recommendedDaily = daysLeft > 0 ? Math.floor(remainingBudget / daysLeft) : 0;
+      actions.push({
+        icon: '💰',
+        text: `오늘 지출 <b>${recommendedDaily.toLocaleString()}원 이하</b>로 유지`
+      });
+    }
+  }
+
+  // 액션 2: 미룬 할일 있으면 처리 권장
+  if (typeof todos !== 'undefined') {
+    const today = todayKey();
+    const overdueTodos = (todos || []).filter(t =>
+      !t.done && t.dateKey && t.dateKey < today
+    );
+    if (overdueTodos.length > 0) {
+      actions.push({
+        icon: '📌',
+        text: `미룬 할일 <b>${overdueTodos.length}개</b> 중 가장 급한 것 1개 처리하기`
+      });
+    }
+  }
+
+  // 액션 3: 오늘 운동 안 했으면 권장
+  if (typeof workoutLog !== 'undefined') {
+    const todayK = todayKey();
+    const todayWorkout = workoutLog[todayK];
+    if (!todayWorkout || !todayWorkout.done) {
+      actions.push({
+        icon: '💪',
+        text: `오늘 운동 <b>20분 이상</b> 하기`
+      });
+    }
+  }
+
+  // 액션 4: 오늘 가계부 입력 없으면 권장
+  const todayK = todayKey();
+  const todayExpenses = expenseItems.filter(e => e.dateKey === todayK);
+  if (todayExpenses.length === 0 && actions.length < 3) {
+    actions.push({
+      icon: '📝',
+      text: `오늘 지출 가계부에 기록하기`
+    });
+  }
+
+  // 액션 5: 고정지출 결제 잔여 있으면
+  if (fixedRemaining > 0 && actions.length < 3) {
+    actions.push({
+      icon: '💳',
+      text: `이번 달 고정지출 <b>${fixedRemaining.toLocaleString()}원</b> 결제 확인하기`
+    });
+  }
+
+  // 액션이 비면 긍정 메시지
+  if (actions.length === 0) {
+    actions.push({ icon: '✨', text: '오늘은 페이스가 좋아요. 이대로 유지!' });
+  }
+
+  // 최대 3개만
+  const top3 = actions.slice(0, 3);
+  html += `
+    <div style="padding:14px; background:rgba(94,92,230,0.06); border-radius:12px; margin-bottom:14px; border:0.5px solid rgba(94,92,230,0.25);">
+      <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">
+        <span style="font-size:14px;">🎯</span>
+        <span style="font-size:11px; font-weight:700; color:var(--accent-primary, #5E5CE6);">오늘 이것만 하면 성공</span>
+      </div>
+      ${top3.map((a, i) => `
+        <div style="display:flex; gap:8px; padding:5px 0; font-size:12px; line-height:1.5;">
+          <span style="font-weight:700; color:var(--text-tertiary); min-width:14px;">${i+1}.</span>
+          <span style="font-size:14px;">${a.icon}</span>
+          <span style="flex:1;">${a.text}</span>
+        </div>
+      `).join('')}
+    </div>`;
+
+  return html;
+}
+
+// 🔧 월말 자동 리뷰 — 과거 달 가계부 볼 때 한 달 요약 카드
+function renderMonthlyReview(opts) {
+  const { viewMonthExpenses = [], variableSpent = 0, variableBudget = 0,
+          monthlyIncomeNum = 0, fixedTotal = 0, investSpent = 0,
+          budgetViewYear, budgetViewMonth } = opts || {};
+
+  const monthLabel = `${budgetViewYear}년 ${budgetViewMonth + 1}월`;
+  const totalExpense = fixedTotal + variableSpent + investSpent;
+  const saved = monthlyIncomeNum - totalExpense;
+  const goalAchieved = variableBudget > 0 && variableSpent <= variableBudget;
+
+  // 카테고리별 지출 TOP3
+  const expenseItems = viewMonthExpenses.filter(e => e.type !== 'income');
+  const catTotals = {};
+  expenseItems.forEach(e => {
+    const cat = e.cat || '기타';
+    catTotals[cat] = (catTotals[cat] || 0) + (Number(e.amt) || 0);
+  });
+  const top3 = Object.entries(catTotals)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3);
+
+  // 가장 큰 지출 1건
+  const biggest = expenseItems
+    .slice()
+    .sort((a, b) => (Number(b.amt) || 0) - (Number(a.amt) || 0))[0];
+
+  // 잘한 점·아쉬운 점 자동 산출
+  const goodPoints = [];
+  const badPoints = [];
+
+  if (goalAchieved && variableBudget > 0) {
+    const margin = variableBudget - variableSpent;
+    goodPoints.push(`목표 변동지출 ${variableBudget.toLocaleString()}원 안에서 ${margin.toLocaleString()}원 절약`);
+  }
+  if (saved > 0 && monthlyIncomeNum > 0) {
+    const savedPct = Math.round(saved / monthlyIncomeNum * 100);
+    goodPoints.push(`수입의 ${savedPct}%를 남김 (${saved.toLocaleString()}원)`);
+  }
+  if (investSpent > 0) {
+    goodPoints.push(`투자 ${investSpent.toLocaleString()}원 실행`);
+  }
+
+  if (!goalAchieved && variableBudget > 0) {
+    const over = variableSpent - variableBudget;
+    badPoints.push(`변동지출 목표 ${over.toLocaleString()}원 초과`);
+  }
+  if (saved < 0) {
+    badPoints.push(`수입보다 ${Math.abs(saved).toLocaleString()}원 더 씀`);
+  }
+  // 카페·편의점 같은 새는 돈 큰 비중인지
+  if (top3[0]) {
+    const [topCat, topAmt] = top3[0];
+    if (['카페', '편의점', '배달', '간식'].some(k => topCat.includes(k))
+        && variableSpent > 0 && topAmt / variableSpent > 0.25) {
+      const pct = Math.round(topAmt / variableSpent * 100);
+      badPoints.push(`${topCat} 비중이 변동지출의 ${pct}%로 높음`);
+    }
+  }
+
+  return `
+    <div style="padding:16px; background:linear-gradient(135deg, rgba(94,92,230,0.08) 0%, rgba(70,140,255,0.08) 100%); border-radius:14px; margin-bottom:14px; border:0.5px solid rgba(94,92,230,0.2);">
+      <div style="display:flex; align-items:center; gap:6px; margin-bottom:10px;">
+        <span style="font-size:16px;">📊</span>
+        <span style="font-size:12px; font-weight:700; color:var(--accent-primary, #5E5CE6);">${monthLabel} 월말 리뷰</span>
+      </div>
+
+      <!-- 핵심 숫자 -->
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px;">
+        <div style="padding:10px; background:white; border-radius:10px;">
+          <div style="font-size:9px; color:var(--text-tertiary);">총 수입</div>
+          <div style="font-size:14px; font-weight:700; color:var(--text-success, #2D8B5C); margin-top:2px;">${monthlyIncomeNum.toLocaleString()}원</div>
+        </div>
+        <div style="padding:10px; background:white; border-radius:10px;">
+          <div style="font-size:9px; color:var(--text-tertiary);">총 지출</div>
+          <div style="font-size:14px; font-weight:700; color:var(--text-danger); margin-top:2px;">${totalExpense.toLocaleString()}원</div>
+        </div>
+        <div style="padding:10px; background:white; border-radius:10px;">
+          <div style="font-size:9px; color:var(--text-tertiary);">${saved >= 0 ? '저축한 돈' : '적자'}</div>
+          <div style="font-size:14px; font-weight:700; color:${saved >= 0 ? 'var(--text-success, #2D8B5C)' : 'var(--text-danger)'}; margin-top:2px;">${saved >= 0 ? '+' : ''}${saved.toLocaleString()}원</div>
+        </div>
+        <div style="padding:10px; background:white; border-radius:10px;">
+          <div style="font-size:9px; color:var(--text-tertiary);">목표 달성</div>
+          <div style="font-size:14px; font-weight:700; color:${goalAchieved ? 'var(--text-success, #2D8B5C)' : 'var(--text-warning)'}; margin-top:2px;">${variableBudget > 0 ? (goalAchieved ? '✅ 성공' : '❌ 초과') : '미설정'}</div>
+        </div>
+      </div>
+
+      <!-- 카테고리 TOP3 -->
+      ${top3.length > 0 ? `
+        <div style="padding:10px 12px; background:white; border-radius:10px; margin-bottom:8px;">
+          <div style="font-size:10px; font-weight:600; color:var(--text-secondary); margin-bottom:6px;">지출 카테고리 TOP3</div>
+          ${top3.map(([cat, amt], i) => `
+            <div style="display:flex; justify-content:space-between; padding:3px 0; font-size:11px;">
+              <span><b style="color:var(--text-tertiary);">${i+1}.</b> ${escapeHTML(cat)}</span>
+              <span style="font-weight:600;">${amt.toLocaleString()}원</span>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
+
+      ${biggest ? `
+        <div style="padding:10px 12px; background:white; border-radius:10px; margin-bottom:8px;">
+          <div style="font-size:10px; font-weight:600; color:var(--text-secondary); margin-bottom:4px;">가장 큰 지출</div>
+          <div style="display:flex; justify-content:space-between; font-size:11px;">
+            <span>${escapeHTML(biggest.memo || biggest.cat || '지출')}</span>
+            <span style="font-weight:600;">${Number(biggest.amt).toLocaleString()}원</span>
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- 잘한 점 -->
+      ${goodPoints.length > 0 ? `
+        <div style="padding:10px 12px; background:rgba(45,139,92,0.08); border-radius:10px; margin-bottom:6px;">
+          <div style="font-size:10px; font-weight:700; color:var(--text-success, #2D8B5C); margin-bottom:4px;">✨ 잘한 점</div>
+          ${goodPoints.map(p => `<div style="font-size:11px; padding:2px 0; line-height:1.5;">• ${p}</div>`).join('')}
+        </div>
+      ` : ''}
+
+      <!-- 아쉬운 점 -->
+      ${badPoints.length > 0 ? `
+        <div style="padding:10px 12px; background:rgba(232,155,74,0.08); border-radius:10px;">
+          <div style="font-size:10px; font-weight:700; color:#B86E1E; margin-bottom:4px;">💡 다음 달에 신경 쓸 점</div>
+          ${badPoints.map(p => `<div style="font-size:11px; padding:2px 0; line-height:1.5;">• ${p}</div>`).join('')}
+        </div>
+      ` : ''}
+    </div>`;
+}
+
 function renderMoney() {
   runAllAutoBuys(); // 자동매수 점검
   // 가계부에서 보고 있는 월 (기본: 현재 월)
@@ -3851,6 +4241,32 @@ function renderMoney() {
       </button>
     </div>
   `;
+
+  // 🔧 가계부 인사이트 카드 — 오늘의 액션, 새는 돈, 소비 페이스 (이번 달만)
+  html += renderMoneyInsightCards({
+    viewMonthExpenses,
+    monthSpent: variableSpent,
+    livingGoal: variableBudget,
+    daysPassed: isCurrentMonth ? today : new Date(budgetViewYear, budgetViewMonth + 1, 0).getDate(),
+    daysInMonth: new Date(budgetViewYear, budgetViewMonth + 1, 0).getDate(),
+    isCurrentMonth,
+    fixedRemaining,
+    fixedTotal,
+  });
+
+  // 🔧 과거 달 보기일 때 월말 리뷰 카드 표시
+  if (!isCurrentMonth) {
+    html += renderMonthlyReview({
+      viewMonthExpenses,
+      variableSpent,
+      variableBudget,
+      monthlyIncomeNum,
+      fixedTotal,
+      investSpent,
+      budgetViewYear,
+      budgetViewMonth,
+    });
+  }
 
   // ===== 월별 자산 흐름 요약 카드 =====
   const monthlyIncome = monthlyIncomeNum; // 위에서 이미 계산
@@ -7652,15 +8068,18 @@ function openExpenseModal(forDateKey) {
         <button class="modal-save" onclick="saveExpense()">저장</button>
       </div>
 
-      <!-- 📸 카드 캡처로 자동 입력 -->
-      <div style="margin-bottom:14px;">
+      <!-- 📸 카드 캡처 / 📋 텍스트 자동 입력 -->
+      <div style="display:flex; gap:6px; margin-bottom:14px;">
         <input type="file" id="card-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processCardCapture(this)" />
-        <button onclick="document.getElementById('card-capture-input').click()" style="width:100%; padding:12px; border:1.5px dashed var(--text-info); background:rgba(70,140,255,0.06); color:var(--text-info); border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:8px;">
-          <i class="ti ti-camera" style="font-size:16px;"></i>
-          📸 카드 사용 내역 캡처 자동 입력
+        <button onclick="document.getElementById('card-capture-input').click()" style="flex:1; padding:12px 8px; border:1.5px dashed var(--text-info); background:rgba(70,140,255,0.06); color:var(--text-info); border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px;">
+          <i class="ti ti-camera" style="font-size:14px;"></i>
+          📸 캡처 입력
         </button>
-        <div id="card-capture-status" style="margin-top:6px; font-size:10px; color:var(--text-tertiary); text-align:center; line-height:1.4; display:none;"></div>
+        <button onclick="closeModal(); setTimeout(openClipboardExpenseModal, 100);" style="flex:1; padding:12px 8px; border:1.5px dashed var(--accent-primary, #5E5CE6); background:rgba(94,92,230,0.06); color:var(--accent-primary, #5E5CE6); border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px;">
+          📋 텍스트 붙여넣기
+        </button>
       </div>
+      <div id="card-capture-status" style="margin-top:-8px; margin-bottom:10px; font-size:10px; color:var(--text-tertiary); text-align:center; line-height:1.4; display:none;"></div>
 
       <!-- 지출/입금 토글 -->
       <div style="display:flex; gap:6px; padding:3px; background:var(--bg-secondary); border-radius:10px; margin-bottom:14px;">
@@ -8806,6 +9225,195 @@ function saveAssetReviewItems() {
   }
 }
 
+// 🔧 클립보드 텍스트 파싱 — 카드 SMS/은행 알림에서 금액·가맹점·날짜 추출
+function parseExpenseText(text) {
+  if (!text || typeof text !== 'string') return null;
+  const t = text.replace(/\s+/g, ' ').trim();
+
+  // 금액 추출: "12,500원", "30000원", "₩12,500", "30,000 원" 등
+  const amtMatch = t.match(/([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{4,})\s*원/);
+  if (!amtMatch) return null;
+  const amount = Number(amtMatch[1].replace(/,/g, ''));
+  if (!amount || amount < 100) return null;
+
+  // 입금/출금 구분
+  const isIncome = /입금|급여|월급|이체받|환급|환불/i.test(t);
+
+  // 가맹점/메모 추출 — 흔한 패턴들
+  let store = '';
+  // 패턴 1: "승인 12,500원 스타벅스 ..." 또는 "12,500원 스타벅스"
+  const afterAmt = t.substring(t.indexOf(amtMatch[0]) + amtMatch[0].length).trim();
+  // 첫 토큰부터 한글/영문 가맹점명 (날짜·시간·잔액 등 제외)
+  const storeMatch = afterAmt.match(/(?:일시불|할부\s*\d+개월|승인|체크)?\s*([가-힣A-Za-z0-9&.\s\-]+?)(?:\s+\d{1,2}[\/:\-월]|\s+잔액|\s+누적|$)/);
+  if (storeMatch) {
+    store = storeMatch[1].trim();
+    // "BBQ 11/28 14:32" 같은 경우 뒤 날짜 제거
+    store = store.replace(/\s+\d{1,2}[\/\-.:]\d{1,2}.*$/, '').trim();
+  }
+  // 패턴 2: store가 비어있으면 "[Web발신] 카드사명 다음 금액 앞" 부분에서 추출 시도
+  if (!store) {
+    const before = t.substring(0, t.indexOf(amtMatch[0])).trim();
+    // 카드사명 다음의 토큰
+    const m = before.match(/(?:신한|국민|KB|삼성|현대|롯데|우리|하나|NH농협|농협|BC|카카오뱅크|토스)\s*카드?\s*(?:승인|체크|일시불)?\s*(.*)$/);
+    if (m && m[1]) store = m[1].trim();
+  }
+
+  // 날짜 추출 — "11/28", "11월 28일", "2026-11-28" 등 (없으면 오늘)
+  let dateKey = todayKey();
+  const dateMatch = t.match(/(\d{4})[\-./](\d{1,2})[\-./](\d{1,2})/)
+    || t.match(/(\d{1,2})[\/.](\d{1,2})(?!\d)/)
+    || t.match(/(\d{1,2})월\s*(\d{1,2})일/);
+  if (dateMatch) {
+    let y, m, d;
+    if (dateMatch[3] !== undefined && dateMatch[1].length === 4) {
+      // YYYY-MM-DD
+      y = Number(dateMatch[1]); m = Number(dateMatch[2]); d = Number(dateMatch[3]);
+    } else {
+      // MM/DD 또는 MM월 DD일 → 올해
+      y = new Date().getFullYear();
+      m = Number(dateMatch[1]); d = Number(dateMatch[2]);
+    }
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      dateKey = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    }
+  }
+
+  // 카테고리 추측 (가맹점 키워드 기반)
+  const category = guessExpenseCategoryFromText(store + ' ' + t);
+
+  return { amount, store: store || '', dateKey, isIncome, category };
+}
+
+// 가맹점·텍스트에서 카테고리 추측
+function guessExpenseCategoryFromText(text) {
+  const t = (text || '').toLowerCase();
+  const rules = [
+    { cat:'식비', kw:['배달의민족','요기요','쿠팡이츠','맥도날드','버거킹','롯데리아','BBQ','BHC','교촌','피자','치킨','김밥','분식','한솥','국밥','족발','보쌈','한식','중식','일식','양식'] },
+    { cat:'카페', kw:['스타벅스','이디야','투썸','커피','메가커피','컴포즈','파스쿠찌','할리스','폴바셋','블루보틀','카페'] },
+    { cat:'편의점', kw:['gs25','cu','seven','세븐일레븐','이마트24','미니스톱'] },
+    { cat:'마트', kw:['이마트','홈플러스','코스트코','롯데마트','농협하나로','트레이더스'] },
+    { cat:'교통', kw:['카카오t','우버','택시','지하철','버스','t머니','therail','코레일','SRT','KTX','주유','GS칼텍스','SK에너지','S-OIL'] },
+    { cat:'쇼핑', kw:['쿠팡','11번가','지마켓','옥션','네이버페이','무신사','29cm','SSG','유니클로','자라'] },
+    { cat:'구독', kw:['넷플릭스','netflix','웨이브','wavve','티빙','tving','디즈니','disney','유튜브','youtube','애플','apple','spotify','챗gpt','chatgpt'] },
+    { cat:'통신', kw:['kt','skt','lg유플','lg u+','알뜰폰'] },
+    { cat:'의료', kw:['병원','약국','한의원','치과','내과'] },
+    { cat:'생활', kw:['올리브영','다이소'] },
+  ];
+  for (const r of rules) {
+    if (r.kw.some(k => t.includes(k.toLowerCase()))) return r.cat;
+  }
+  return '기타';
+}
+
+// 클립보드 텍스트 입력 모달 — 카드 SMS/은행 알림 붙여넣기
+function openClipboardExpenseModal() {
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">취소</button>
+        <h2>📋 텍스트 붙여넣기 입력</h2>
+        <span></span>
+      </div>
+
+      <div style="padding:10px 12px; background:var(--bg-info); border-radius:8px; margin-bottom:12px; font-size:11px; color:var(--text-info); line-height:1.5;">
+        💡 카드 결제 SMS나 은행 알림을 그대로 붙여넣으세요. 금액·가맹점·날짜·카테고리를 자동으로 읽어요.
+      </div>
+
+      <div class="field">
+        <div class="field-label">알림 텍스트</div>
+        <textarea id="clip-text" rows="5" placeholder="예시:&#10;[Web발신] 신한카드 12,500원 일시불 승인 스타벅스 11/28 14:32" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; font-family:inherit; resize:vertical;" oninput="previewClipboardExpense()"></textarea>
+        <button onclick="(async()=>{try{const t=await navigator.clipboard.readText();document.getElementById('clip-text').value=t;previewClipboardExpense();}catch(e){showToast('클립보드 읽기 권한이 필요해요');}})()" style="margin-top:6px; padding:8px 12px; border:0.5px solid var(--border-tertiary); background:var(--bg-secondary); border-radius:8px; font-size:11px; cursor:pointer; font-family:inherit;">📋 클립보드에서 붙여넣기</button>
+      </div>
+
+      <div id="clip-preview" style="margin-top:14px;"></div>
+    </div>
+  `;
+  modal.classList.add('show');
+}
+
+// 파싱 결과 미리보기
+function previewClipboardExpense() {
+  const text = document.getElementById('clip-text')?.value || '';
+  const previewEl = document.getElementById('clip-preview');
+  if (!previewEl) return;
+
+  if (!text.trim()) {
+    previewEl.innerHTML = '';
+    return;
+  }
+
+  const parsed = parseExpenseText(text);
+  if (!parsed) {
+    previewEl.innerHTML = `<div style="padding:14px; text-align:center; color:var(--text-tertiary); font-size:12px; background:var(--bg-secondary); border-radius:10px;">금액이 인식 안 됐어요. 텍스트에 "12,500원" 같은 형식이 있어야 해요.</div>`;
+    return;
+  }
+
+  previewEl.innerHTML = `
+    <div style="padding:14px; background:var(--bg-secondary); border-radius:12px;">
+      <div style="font-size:11px; color:var(--text-tertiary); margin-bottom:8px;">📋 인식 결과 (수정 가능)</div>
+      <div class="field">
+        <div class="field-label">${parsed.isIncome ? '입금' : '지출'} 금액</div>
+        <input type="number" id="clip-amount" value="${parsed.amount}" />
+      </div>
+      <div class="field">
+        <div class="field-label">메모 / 가맹점</div>
+        <input type="text" id="clip-store" value="${escapeAttr(parsed.store)}" placeholder="가맹점/메모" />
+      </div>
+      <div class="field">
+        <div class="field-label">날짜</div>
+        <input type="date" id="clip-date" value="${parsed.dateKey}" />
+      </div>
+      <div class="field">
+        <div class="field-label">카테고리</div>
+        <input type="text" id="clip-cat" value="${escapeAttr(parsed.category)}" />
+      </div>
+      <input type="hidden" id="clip-isincome" value="${parsed.isIncome ? '1' : '0'}" />
+      <button onclick="applyClipboardExpense()" style="width:100%; padding:12px; border:none; background:var(--accent-primary, #5E5CE6); color:white; border-radius:10px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit; margin-top:8px;">✨ 가계부에 추가</button>
+    </div>
+  `;
+}
+
+// 파싱한 결과를 가계부에 추가
+function applyClipboardExpense() {
+  const amount = Number(document.getElementById('clip-amount')?.value) || 0;
+  const store = document.getElementById('clip-store')?.value?.trim() || '';
+  const dateKey = document.getElementById('clip-date')?.value || todayKey();
+  const cat = document.getElementById('clip-cat')?.value?.trim() || '기타';
+  const isIncome = document.getElementById('clip-isincome')?.value === '1';
+
+  if (amount <= 0) {
+    showToast('금액을 확인해주세요');
+    return;
+  }
+
+  // 중복 체크 — 같은 날짜·금액·가맹점이 이미 있으면 안내
+  const norm = (s) => (s || '').replace(/\s/g, '').toLowerCase();
+  const dup = (budget.expenses || []).some(e =>
+    e.dateKey === dateKey &&
+    Number(e.amt) === amount &&
+    norm(e.memo).includes(norm(store).slice(0, 4))
+  );
+  if (dup && !confirm('비슷한 항목이 이미 가계부에 있어요. 그래도 추가할까요?')) {
+    return;
+  }
+
+  const [y, m, d] = dateKey.split('-').map(Number);
+  budget.expenses.push({
+    id: Date.now() + Math.random(),
+    amt: amount,
+    cat: cat,
+    memo: store,
+    dateKey: dateKey,
+    date: d,
+    type: isIncome ? 'income' : 'expense',
+  });
+  saveData();
+  closeModal();
+  showToast(`${isIncome ? '입금' : '지출'} ${amount.toLocaleString()}원 추가됨`);
+  render();
+}
+
 async function processCardCapture(input) {
   const files = Array.from(input.files || []);
   if (files.length === 0) return;
@@ -9847,6 +10455,73 @@ function setChartPeriod(assetId, period) {
   loadAssetChart(assetId, period);
 }
 
+// 🔧 자산 신뢰도 분류 — 어느 자산이 어떤 출처로 평가됐는지 표시
+//    (평가금액 박제 안 함. 라벨로만 신뢰 수준을 보여줌)
+function getAssetReliability(asset) {
+  // 캡처로 보정한 lot이 있고 자동매수도 있음 → 자동매수가 캡처 이후 또 들어왔으면 다시 보정 필요할 수 있음
+  const lots = asset.lots || [];
+  const hasAutoBuy = lots.some(l => l.autoBuy);
+  const captureLots = lots.filter(l => l.source && l.source.includes('캡처 보정'));
+  const hasCapture = captureLots.length > 0;
+
+  if (hasCapture && hasAutoBuy) {
+    // 마지막 캡처 이후 자동매수 회차가 더 들어왔는지 확인
+    const lastCaptureDate = captureLots
+      .map(l => l.date || '')
+      .filter(Boolean)
+      .sort()
+      .pop() || '';
+    const newerAutoBuy = lots.some(l => l.autoBuy && (l.date || '') > lastCaptureDate);
+    if (newerAutoBuy) {
+      return { key:'needs', text:'보정 권장', color:'var(--text-warning)' };
+    }
+    return { key:'broker', text:'증권사 보정됨', color:'var(--text-danger)' };
+  }
+  if (hasCapture) {
+    return { key:'broker', text:'증권사 보정됨', color:'var(--text-danger)' };
+  }
+  if (hasAutoBuy) {
+    return { key:'needs', text:'보정 권장', color:'var(--text-warning)' };
+  }
+  const live = liveAssetData?.[asset.id];
+  if (live?.hasLive) {
+    return { key:'live', text:'실시간 시세', color:'var(--text-info)' };
+  }
+  return { key:'manual', text:'수동 입력', color:'var(--text-secondary)' };
+}
+
+// 🔧 자산 위쪽에 표시할 신뢰도 요약 막대 — 어느 비중이 정확/부정확한지 한눈에
+function renderAssetReliabilitySummary(total) {
+  if (!assets || assets.length === 0 || total <= 0) return '';
+  const bucket = { broker:0, live:0, manual:0, needs:0 };
+  assets.forEach(a => {
+    const r = getAssetReliability(a).key;
+    // 평가금액 — 라이브 있으면 라이브, 없으면 qty*price
+    const live = liveAssetData?.[a.id];
+    const v = (live?.hasLive && Number(live.krwValue) > 0)
+      ? Number(live.krwValue)
+      : (Number(a.qty) || 0) * (Number(a.price) || 0);
+    bucket[r] += v;
+  });
+  const rows = [
+    ['broker','증권사 보정','var(--text-danger)'],
+    ['live','실시간','var(--text-info)'],
+    ['manual','수동','var(--text-secondary)'],
+    ['needs','보정 권장','var(--text-warning)'],
+  ].filter(([k]) => bucket[k] > 0);
+  if (rows.length === 0) return '';
+  return `
+    <div style="padding:10px 12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:12px;">
+      <div style="font-size:10px; font-weight:600; margin-bottom:6px; color:var(--text-secondary);">🔎 자산 신뢰도</div>
+      <div style="display:flex; gap:3px; height:6px; border-radius:999px; overflow:hidden; background:rgba(0,0,0,0.05); margin-bottom:6px;">
+        ${rows.map(([k,,c]) => `<div style="width:${Math.max(3, bucket[k]/total*100)}%; background:${c};"></div>`).join('')}
+      </div>
+      <div style="display:flex; flex-wrap:wrap; gap:8px; font-size:9px; color:var(--text-secondary);">
+        ${rows.map(([k,label,c]) => `<span><b style="color:${c};">●</b> ${label} ${Math.round(bucket[k]/total*100)}%</span>`).join('')}
+      </div>
+    </div>`;
+}
+
 function renderAsset() {
   runAllAutoBuys(); // 자동매수 점검 (시세 알면 정확히 처리)
   header.innerHTML = `
@@ -10008,6 +10683,9 @@ function renderAsset() {
         </div>
       </div>`;
     } else {
+      // 🔧 자산 신뢰도 요약 (어느 비중이 정확/부정확한지 한눈에)
+      html += renderAssetReliabilitySummary(total);
+
       const editing = !!window._assetEditMode;
       html += `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
         <span style="font-size:12px; color:var(--text-secondary);">${assets.length}개 자산</span>
