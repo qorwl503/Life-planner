@@ -2446,8 +2446,11 @@ function renderTodo() {
   const flaggedTodos = todos.filter(t => !t.done && t.flag);
 
   html += `
-    <div style="display:flex; align-items:center; gap:8px; margin: 18px 0 8px;">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin: 18px 0 8px;">
       <span style="font-size:14px; font-weight:600;">📋 할일</span>
+      <button onclick="openTodoModal('${todayK}')" style="display:flex; align-items:center; gap:4px; border:none; background:var(--bg-info); color:var(--text-info); padding:5px 12px; border-radius:999px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">
+        <i class="ti ti-plus" style="font-size:13px;"></i> 추가
+      </button>
     </div>
 
     <!-- 4가지 카드 통계 -->
@@ -2554,12 +2557,6 @@ function renderTodo() {
       sortTodosByTime(dayDone).forEach(t => html += renderTodoRow(t));
     }
   }
-
-  // 🔧 이번 주 목록 바로 아래에 할일 추가 버튼 (위로 안 올라가도 되게)
-  html += `
-    <button onclick="openTodoModal('${todayK}')" style="width:100%; margin-top:10px; padding:13px; border:1px dashed var(--border-secondary); background:var(--bg-secondary); color:var(--text-secondary); border-radius:12px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px;">
-      <i class="ti ti-plus"></i> 할일 추가
-    </button>`;
 
   // ===== 더 멀리: 다음 주 / 이번 달 / 다음 달 / 그 이후 =====
   // 다음 주 시작 = 일요일 + 1
