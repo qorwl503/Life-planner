@@ -5865,6 +5865,14 @@ function openFixedAddModal() {
         <div style="font-size:9px; color:var(--text-tertiary); margin-top:5px; line-height:1.5;">
           은행 자동이체 내역, 구독 목록 등을 캡처하면 항목을 자동으로 읽어 추가하거나 기존 항목을 수정해요.
         </div>
+
+        <button type="button" onclick="document.getElementById('autobuy-capture-input').click()" style="width:100%; border:1px dashed #5E5CE6; background:rgba(94,92,230,0.06); color:#5E5CE6; padding:12px; border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; margin-top:8px;">
+          🤖 증권사 자동적립(더모으기) 캡처로 가져오기
+        </button>
+        <input type="file" id="autobuy-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processAutobuyCapture(this)" />
+        <div style="font-size:9px; color:var(--text-tertiary); margin-top:5px; line-height:1.5;">
+          증권사 "정기매수·더모으기·자동적립" 설정 화면을 캡처하면 종목·금액·주기를 읽어 투자 자동매수를 만들어요.
+        </div>
       </div>
 
       <div class="field">
@@ -8369,8 +8377,10 @@ function openExpenseModal(forDateKey) {
         </div>
         <div style="margin:14px 0 8px; font-size:10px; color:var(--text-tertiary); font-weight:500;">💎 자산 투자 <span style="font-size:9px; opacity:0.7;">(자산 페이지와 연동됨)</span></div>
         <div class="cat-grid" id="cat-grid-invest">
-          <button class="cat-btn" data-c="주식"><i class="ti ti-chart-line"></i><span>주식</span></button>
-          <button class="cat-btn" data-c="ETF"><i class="ti ti-chart-area-line"></i><span>ETF</span></button>
+          <button class="cat-btn" data-c="국내주식"><i class="ti ti-chart-line"></i><span>국내주식</span></button>
+          <button class="cat-btn" data-c="미국주식"><i class="ti ti-chart-line"></i><span>미국주식</span></button>
+          <button class="cat-btn" data-c="국내ETF"><i class="ti ti-chart-area-line"></i><span>국내ETF</span></button>
+          <button class="cat-btn" data-c="해외ETF"><i class="ti ti-chart-area-line"></i><span>해외ETF</span></button>
           <button class="cat-btn" data-c="펀드"><i class="ti ti-chart-pie"></i><span>펀드</span></button>
           <button class="cat-btn" data-c="채권"><i class="ti ti-certificate"></i><span>채권</span></button>
           <button class="cat-btn" data-c="금"><i class="ti ti-coin"></i><span>금</span></button>
@@ -8453,7 +8463,7 @@ function openExpenseModal(forDateKey) {
         // 카테고리별 다른 필드
         if (isInvest) {
           const cat = b.dataset.c;
-          document.getElementById('inv-stock-fields').style.display = ['주식','ETF','펀드','채권','예적금','부동산'].includes(cat) ? 'block' : 'none';
+          document.getElementById('inv-stock-fields').style.display = ['주식','국내주식','미국주식','ETF','국내ETF','해외ETF','펀드','채권','예적금','부동산'].includes(cat) ? 'block' : 'none';
           document.getElementById('inv-gold-fields').style.display = cat === '금' ? 'block' : 'none';
           document.getElementById('inv-dollar-fields').style.display = cat === '달러' ? 'block' : 'none';
           document.getElementById('inv-cash-fields').style.display = cat === '현금' ? 'block' : 'none';
@@ -8720,9 +8730,12 @@ async function processAssetCapture(input) {
 
 각 항목: {type, name, qty, price, ticker, priceCurrency, avgBuyRate, evalAmount, profitPct, profitAmount}
 
-📌 자산 종류 (type) 판단:
-- **주식**: 개별 회사 주식 (삼성전자, AAPL, 카카오 등)
-- **ETF**: TIGER, KODEX, SPY, QQQ, KBSTAR 등 (XX선물, XX인덱스도 ETF)
+📌 자산 종류 (type) 판단 — 국내/해외를 꼭 구분:
+- **국내주식**: 한국 거래소 개별 종목 (삼성전자, 카카오, SK하이닉스 등 · 티커 6자리 숫자)
+- **미국주식**: 미국 거래소 개별 종목 (AAPL, TSLA, NVDA 등 · 영문 티커)
+- **국내ETF**: 한국 상장 ETF (TIGER, KODEX, KBSTAR, ACE, SOL 등으로 시작 · 티커 6자리)
+  ⚠️ "TIGER 미국S&P500", "KODEX 미국나스닥100"처럼 이름에 미국이 들어가도 한국 상장이면 **국내ETF**
+- **해외ETF**: 미국/해외 상장 ETF (SPY, QQQ, QQQM, SPYM, SCHD, VOO 등 · 영문 티커)
 - **펀드**: ○○○펀드, 미래에셋자산운용 등
 - **채권**: 국고채, 회사채
 - **금**: 골드뱅킹, 골드바, KRX 금 (단위 g 또는 돈)
@@ -8731,6 +8744,8 @@ async function processAssetCapture(input) {
 - **청약**: 주택청약, 청년주택드림
 - **현금**: 보통예금, 통장 잔액, CMA
 - **부동산**: 아파트, 빌라, 오피스텔
+
+💡 국내/해외 판단 핵심: 티커가 6자리 숫자(예: 379810)면 국내, 영문(예: QQQ)이면 해외. 가격이 달러($)거나 미국 거래소면 해외.
 
 📌 추출 규칙:
 1. **수량 (qty)**: 소수점까지 정확히
@@ -8905,6 +8920,172 @@ async function processAssetCapture(input) {
 }
 
 // 🔧 가계부 고정지출 OCR — 자동이체/구독 명세 캡처에서 항목 추출
+// 🔧 증권사 자동적립(더모으기) 캡처 → 투자 자동매수 설정 자동 생성
+async function processAutobuyCapture(input) {
+  const files = Array.from(input.files || []);
+  if (files.length === 0) return;
+  if (!window.GEMINI_API_KEY) {
+    showToast('AI 키를 먼저 설정해주세요 (설정 → AI 키)');
+    return;
+  }
+
+  showToast('🔄 자동적립 설정 분석 중...');
+  const allItems = [];
+  let failCount = 0;
+
+  for (const file of files) {
+    try {
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const mimeType = file.type || 'image/jpeg';
+
+      const prompt = `증권사 앱의 "정기매수 / 더모으기 / 자동적립 / 적립식 투자" 설정 화면이야. 자동매수 설정을 JSON으로 추출해.
+
+각 항목: {name, ticker, amt, cycle, dayOfWeek, day, isUS, fractional}
+- name: 종목명 (예: "KODEX 미국나스닥100", "QQQM", "삼성전자")
+- ticker: 종목코드 — 한국은 6자리 숫자(379810), 미국은 영문(QQQM, SPY). 안 보이면 ""
+- amt: 1회 적립 금액 (숫자만, 원). 예: 280000
+- cycle: 주기 — "weekly"(매주) / "monthly"(매월) / "biweekly"(격주)
+- dayOfWeek: 매주/격주면 요일 (0=일,1=월,2=화,3=수,4=목,5=금,6=토). 없으면 생략
+- day: 매월이면 결제일 (1~31). 없으면 생략
+- isUS: 미국 종목이면 true, 한국이면 false
+- fractional: 소수점 매수면 true (미국 종목 금액적립은 보통 true)
+
+📤 출력 (JSON만):
+{"items":[
+  {"name":"KODEX 미국나스닥100","ticker":"379810","amt":120000,"cycle":"weekly","dayOfWeek":3,"isUS":false,"fractional":false},
+  {"name":"QQQM","ticker":"QQQM","amt":280000,"cycle":"weekly","dayOfWeek":3,"isUS":true,"fractional":true}
+]}
+
+자동적립 설정이 없으면: {"items":[],"error":"이유"}`;
+
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${window.GEMINI_API_KEY}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [
+            { text: prompt },
+            { inline_data: { mime_type: mimeType, data: base64 } },
+          ]}],
+          generationConfig: { temperature: 0.1, maxOutputTokens: 2000 },
+        }),
+      });
+      const data = await res.json();
+      const txt = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      const m = txt.match(/\{[\s\S]*\}/);
+      if (m) {
+        const parsed = JSON.parse(m[0]);
+        (parsed.items || []).forEach(it => {
+          if (it.name && Number(it.amt) > 0) allItems.push(it);
+        });
+      }
+    } catch (e) {
+      console.warn('자동적립 OCR 실패', e);
+      failCount++;
+    }
+  }
+
+  input.value = '';
+
+  if (allItems.length === 0) {
+    showToast(failCount > 0 ? '분석에 실패했어요. 다시 시도해주세요' : '자동적립 설정을 찾지 못했어요');
+    return;
+  }
+  openAutobuyReviewModal(allItems);
+}
+
+// 자동적립 캡처 검토 모달
+function openAutobuyReviewModal(items) {
+  window._autobuyReviewItems = items.map(it => ({ ...it, _checked: true }));
+
+  const dowNames = ['일','월','화','수','목','금','토'];
+  const render = () => {
+    const list = window._autobuyReviewItems.map((it, i) => {
+      const cycleLabel = it.cycle === 'weekly' ? `매주 ${dowNames[it.dayOfWeek] || '?'}요일`
+        : it.cycle === 'biweekly' ? `격주 ${dowNames[it.dayOfWeek] || '?'}요일`
+        : `매월 ${it.day || '?'}일`;
+      // 이미 같은 종목 자동매수가 있는지
+      const dup = (budget.fixed || []).find(f => f.autoBuy && f.assetInfo && f.assetInfo.name === it.name);
+      return `
+        <div style="padding:12px; background:white; border:0.5px solid var(--border-tertiary); border-radius:10px; margin-bottom:8px;">
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+            <input type="checkbox" ${it._checked ? 'checked' : ''} onchange="window._autobuyReviewItems[${i}]._checked = this.checked;" style="width:18px; height:18px;" />
+            <div style="flex:1;">
+              <div style="font-size:13px; font-weight:600;">${escapeHTML(it.name)} ${it.isUS ? '🇺🇸' : '🇰🇷'}</div>
+              <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">
+                ${cycleLabel} · ${Number(it.amt).toLocaleString()}원 ${it.fractional ? '· 소수점' : ''} ${it.ticker ? '· ' + escapeHTML(it.ticker) : ''}
+              </div>
+              ${dup ? `<div style="font-size:9px; color:var(--text-warning); margin-top:3px;">⚠️ 같은 종목 자동매수가 이미 있어요 (추가하면 중복)</div>` : ''}
+            </div>
+          </label>
+        </div>`;
+    }).join('');
+    const c = document.getElementById('autobuy-review-list');
+    if (c) c.innerHTML = list;
+  };
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">취소</button>
+        <h2>🤖 자동매수 설정 검토</h2>
+        <button class="modal-save" onclick="saveAutobuyReview()">추가</button>
+      </div>
+      <div style="padding:10px 12px; background:var(--bg-info); border-radius:8px; margin-bottom:12px; font-size:11px; color:var(--text-info); line-height:1.5;">
+        💡 ${items.length}개 자동적립 설정을 읽었어요. 체크한 것만 투자 자동매수로 추가됩니다.<br>
+        추가 후 자산 탭에서 회차가 자동으로 쌓여요.
+      </div>
+      <div id="autobuy-review-list" style="max-height:55vh; overflow-y:auto;"></div>
+    </div>`;
+  modal.classList.add('show');
+  setTimeout(render, 50);
+}
+
+function saveAutobuyReview() {
+  const selected = (window._autobuyReviewItems || []).filter(it => it._checked);
+  if (selected.length === 0) { showToast('선택된 항목이 없어요'); return; }
+
+  if (!budget.fixed) budget.fixed = [];
+  let added = 0;
+
+  selected.forEach(it => {
+    const assetType = it.isUS
+      ? (/etf|qqq|spy|voo|schd|qqqm|spym/i.test(it.name + it.ticker) ? '해외ETF' : '미국주식')
+      : (/etf|tiger|kodex|kbstar|ace|sol|plus/i.test(it.name) ? '국내ETF' : '국내주식');
+
+    budget.fixed.push({
+      id: Date.now() + Math.random(),
+      name: it.name,
+      amt: Number(it.amt),
+      cycle: it.cycle || 'weekly',
+      dayOfWeek: it.dayOfWeek != null ? it.dayOfWeek : undefined,
+      day: it.day != null ? it.day : undefined,
+      cat: '투자',
+      autoBuy: true,
+      fractional: it.fractional === true || it.isUS, // 미국은 기본 소수점
+      startDate: todayKey(),
+      lastBuyDate: null,
+      assetInfo: {
+        name: it.name,
+        type: assetType,
+        ticker: it.ticker || '',
+      },
+    });
+    added++;
+  });
+
+  saveData();
+  showToast(`✅ 자동매수 ${added}개 추가됨`);
+  closeModal();
+  render();
+}
+
 async function processFixedCapture(input) {
   const files = Array.from(input.files || []);
   if (files.length === 0) return;
@@ -9917,7 +10098,7 @@ function saveExpense() {
         // 납입형: qty=1, price=납입액
         qty = 1;
         price = amt;
-      } else if (['주식','ETF','펀드','채권'].includes(cat)) {
+      } else if (isStockLikeType(cat) || cat === '채권') {
         qty = Number(document.getElementById('inv-qty')?.value) || 1;
         price = qty > 0 ? amt / qty : amt;
         ticker = document.getElementById('inv-ticker')?.value?.trim() || '';
@@ -14275,7 +14456,7 @@ function renderAICoaching(total, byType) {
   }
 
   // 시뮬레이션 부분 (단순 수식)은 유지 - 데이터 계산이라 AI 아님
-  const stockPct = ((byType['주식'] || 0) + (byType['ETF'] || 0) + (byType['펀드'] || 0)) / total * 100;
+  const stockPct = Object.keys(byType).filter(t => isStockLikeType(t)).reduce((s, t) => s + (byType[t] || 0), 0) / total * 100;
   const safePct = ((byType['예적금'] || 0) + (byType['현금'] || 0) + (byType['채권'] || 0)) / total * 100;
   const goldPct = (byType['금'] || 0) / total * 100;
   const dollarPct = (byType['달러'] || 0) / total * 100;
@@ -15723,6 +15904,106 @@ function saveAsset() {
   renderAsset();
 }
 
+// 🔧 자산 합치기 — 같은 종류의 다른 자산을 골라 하나로 통합
+function openMergeAssetPicker(targetId) {
+  const target = assets.find(a => a.id === targetId);
+  if (!target) return;
+  const candidates = assets.filter(x => x.id !== targetId && x.type === target.type);
+  if (candidates.length === 0) { showToast('합칠 수 있는 같은 종류 자산이 없어요'); return; }
+
+  // 같은 티커는 맨 위로 (가장 합칠 가능성 높음)
+  const normT = (t) => (t || '').toUpperCase().replace(/\.(KS|KQ)$/, '').trim();
+  candidates.sort((a, b) => {
+    const aMatch = normT(a.ticker) && normT(a.ticker) === normT(target.ticker) ? 0 : 1;
+    const bMatch = normT(b.ticker) && normT(b.ticker) === normT(target.ticker) ? 0 : 1;
+    return aMatch - bMatch;
+  });
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal(); setTimeout(()=>editAsset(${targetId}),50);">취소</button>
+        <h2>🔗 자산 합치기</h2>
+        <span></span>
+      </div>
+
+      <div style="padding:10px 12px; background:var(--bg-info); border-radius:8px; margin-bottom:12px; font-size:11px; color:var(--text-info); line-height:1.5;">
+        <b>${escapeHTML(target.name)}</b>에 합칠 자산을 고르세요. 선택한 자산의 보유분이 <b>${escapeHTML(target.name)}</b>으로 합쳐지고, 선택한 자산은 삭제돼요.<br>
+        예: 일반계좌 QQQ + 소수점계좌 QQQ → 하나로
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        ${candidates.map(c => {
+          const live = liveAssetData[c.id];
+          const v = live?.hasLive && live.krwValue ? live.krwValue : Number(c.qty) * Number(c.price);
+          const sameTicker = normT(c.ticker) && normT(c.ticker) === normT(target.ticker);
+          const qtyStr = Number.isInteger(Number(c.qty)) ? Number(c.qty).toLocaleString() : Number(c.qty).toFixed(4).replace(/\.?0+$/, '');
+          return `
+            <button onclick="mergeAssetInto(${targetId}, ${c.id})" style="text-align:left; padding:12px; border:1px solid ${sameTicker ? 'var(--text-info)' : 'var(--border-tertiary)'}; background:${sameTicker ? 'var(--bg-info)' : 'white'}; border-radius:10px; cursor:pointer; font-family:inherit;">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size:13px; font-weight:600;">${escapeHTML(c.name)} ${sameTicker ? '<span style="font-size:9px; color:var(--text-info);">· 같은 티커</span>' : ''}</span>
+                <span style="font-size:12px; color:var(--text-secondary);">${Math.round(v).toLocaleString()}원</span>
+              </div>
+              <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">${qtyStr}주 · 평균 ${Math.round(Number(c.price)).toLocaleString()}원${c.ticker ? ' · ' + escapeHTML(c.ticker) : ''}</div>
+            </button>`;
+        }).join('')}
+      </div>
+    </div>`;
+  modal.classList.add('show');
+}
+
+function mergeAssetInto(targetId, sourceId) {
+  const target = assets.find(a => a.id === targetId);
+  const source = assets.find(a => a.id === sourceId);
+  if (!target || !source) return;
+
+  if (!confirm(`"${source.name}"을(를) "${target.name}"에 합칠까요?\n\n"${source.name}"의 보유분이 모두 "${target.name}"으로 옮겨지고, "${source.name}"은 삭제됩니다.`)) return;
+
+  // 두 자산을 lot 기반으로 통합
+  // 각 자산의 보유분을 lot으로 환산 (lot 없으면 qty/price로 단일 lot 생성)
+  const toLots = (a) => {
+    if (a.lots && a.lots.length > 0) return a.lots.slice();
+    if (Number(a.qty) > 0) {
+      return [{
+        id: Date.now() + Math.random(),
+        source: '기존 보유분',
+        qty: Number(a.qty),
+        price: Number(a.price),
+        date: a.createdDate || todayKey(),
+        autoBuy: false,
+        exactAmount: Math.round(Number(a.qty) * Number(a.price)),
+      }];
+    }
+    return [];
+  };
+
+  const targetLots = toLots(target);
+  const sourceLots = toLots(source);
+  target.lots = [...targetLots, ...sourceLots];
+
+  // 티커 없으면 source 것 채움
+  if (!target.ticker && source.ticker) target.ticker = source.ticker;
+
+  // 합산 후 재계산
+  recalcAssetFromLots(target);
+
+  // source에 연결된 자동매수(고정지출)가 있으면 target으로 연결 이전
+  (budget.fixed || []).forEach(f => {
+    if (f.autoBuy && f.assetInfo && f.assetInfo.name === source.name && f.assetInfo.type === source.type) {
+      f.assetInfo.name = target.name;
+    }
+  });
+
+  // source 삭제
+  assets = assets.filter(a => a.id !== sourceId);
+
+  saveData();
+  showToast(`✅ "${source.name}"을 "${target.name}"에 합쳤어요`);
+  closeModal();
+  setTimeout(() => editAsset(targetId), 60);
+}
+
 function editAsset(id) {
   const a = assets.find(x => x.id === id);
   if (!a) return;
@@ -15786,6 +16067,13 @@ function editAsset(id) {
             <button onclick="addAutoBuyForAsset(${a.id})" style="width:100%; padding:9px; border:none; background:#5E5CE6; color:white; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">+ 자동매수 설정</button>
           </div>`;
         }
+      })()}
+
+      ${(() => {
+        // 🔧 같은 종류의 다른 자산이 있으면 "합치기" 버튼 표시
+        const candidates = assets.filter(x => x.id !== id && x.type === asset.type);
+        if (candidates.length === 0) return '';
+        return `<button onclick="openMergeAssetPicker(${id})" style="width:100%; padding:12px; border:1px solid var(--text-info); border-radius:var(--radius-md); background:var(--bg-info); color:var(--text-info); font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; margin-top:10px;">🔗 다른 자산과 합치기</button>`;
       })()}
 
       <button onclick="deleteAsset(${id})" style="width:100%; padding:12px; border:none; border-radius:var(--radius-md); background:var(--bg-danger); color:var(--text-danger); font-size:13px; font-weight:500; cursor:pointer; font-family:inherit; margin-top:10px;">자산 삭제</button>
@@ -16520,45 +16808,73 @@ function deleteAsset(id) {
   const asset = assets.find(x => x.id === id);
   if (!asset) return;
 
-  // 연결된 자동매수 고정지출 찾기
   const linkedFixed = (budget.fixed || []).filter(f =>
     f.autoBuy && f.assetInfo && f.assetInfo.name === asset.name && f.assetInfo.type === asset.type
   );
 
-  // 연결된 자산 투자 지출 찾기
+  // 연결된 자동매수가 없으면 간단히 확인 후 삭제
+  if (linkedFixed.length === 0) {
+    if (!confirm(`"${asset.name}" 자산을 삭제할까요?`)) return;
+    doDeleteAsset(id, false);
+    return;
+  }
+
+  // 🔧 연결된 자동매수가 있으면 — 명확한 선택 모달
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal(); setTimeout(()=>editAsset(${id}),50);">취소</button>
+        <h2>🗑️ 자산 삭제</h2>
+        <span></span>
+      </div>
+
+      <div style="padding:12px; background:var(--bg-warning); border-radius:10px; margin-bottom:14px; font-size:12px; color:var(--text-warning); line-height:1.6;">
+        <b>"${escapeHTML(asset.name)}"</b>에 연결된 자동매수가 <b>${linkedFixed.length}개</b> 있어요.<br>
+        자동매수 설정도 같이 지울지 선택하세요.
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        <button onclick="doDeleteAsset(${id}, true)" style="text-align:left; padding:14px; border:1px solid var(--text-danger); background:var(--bg-danger); border-radius:10px; cursor:pointer; font-family:inherit;">
+          <div style="font-size:13px; font-weight:700; color:var(--text-danger);">🗑️ 자산 + 자동매수 모두 삭제</div>
+          <div style="font-size:10px; color:var(--text-secondary); margin-top:3px; line-height:1.5;">자산도, 자동매수 설정도 완전히 삭제. 새로 시작할 때.</div>
+        </button>
+
+        <button onclick="doDeleteAsset(${id}, false)" style="text-align:left; padding:14px; border:1px solid var(--border-tertiary); background:white; border-radius:10px; cursor:pointer; font-family:inherit;">
+          <div style="font-size:13px; font-weight:700; color:var(--text-primary);">📊 자산만 삭제 (자동매수 유지)</div>
+          <div style="font-size:10px; color:var(--text-secondary); margin-top:3px; line-height:1.5;">자동매수 설정은 남겨둠. 다음 회차부터 다시 자산이 쌓여요.</div>
+        </button>
+      </div>
+    </div>`;
+  modal.classList.add('show');
+}
+
+function doDeleteAsset(id, alsoDeleteAuto) {
+  const asset = assets.find(x => x.id === id);
+  if (!asset) { closeModal(); return; }
+
+  const linkedFixed = (budget.fixed || []).filter(f =>
+    f.autoBuy && f.assetInfo && f.assetInfo.name === asset.name && f.assetInfo.type === asset.type
+  );
   const linkedExpenses = (budget.expenses || []).filter(e =>
     e.type !== 'income' && e.cat === asset.type &&
     (e.linkedAssetName === asset.name || (!e.linkedAssetName && e.memo === asset.name))
   );
 
-  if (!confirm(`"${asset.name}" 자산을 삭제할까요?`)) return;
-
   // 자산 삭제
   assets = assets.filter(x => x.id !== id);
 
-  // 🔧 연결된 자동매수가 있으면 별도로 물어봄 (자산만 지우고 자동매수는 유지 가능)
-  let refillAutos = [];
-  if (linkedFixed.length > 0) {
-    const alsoDeleteAuto = confirm(`연결된 자동매수가 ${linkedFixed.length}개 있어요.\n\n⚠️ 확인: 자동매수 설정도 함께 삭제\n❌ 취소: 자동매수는 그대로 두기 (자산만 삭제)`);
-    if (alsoDeleteAuto) {
-      budget.fixed = budget.fixed.filter(f =>
-        !(f.autoBuy && f.assetInfo && f.assetInfo.name === asset.name && f.assetInfo.type === asset.type)
-      );
-    } else {
-      // 자동매수 유지 → 자산이 사라졌으니 시작일부터 다시 채울지 물어봄
-      const refill = confirm(
-        `자동매수를 시작일부터 다시 계산해 자산을 새로 채울까요?\n\n` +
-        `✅ 확인: 과거 회차를 모두 다시 채움 (권장 — 안 하면 0원으로 남아요)\n` +
-        `❌ 취소: 다음 회차부터만 추가`
-      );
-      linkedFixed.forEach(f => {
-        f.lastBuyDate = refill ? null : new Date().toISOString();
-      });
-      if (refill) refillAutos = linkedFixed.slice();
-    }
+  if (alsoDeleteAuto && linkedFixed.length > 0) {
+    // 자동매수도 삭제
+    budget.fixed = budget.fixed.filter(f =>
+      !(f.autoBuy && f.assetInfo && f.assetInfo.name === asset.name && f.assetInfo.type === asset.type)
+    );
+  } else if (linkedFixed.length > 0) {
+    // 자동매수 유지 → 다음 회차부터만 (자산은 0부터)
+    linkedFixed.forEach(f => { f.lastBuyDate = new Date().toISOString(); });
   }
 
-  // 연결된 지출은 자산과 함께 정리 (기록이라 자산 없으면 의미 없음)
+  // 연결된 투자 지출 정리
   if (linkedExpenses.length > 0) {
     const expIds = new Set(linkedExpenses.map(e => e.id));
     budget.expenses = budget.expenses.filter(e => !expIds.has(e.id));
@@ -16566,18 +16882,11 @@ function deleteAsset(id) {
 
   saveData();
   closeModal();
-
-  // 🔧 시작일부터 재계산하기로 한 자동매수 처리
-  if (refillAutos.length > 0) {
-    showToast('🔄 자동매수 재계산 중...');
-    Promise.all(refillAutos.map(f => processAutoBuy(f)))
-      .then(() => { renderAsset(); showToast('✅ 자동매수 자산 다시 채워짐'); })
-      .catch(() => renderAsset());
-    return;
-  }
-
-  showToast(`삭제됨${linkedFixed.length + linkedExpenses.length > 0 ? ` (연결 항목 ${linkedFixed.length + linkedExpenses.length}개 포함)` : ''}`);
-  renderAsset();
+  const msg = alsoDeleteAuto
+    ? `삭제됨 (자동매수 ${linkedFixed.length}개 포함)`
+    : (linkedFixed.length > 0 ? '자산만 삭제됨 (자동매수 유지)' : '삭제됨');
+  showToast(msg);
+  render();
 }
 
 function openAddModal() {
