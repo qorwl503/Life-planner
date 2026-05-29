@@ -2555,6 +2555,12 @@ function renderTodo() {
     }
   }
 
+  // 🔧 이번 주 목록 바로 아래에 할일 추가 버튼 (위로 안 올라가도 되게)
+  html += `
+    <button onclick="openTodoModal('${todayK}')" style="width:100%; margin-top:10px; padding:13px; border:1px dashed var(--border-secondary); background:var(--bg-secondary); color:var(--text-secondary); border-radius:12px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px;">
+      <i class="ti ti-plus"></i> 할일 추가
+    </button>`;
+
   // ===== 더 멀리: 다음 주 / 이번 달 / 다음 달 / 그 이후 =====
   // 다음 주 시작 = 일요일 + 1
   const nextWeekStart = new Date(sunday);
@@ -16005,8 +16011,8 @@ function mergeAssetInto(targetId, sourceId) {
 }
 
 function editAsset(id) {
-  const a = assets.find(x => x.id === id);
-  if (!a) return;
+  const a = assets.find(x => x.id === id) || assets.find(x => String(x.id) === String(id));
+  if (!a) { showToast('자산을 찾을 수 없어요'); return; }
   modal.innerHTML = `
     <div class="modal">
       <div class="modal-handle"></div>
@@ -16026,9 +16032,9 @@ function editAsset(id) {
       </div>
 
       ${isStockLikeType(a.type) ? `
-        <button onclick="closeModal(); setTimeout(()=>goAIAnalysisTab('${a.name.replace(/'/g, "\\'")}'), 200);"
+        <button onclick='closeModal(); setTimeout(()=>goAIAnalysisTab(${JSON.stringify(a.name)}), 200);'
           style="width:100%; padding:10px; border:none; background:linear-gradient(135deg, #FFEFE5 0%, #FFE0CC 100%); color:#D14343; border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; margin-bottom:12px;">
-          🔍 ${a.name} AI 투자 분석 보기
+          🔍 ${escapeHTML(a.name)} AI 투자 분석 보기
         </button>
       ` : ''}
 
@@ -16094,11 +16100,11 @@ function editAsset(id) {
       h = `
         <div class="field">
           <div class="field-label">자산명</div>
-          <input type="text" id="e-name" value="${a.name}" />
+          <input type="text" id="e-name" value="${escapeAttr(a.name)}" />
         </div>
         <div class="field">
           <div class="field-label">티커 (선택)</div>
-          <input type="text" id="e-ticker" value="${a.ticker || ''}" placeholder="예: 005930.KS, SPY" />
+          <input type="text" id="e-ticker" value="${escapeAttr(a.ticker || '')}" placeholder="예: 005930.KS, SPY" />
           <div style="font-size:9px; color:var(--text-tertiary); margin-top:3px;">
             한국: 005930.KS · 미국: SPY, QQQ (확장자 없음)
           </div>
@@ -16284,7 +16290,7 @@ function editAsset(id) {
       h = `
         <div class="field">
           <div class="field-label">자산명</div>
-          <input type="text" id="e-name" value="${a.name}" />
+          <input type="text" id="e-name" value="${escapeAttr(a.name)}" />
         </div>
         <div class="field" style="display:flex; gap:8px;">
           <div style="flex:1;">
@@ -16308,7 +16314,7 @@ function editAsset(id) {
       h = `
         <div class="field">
           <div class="field-label">자산명</div>
-          <input type="text" id="e-name" value="${a.name}" placeholder="예: 신한 골드뱅킹, 골드바" />
+          <input type="text" id="e-name" value="${escapeAttr(a.name)}" placeholder="예: 신한 골드뱅킹, 골드바" />
         </div>
         <div class="field" style="display:flex; gap:8px;">
           <div style="flex:1;">
@@ -16330,7 +16336,7 @@ function editAsset(id) {
       h = `
         <div class="field">
           <div class="field-label">자산명</div>
-          <input type="text" id="e-name" value="${a.name}" placeholder="예: 외화예금" />
+          <input type="text" id="e-name" value="${escapeAttr(a.name)}" placeholder="예: 외화예금" />
         </div>
         <div class="field" style="display:flex; gap:8px;">
           <div style="flex:1;">
@@ -16348,7 +16354,7 @@ function editAsset(id) {
       h = `
         <div class="field">
           <div class="field-label">상품명</div>
-          <input type="text" id="e-name" value="${a.name}" placeholder="예: 토스 정기예금" />
+          <input type="text" id="e-name" value="${escapeAttr(a.name)}" placeholder="예: 토스 정기예금" />
         </div>
         <div class="field" style="display:flex; gap:8px;">
           <div style="flex:1;">
@@ -16376,7 +16382,7 @@ function editAsset(id) {
         </div>
         <div class="field">
           <div class="field-label">통장명/은행</div>
-          <input type="text" id="e-name" value="${a.name}" placeholder="예: KB 주택청약통장" />
+          <input type="text" id="e-name" value="${escapeAttr(a.name)}" placeholder="예: KB 주택청약통장" />
         </div>
         <div class="field" style="display:flex; gap:8px;">
           <div style="flex:1;">
@@ -16403,7 +16409,7 @@ function editAsset(id) {
       h = `
         <div class="field">
           <div class="field-label">위치/이름</div>
-          <input type="text" id="e-name" value="${a.name}" placeholder="예: 토스 통장" />
+          <input type="text" id="e-name" value="${escapeAttr(a.name)}" placeholder="예: 토스 통장" />
         </div>
         <div class="field">
           <div class="field-label">금액</div>
@@ -16417,7 +16423,7 @@ function editAsset(id) {
       h = `
         <div class="field">
           <div class="field-label">이름</div>
-          <input type="text" id="e-name" value="${a.name}" placeholder="예: 서울 강남 아파트" />
+          <input type="text" id="e-name" value="${escapeAttr(a.name)}" placeholder="예: 서울 강남 아파트" />
         </div>
         <div class="field">
           <div class="field-label">현재 시세</div>
