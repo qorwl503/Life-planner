@@ -14157,6 +14157,7 @@ let newsCache = null;
 // 🔧 특정 종목 뉴스 — 구글 뉴스 RSS로 종목명 검색 (AI 투자분석에 최신 뉴스 공급용)
 async function fetchStockNews(stockName) {
   if (!stockName) return [];
+  console.log('🆕 BUILD-0530-A 실행 중 (새 파일이면 이 줄이 보임)');
   const query = encodeURIComponent(stockName + ' 주가');
   const rssUrl = `https://news.google.com/rss/search?q=${query}&hl=ko&gl=KR&ceid=KR:ko`;
 
@@ -14177,17 +14178,19 @@ async function fetchStockNews(stockName) {
 
       let xml;
       const ct = res.headers.get('content-type') || '';
-      if (ct.includes('json')) {
-        const w = await res.json();
-        xml = w.contents || '';
+      const raw = await res.text();
+      // JSON 래핑(allorigins 등)이면 contents 추출, 아니면 본문 그대로
+      if (ct.includes('json') || raw.trim().startsWith('{')) {
+        try { const w = JSON.parse(raw); xml = w.contents || w.body || raw; }
+        catch { xml = raw; }
       } else {
-        xml = await res.text();
+        xml = raw;
       }
       if (!xml || !xml.includes('<item')) continue;
 
-      // <item> 파싱
+      // <item> 파싱 (속성 있는 <item ...>도 대응)
       const items = [];
-      const itemMatches = xml.match(/<item>[\s\S]*?<\/item>/g) || [];
+      const itemMatches = xml.match(/<item[\s>][\s\S]*?<\/item>/g) || [];
       for (const block of itemMatches.slice(0, 8)) {
         const titleM = block.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
         const dateM = block.match(/<pubDate>([\s\S]*?)<\/pubDate>/);
@@ -14228,12 +14231,19 @@ async function fetchFundFacts(ticker) {
     clearTimeout(timeoutId);
     if (res.ok) {
       const f = await res.json();
-      if (f && !f.error && Object.keys(f).length > 2) {
+      // 🔧 Worker에 /fund 라우트가 없으면 {ok:true, message:'...Proxy', usage:...} 같은 안내가 옴 → 펀드정보 아님
+      const isProxyInfo = f && (f.ok === true || f.message || f.usage) && !f['운용보수'] && !f['배당수익률'] && !f['운용자산(AUM)'];
+      if (f && !f.error && !isProxyInfo && Object.keys(f).length > 2) {
         delete f.source; delete f.ticker; delete f.note;
         if (f['개요']) { f['_요약'] = f['개요']; delete f['개요']; }
-        console.log(`📊 ${ticker} 펀드정보 수집 (Worker):`, f);
-        return f;
+        // 실제 수치 키가 하나라도 있어야 인정
+        const hasRealData = Object.keys(f).some(k => !k.startsWith('_'));
+        if (hasRealData) {
+          console.log(`📊 ${ticker} 펀드정보 수집 (Worker):`, f);
+          return f;
+        }
       }
+      if (isProxyInfo) console.warn('⚠️ Worker에 /fund 라우트 미배포 (worker-fundfacts.js 배포 필요)');
     }
   } catch (e) { /* 폴백으로 */ }
 
