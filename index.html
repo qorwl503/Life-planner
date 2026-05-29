@@ -14157,62 +14157,73 @@ let newsCache = null;
 // 🔧 특정 종목 뉴스 — 구글 뉴스 RSS로 종목명 검색 (AI 투자분석에 최신 뉴스 공급용)
 async function fetchStockNews(stockName) {
   if (!stockName) return [];
-  console.log('🆕 BUILD-0530-A 실행 중 (새 파일이면 이 줄이 보임)');
-  const query = encodeURIComponent(stockName + ' 주가');
-  const rssUrl = `https://news.google.com/rss/search?q=${query}&hl=ko&gl=KR&ceid=KR:ko`;
+  console.log('🆕 BUILD-0530-B 실행 중');
 
-  const proxies = [
+  // 종목명으로 티커 추정 (야후 뉴스는 티커 필요)
+  const normN = (s) => (s || '').replace(/\s/g, '').toLowerCase();
+  const matched = (assets || []).find(a => normN(a.name) === normN(stockName) ||
+    (a.ticker && normN(a.ticker) === normN(stockName)));
+  let tkr = matched?.ticker || guessKRTicker(stockName) || '';
+  if (!tkr && /^[A-Za-z]{1,6}$/.test(stockName.trim())) tkr = stockName.trim().toUpperCase();
+  if (/^\d{6}$/.test(tkr)) tkr = tkr + '.KS';
+
+  const q = encodeURIComponent(stockName + ' 주가');
+  // 🔧 여러 뉴스 소스 — 구글이 403 막히므로 야후·네이버도 시도
+  const feeds = [];
+  if (tkr) feeds.push(`https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(tkr)}&region=US&lang=en-US`);
+  feeds.push(`https://news.google.com/rss/search?q=${q}&hl=ko&gl=KR&ceid=KR:ko`);
+  feeds.push(`https://api.stock.naver.com/news/search?query=${encodeURIComponent(stockName)}`); // 폴백(형식 다를 수 있음)
+
+  const wrap = [
     url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
-    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
     url => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`,
+    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
   ];
 
-  for (const proxyFn of proxies) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
-      const res = await fetch(proxyFn(rssUrl), { signal: controller.signal });
-      clearTimeout(timeoutId);
-      if (!res.ok) continue;
+  for (const feedUrl of feeds) {
+    for (const wrapFn of wrap) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 7000);
+        const res = await fetch(wrapFn(feedUrl), { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (!res.ok) continue;
 
-      let xml;
-      const ct = res.headers.get('content-type') || '';
-      const raw = await res.text();
-      // JSON 래핑(allorigins 등)이면 contents 추출, 아니면 본문 그대로
-      if (ct.includes('json') || raw.trim().startsWith('{')) {
-        try { const w = JSON.parse(raw); xml = w.contents || w.body || raw; }
-        catch { xml = raw; }
-      } else {
-        xml = raw;
-      }
-      if (!xml || !xml.includes('<item')) continue;
+        const ct = res.headers.get('content-type') || '';
+        const raw = await res.text();
+        let xml;
+        if (ct.includes('json') || raw.trim().startsWith('{')) {
+          try { const w = JSON.parse(raw); xml = w.contents || w.body || raw; }
+          catch { xml = raw; }
+        } else { xml = raw; }
+        if (!xml || !xml.includes('<item')) continue;
 
-      // <item> 파싱 (속성 있는 <item ...>도 대응)
-      const items = [];
-      const itemMatches = xml.match(/<item[\s>][\s\S]*?<\/item>/g) || [];
-      for (const block of itemMatches.slice(0, 8)) {
-        const titleM = block.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
-        const dateM = block.match(/<pubDate>([\s\S]*?)<\/pubDate>/);
-        if (titleM) {
-          let title = titleM[1].trim().replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;/g,"'");
-          let dateStr = '';
-          if (dateM) {
-            const d = new Date(dateM[1]);
-            if (!isNaN(d)) dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        const items = [];
+        const itemMatches = xml.match(/<item[\s>][\s\S]*?<\/item>/g) || [];
+        for (const block of itemMatches.slice(0, 8)) {
+          const titleM = block.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
+          const dateM = block.match(/<pubDate>([\s\S]*?)<\/pubDate>/);
+          if (titleM) {
+            let title = titleM[1].trim().replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;/g,"'");
+            let dateStr = '';
+            if (dateM) {
+              const d = new Date(dateM[1]);
+              if (!isNaN(d)) dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+            }
+            if (title) items.push({ title, date: dateStr });
           }
-          items.push({ title, date: dateStr });
         }
+        if (items.length > 0) {
+          console.log(`📰 ${stockName} 뉴스 ${items.length}건 수집 (${feedUrl.includes('yahoo') ? '야후' : feedUrl.includes('google') ? '구글' : '네이버'})`);
+          return items;
+        }
+      } catch (e) {
+        continue;
       }
-      if (items.length > 0) {
-        console.log(`📰 ${stockName} 뉴스 ${items.length}건 수집`);
-        return items;
-      }
-    } catch (e) {
-      continue;
     }
   }
-  console.warn(`${stockName} 뉴스 수집 실패`);
+  console.warn(`${stockName} 뉴스 수집 실패 (모든 소스)`);
   return [];
 }
 
