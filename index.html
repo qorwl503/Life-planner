@@ -16607,48 +16607,84 @@ function deleteSelectedAssets() {
   if (sel.length === 0) return;
   const targetAssets = sel.map(idx => assets[idx]).filter(Boolean);
   if (targetAssets.length === 0) return;
-  const names = targetAssets.map(a => a.name);
-  if (!confirm(`선택한 ${targetAssets.length}개 자산을 삭제할까요?\n\n${names.join(', ')}\n\n⚠️ 자산만 삭제됩니다. 연결된 자동매수(고정지출)는 그대로 유지돼요.`)) return;
 
-  // 🔧 객체 참조로 제거 - 자동매수는 건드리지 않음
-  const targetSet = new Set(targetAssets);
-  assets = assets.filter(a => !targetSet.has(a));
-
-  // 🔧 삭제된 자산에 연결된 자동매수 찾기 → 시작일부터 다시 채울지 물어보기
-  const orphanedAutos = (budget.fixed || []).filter(f =>
+  // 선택한 자산에 연결된 자동매수 찾기
+  const linkedAutos = (budget.fixed || []).filter(f =>
     f.autoBuy && f.assetInfo &&
     targetAssets.some(a => a.name === f.assetInfo.name && a.type === f.assetInfo.type)
   );
-  if (orphanedAutos.length > 0) {
-    const autoNames = orphanedAutos.map(f => f.name).join(', ');
-    const refill = confirm(
-      `삭제한 자산에 자동매수 ${orphanedAutos.length}개가 연결돼 있어요.\n(${autoNames})\n\n` +
-      `✅ 확인: 자동매수를 시작일부터 다시 계산해 자산을 새로 채웁니다 (권장)\n` +
-      `❌ 취소: 자동매수는 다음 회차부터만 추가 (과거분은 0)`
-    );
-    orphanedAutos.forEach(f => {
-      if (refill) {
-        // 시작일부터 전부 재계산하도록 추적 상태 리셋
-        f.lastBuyDate = null;
-      } else {
-        // 다음 회차부터만 → lastBuyDate를 오늘로
-        f.lastBuyDate = new Date().toISOString();
-      }
-    });
-    if (refill) {
-      showToast('🔄 자동매수 재계산 중...');
-      saveData(true);
-      window._assetSelected = [];
-      Promise.all(orphanedAutos.map(f => processAutoBuy(f)))
-        .then(() => { renderAsset(); showToast('✅ 자동매수 자산 다시 채워짐'); })
-        .catch(() => renderAsset());
-      return;
-    }
+
+  // 자동매수 연결 없으면 간단 확인 후 삭제
+  if (linkedAutos.length === 0) {
+    const names = targetAssets.map(a => a.name);
+    if (!confirm(`선택한 ${targetAssets.length}개 자산을 삭제할까요?\n\n${names.join(', ')}`)) return;
+    doDeleteSelectedAssets(targetAssets, false);
+    return;
+  }
+
+  // 🔧 자동매수가 연결돼 있으면 명확한 선택 모달
+  const names = targetAssets.map(a => escapeHTML(a.name)).join(', ');
+  const autoNames = linkedAutos.map(f => escapeHTML(f.name)).join(', ');
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">취소</button>
+        <h2>🗑️ ${targetAssets.length}개 자산 삭제</h2>
+        <span></span>
+      </div>
+
+      <div style="padding:12px; background:var(--bg-warning); border-radius:10px; margin-bottom:14px; font-size:12px; color:var(--text-warning); line-height:1.6;">
+        삭제할 자산: <b>${names}</b><br><br>
+        이 중 <b>${linkedAutos.length}개</b>에 자동매수가 연결돼 있어요.<br>
+        <span style="font-size:10px;">(${autoNames})</span>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        <button onclick='doDeleteSelectedAssets(window._pendingDeleteAssets, true)' style="text-align:left; padding:14px; border:1px solid var(--text-danger); background:var(--bg-danger); border-radius:10px; cursor:pointer; font-family:inherit;">
+          <div style="font-size:13px; font-weight:700; color:var(--text-danger);">🗑️ 자산 + 자동매수 모두 삭제</div>
+          <div style="font-size:10px; color:var(--text-secondary); margin-top:3px; line-height:1.5;">자산도, 연결된 자동매수 설정도 완전히 삭제. 새로 시작할 때.</div>
+        </button>
+
+        <button onclick='doDeleteSelectedAssets(window._pendingDeleteAssets, false)' style="text-align:left; padding:14px; border:1px solid var(--border-tertiary); background:white; border-radius:10px; cursor:pointer; font-family:inherit;">
+          <div style="font-size:13px; font-weight:700; color:var(--text-primary);">📊 자산만 삭제 (자동매수 유지)</div>
+          <div style="font-size:10px; color:var(--text-secondary); margin-top:3px; line-height:1.5;">자동매수 설정은 남겨둠. 다음 회차부터 다시 자산이 쌓여요.</div>
+        </button>
+      </div>
+    </div>`;
+  window._pendingDeleteAssets = targetAssets;
+  modal.classList.add('show');
+}
+
+function doDeleteSelectedAssets(targetAssets, alsoDeleteAuto) {
+  if (!targetAssets || targetAssets.length === 0) { closeModal(); return; }
+
+  const linkedAutos = (budget.fixed || []).filter(f =>
+    f.autoBuy && f.assetInfo &&
+    targetAssets.some(a => a.name === f.assetInfo.name && a.type === f.assetInfo.type)
+  );
+
+  // 자산 제거
+  const targetSet = new Set(targetAssets);
+  assets = assets.filter(a => !targetSet.has(a));
+
+  if (alsoDeleteAuto && linkedAutos.length > 0) {
+    // 자동매수도 삭제
+    const autoSet = new Set(linkedAutos);
+    budget.fixed = budget.fixed.filter(f => !autoSet.has(f));
+  } else if (linkedAutos.length > 0) {
+    // 자동매수 유지 → 다음 회차부터만 (자산은 0부터 쌓임)
+    linkedAutos.forEach(f => { f.lastBuyDate = new Date().toISOString(); });
   }
 
   window._assetSelected = [];
+  window._pendingDeleteAssets = null;
   saveData(true);
-  showToast(`${targetAssets.length}개 자산 삭제됨`);
+  closeModal();
+  const msg = alsoDeleteAuto
+    ? `${targetAssets.length}개 자산 삭제됨 (자동매수 ${linkedAutos.length}개 포함)`
+    : (linkedAutos.length > 0 ? `${targetAssets.length}개 자산 삭제됨 (자동매수 유지)` : `${targetAssets.length}개 자산 삭제됨`);
+  showToast(msg);
   renderAsset();
 }
 
