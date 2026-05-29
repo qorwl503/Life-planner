@@ -5115,10 +5115,10 @@ function renderFixedRows() {
         }
         const totalAmt = Number(f.amt) * occurCount;
         const cycleLabel = cycle === 'monthly'
-          ? `매월 ${f.day}일`
+          ? `매월 ${f.day || 1}일`
           : cycle === 'weekly'
-            ? `매주 ${dowNames[f.dow]} (월 ${occurCount}회)`
-            : `격주 ${dowNames[f.dow]} (월 ${occurCount}회)`;
+            ? `매주 ${dowNames[f.dow] || '?'} (월 ${occurCount}회)`
+            : `격주 ${dowNames[f.dow] || '?'} (월 ${occurCount}회)`;
 
         const fEditing = !!window._fixedEditMode;
         const fSel = (window._fixedSelected || []).includes(f.id);
@@ -9029,7 +9029,32 @@ async function processAutobuyCapture(input) {
         try {
           const parsed = JSON.parse(m[0]);
           (parsed.items || []).forEach(it => {
-            if (it.name) allItems.push(it); // 금액 0이어도 회차(lots)가 있을 수 있음
+            if (!it.name) return;
+            // 🔧 같은 종목이 여러 캡처에 나오면 병합 (따로 안 잡히게)
+            const norm = (s) => (s||'').replace(/\s+/g,'').toUpperCase();
+            const exist = allItems.find(x => norm(x.name) === norm(it.name) ||
+              (it.ticker && x.ticker && norm(x.ticker) === norm(it.ticker)));
+            if (exist) {
+              // 회차 병합 (같은 날짜+수량 중복 제거)
+              const newLots = Array.isArray(it.lots) ? it.lots : [];
+              if (!exist.lots) exist.lots = [];
+              newLots.forEach(nl => {
+                const dup = exist.lots.find(el =>
+                  (el.date||'') === (nl.date||'') && Number(el.qty) === Number(nl.qty));
+                if (dup) {
+                  // 금액/단가 정보가 더 있는 쪽으로 보강
+                  if (!dup.price && nl.price) dup.price = nl.price;
+                  if (!dup.amount && nl.amount) dup.amount = nl.amount;
+                } else {
+                  exist.lots.push(nl);
+                }
+              });
+              // 금액·티커 보강
+              if (!exist.ticker && it.ticker) exist.ticker = it.ticker;
+              if (!exist.amt && it.amt) exist.amt = it.amt;
+            } else {
+              allItems.push(it); // 금액 0이어도 회차(lots)가 있을 수 있음
+            }
           });
           if (parsed.error) lastErrGlobal = parsed.error;
         } catch (pe) {
@@ -9254,8 +9279,9 @@ function saveAutobuyReview() {
         name: it.name,
         amt: Number(it.amt),
         cycle: it.cycle || 'weekly',
-        dayOfWeek: (it.cycle !== 'monthly') ? (it.dayOfWeek != null ? it.dayOfWeek : 3) : undefined,
+        dow: (it.cycle !== 'monthly') ? (it.dayOfWeek != null ? it.dayOfWeek : 3) : undefined,
         day: (it.cycle === 'monthly') ? (it.day || 1) : undefined,
+        icon: 'ti-robot',
         cat: '투자',
         autoBuy: true,
         fractional: it.fractional === true || it.isUS,
@@ -11177,6 +11203,25 @@ function renderAssetReliabilitySummary(total) {
 
 function renderAsset() {
   runAllAutoBuys(); // 자동매수 점검 (시세 알면 정확히 처리)
+
+  // 🔧 자산 탭 진입 시 시세 자동 갱신 — LIVE 안 뜨는 자산이 있거나 5분 지났으면
+  //    (수동 새로고침 안 눌러도 국내·해외 모두 시세가 걸리게)
+  (function autoRefreshOnEnter() {
+    if (window._assetRefreshInFlight) return; // 갱신 중이면 중복 방지
+    const stockAssets = assets.filter(a => isStockLikeType(a.type) && (a.ticker || guessKRTicker(a.name)));
+    if (stockAssets.length === 0) return;
+    const anyMissing = stockAssets.some(a => !liveAssetData[a.id] || !liveAssetData[a.id].hasLive);
+    const stale = !window._lastAutoAssetRefresh || (Date.now() - window._lastAutoAssetRefresh > 5 * 60 * 1000);
+    if (anyMissing || stale) {
+      window._lastAutoAssetRefresh = Date.now();
+      window._assetRefreshInFlight = true;
+      refreshAllAssetPrices().then(() => {
+        window._assetRefreshInFlight = false;
+        if (currentTab === 'asset') renderAsset();
+      }).catch(() => { window._assetRefreshInFlight = false; });
+    }
+  })();
+
   header.innerHTML = `
     <h1>자산</h1>
     <div class="header-actions">
@@ -12273,6 +12318,7 @@ async function askGemini(prompt, options = {}) {
 
   const models = ['gemini-2.5-flash', 'gemini-flash-latest'];
   let lastError = '알 수 없는 오류';
+  let searchFailed = false; // 🔧 검색 도구 때문에 실패했는지
 
   try {
     for (const model of models) {
@@ -12286,10 +12332,11 @@ async function askGemini(prompt, options = {}) {
 
           const reqBody = {
             contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { temperature: 0.7, maxOutputTokens: 6000 },
+            generationConfig: { temperature: 0.7, maxOutputTokens: 8192 },
           };
           // 🔧 검색 그라운딩 — 켜지면 AI가 답변 전 구글 검색으로 최신 정보 수집
-          if (useSearch) {
+          //    단, 이전에 검색 때문에 실패했으면 검색 끄고 시도 (무료 키는 검색 도구 거부할 수 있음)
+          if (useSearch && !searchFailed) {
             reqBody.tools = [{ google_search: {} }];
           }
 
@@ -12328,18 +12375,32 @@ async function askGemini(prompt, options = {}) {
 
           const data = await res.json();
           // 🔧 검색 그라운딩 사용 시 parts가 여러 개로 쪼개질 수 있어 모두 합침
-          const parts = data.candidates?.[0]?.content?.parts || [];
+          const cand = data.candidates?.[0];
+          const parts = cand?.content?.parts || [];
           const text = parts.map(p => p.text || '').join('').trim();
+          const finishReason = cand?.finishReason;
+          console.log(`📊 ${model} finishReason=${finishReason}, parts=${parts.length}, textLen=${text.length}`);
 
           // 🔧 검색 그라운딩이 실제 작동했는지 확인 (groundingMetadata 유무)
           if (useSearch) {
-            const gm = data.candidates?.[0]?.groundingMetadata;
+            const gm = cand?.groundingMetadata;
             if (gm && (gm.groundingChunks || gm.webSearchQueries || gm.searchEntryPoint)) {
               const queries = gm.webSearchQueries || [];
               console.log(`🔍 검색 그라운딩 작동함 — 검색어:`, queries);
             } else {
               console.warn('⚠️ 검색 그라운딩 요청했지만 검색 안 함 (무료 키 권한 없음 가능성). AI 학습데이터로 답변됨.');
             }
+          }
+
+          // 🔧 토큰 초과로 답변이 잘렸으면(텍스트 없음) 명확히 안내
+          if (!text && finishReason === 'MAX_TOKENS') {
+            lastError = 'MAX_TOKENS: 검색+분석이 길어 토큰 초과. 답변이 안 나옴';
+            console.warn('⚠️ MAX_TOKENS — 토큰 한도 초과로 빈 응답');
+            break;
+          }
+          if (!text && finishReason && finishReason !== 'STOP') {
+            lastError = `${finishReason}: AI가 답변을 완성하지 못함`;
+            break;
           }
 
           if (!text) throw new Error('응답이 비어있음');
