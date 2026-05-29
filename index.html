@@ -8935,6 +8935,7 @@ async function processAutobuyCapture(input) {
   showToast('🔄 자동적립 설정 분석 중...');
   const allItems = [];
   let failCount = 0;
+  let lastErrGlobal = '';
 
   for (const file of files) {
     try {
@@ -8966,28 +8967,55 @@ async function processAutobuyCapture(input) {
 
 자동적립 설정이 없으면: {"items":[],"error":"이유"}`;
 
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${window.GEMINI_API_KEY}`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [
-            { text: prompt },
-            { inline_data: { mime_type: mimeType, data: base64 } },
-          ]}],
-          generationConfig: { temperature: 0.1, maxOutputTokens: 2000 },
-        }),
-      });
-      const data = await res.json();
-      const txt = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      const ocrModels = ['gemini-2.5-flash', 'gemini-flash-latest'];
+      const reqBody = {
+        contents: [{ parts: [
+          { text: prompt },
+          { inline_data: { mime_type: mimeType, data: base64 } },
+        ]}],
+        generationConfig: { temperature: 0.1, maxOutputTokens: 2000 },
+      };
+      let txt = '';
+      let lastErr = '';
+      for (const model of ocrModels) {
+        try {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${window.GEMINI_API_KEY}`;
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(reqBody),
+          });
+          if (res.status === 429) { lastErr = '429: AI 한도초과'; console.warn(`⚠️ 자동적립 OCR ${model} 429 → 다음 모델`); continue; }
+          if (res.status === 503) { lastErr = '503: AI 서버 혼잡'; console.warn(`⚠️ 자동적립 OCR ${model} 503 → 다음 모델`); continue; }
+          if (!res.ok) { lastErr = `${res.status}`; console.warn(`⚠️ 자동적립 OCR ${model} ${res.status}`); continue; }
+          const data = await res.json();
+          txt = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          if (txt) break;
+        } catch (err) {
+          lastErr = err.message;
+          console.warn(`자동적립 OCR ${model} 에러:`, err);
+        }
+      }
+      if (!txt) { failCount++; if (lastErr) { lastErrGlobal = lastErr; console.warn('자동적립 OCR 최종 실패:', lastErr); } continue; }
+
       const m = txt.match(/\{[\s\S]*\}/);
       if (m) {
-        const parsed = JSON.parse(m[0]);
-        (parsed.items || []).forEach(it => {
-          if (it.name && Number(it.amt) > 0) allItems.push(it);
-        });
+        try {
+          const parsed = JSON.parse(m[0]);
+          (parsed.items || []).forEach(it => {
+            if (it.name && Number(it.amt) > 0) allItems.push(it);
+          });
+          if (parsed.error) lastErrGlobal = parsed.error;
+        } catch (pe) {
+          lastErrGlobal = 'JSON 파싱 실패';
+          console.warn('자동적립 JSON 파싱 실패:', m[0]);
+        }
+      } else {
+        lastErrGlobal = '응답에서 데이터를 못 찾음';
+        console.warn('자동적립 OCR 응답:', txt);
       }
     } catch (e) {
+      lastErrGlobal = e.message || '알 수 없는 오류';
       console.warn('자동적립 OCR 실패', e);
       failCount++;
     }
@@ -8996,10 +9024,12 @@ async function processAutobuyCapture(input) {
   input.value = '';
 
   if (allItems.length === 0) {
-    showToast(failCount > 0 ? '분석에 실패했어요. 다시 시도해주세요' : '자동적립 설정을 찾지 못했어요');
+    showToast(lastErrGlobal ? `자동적립 인식 실패: ${lastErrGlobal}` : '자동적립 설정을 찾지 못했어요');
     return;
   }
-  openAutobuyReviewModal(allItems);
+  // 🔧 고정지출 추가 모달이 열린 상태이므로, 닫고 잠시 후 검토 모달 띄움 (충돌 방지)
+  closeModal();
+  setTimeout(() => openAutobuyReviewModal(allItems), 120);
 }
 
 // 자동적립 캡처 검토 모달
