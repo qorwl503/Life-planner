@@ -6541,6 +6541,37 @@ ${lines}
     console.warn('종목 뉴스 수집 건너뜀', e);
   }
 
+  // 🔧 펀드/종목 기초 수치(AUM·운용보수·배당·PER 등) 야후에서 실시간 수집 → 프롬프트 공급
+  //    (AI는 인베스팅닷컴 같은 데 직접 못 들어가서 옛 수치를 쓰므로, 실제값을 긁어다 줌)
+  let factsText = '';
+  try {
+    // 입력 종목의 티커 찾기: 보유 자산이면 그 티커, 아니면 이름 추론
+    const normN = (s) => (s || '').replace(/\s/g, '').toLowerCase();
+    const matched = (assets || []).find(a => normN(a.name) === normN(stockName) ||
+      (a.ticker && normN(a.ticker) === normN(stockName)));
+    let factTicker = matched?.ticker || guessKRTicker(stockName) || null;
+    // 입력 자체가 티커 형태(영문 2~5자 또는 6자리)면 그대로 사용
+    if (!factTicker && /^[A-Za-z]{1,6}$|^\d{6}$/.test(stockName.trim())) factTicker = stockName.trim();
+
+    if (factTicker) {
+      statusEl.innerHTML = `<div style="display:flex; align-items:center; justify-content:center; gap:8px;"><div class="spinner" style="width:14px; height:14px;"></div>"${stockName}" 최신 펀드정보 수집 중...</div>`;
+      const facts = await fetchFundFacts(factTicker);
+      if (facts) {
+        const summary = facts._요약; delete facts._요약;
+        const lines = Object.entries(facts).map(([k, v]) => `- ${k}: ${v}`).join('\n');
+        factsText = `
+
+## 참고: '${stockName}' (${factTicker}) 실시간 기초 정보 (야후 파이낸스 ${new Date().getFullYear()}년 ${new Date().getMonth()+1}월 기준)
+${lines}${summary ? `\n- 개요: ${summary}` : ''}
+
+⚠️ 위 수치는 방금 야후 파이낸스에서 받은 **실제 최신값**이야. AUM·운용보수·배당수익률·PER 등 숫자는 반드시 이 값을 사용하고, 네 학습 데이터의 옛날 수치를 쓰지 마. 여기 없는 수치만 "(확인 필요)"로 표시해.`;
+      }
+      statusEl.innerHTML = `<div style="display:flex; align-items:center; justify-content:center; gap:8px;"><div class="spinner" style="width:14px; height:14px;"></div>"${stockName}" 분석 중...</div>`;
+    }
+  } catch (e) {
+    console.warn('펀드 기초정보 수집 건너뜀', e);
+  }
+
   const _now = new Date();
   const _todayStr = `${_now.getFullYear()}년 ${_now.getMonth()+1}월`;
 
@@ -6607,7 +6638,7 @@ ${lines}
   · ETF라면 섹터 비중·최근 분배금(배당금)
 - **검색으로 확인한 수치만 제시해.** 검색해서 못 찾았거나 불확실한 수치는 절대 지어내지 말고 "(확인 필요 — 공식 자료 참조)"라고 명시해. 틀린 숫자를 그럴듯하게 쓰는 것이 가장 나쁜 답변이야.
 - 숫자를 제시할 땐 가능하면 출처(예: "공식 운용사 자료 기준")를 함께 언급해.
-- 사업 구조·산업 특성·투자 논리 같은 잘 변하지 않는 내용은 단서 없이 정상 분석. 모든 문장에 단서를 달지는 마.${techText}${newsText}`;
+- 사업 구조·산업 특성·투자 논리 같은 잘 변하지 않는 내용은 단서 없이 정상 분석. 모든 문장에 단서를 달지는 마.${techText}${newsText}${factsText}`;
 
   try {
     // 🔧 공용 askGemini 사용 — 자산코치·뉴스요약과 같은 경로(모델 폴백·재시도 공유)
@@ -14187,6 +14218,87 @@ async function fetchStockNews(stockName) {
   }
   console.warn(`${stockName} 뉴스 수집 실패`);
   return [];
+}
+
+// 🔧 야후 파이낸스에서 ETF/종목 기초 정보(AUM·운용보수·배당·지수 등) 실시간 수집
+//    AI는 이런 사이트에 직접 못 들어가므로, 뉴스처럼 긁어다 프롬프트에 넣어줌
+async function fetchFundFacts(ticker) {
+  if (!ticker) return null;
+  // 한국 6자리면 .KS
+  let t = ticker.trim();
+  if (/^\d{6}$/.test(t)) t = t + '.KS';
+
+  const modules = 'price,summaryDetail,defaultKeyStatistics,fundProfile,topHoldings,summaryProfile';
+  const apiUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(t)}?modules=${modules}`;
+
+  const proxies = [
+    url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
+    url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
+    url => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`,
+  ];
+
+  for (const proxyFn of proxies) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(proxyFn(apiUrl), { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (!res.ok) continue;
+
+      let json;
+      const ct = res.headers.get('content-type') || '';
+      if (ct.includes('json')) {
+        const w = await res.json();
+        json = (w.contents) ? JSON.parse(w.contents) : w;
+      } else {
+        const txt = await res.text();
+        json = JSON.parse(txt);
+      }
+
+      const r = json?.quoteSummary?.result?.[0];
+      if (!r) continue;
+
+      const facts = {};
+      const sd = r.summaryDetail || {};
+      const ks = r.defaultKeyStatistics || {};
+      const fp = r.fundProfile || {};
+      const pr = r.price || {};
+      const sp = r.summaryProfile || {};
+
+      // 가격·시총
+      if (pr.regularMarketPrice?.raw) facts['현재가'] = `${pr.regularMarketPrice.raw} ${pr.currency||''}`;
+      if (sd.marketCap?.raw) facts['시가총액'] = sd.marketCap.fmt;
+      if (ks.totalAssets?.raw) facts['운용자산(AUM)'] = ks.totalAssets.fmt;
+      // 운용보수
+      if (fp.feesExpensesInvestment?.annualReportExpenseRatio?.raw != null)
+        facts['운용보수(Expense Ratio)'] = (fp.feesExpensesInvestment.annualReportExpenseRatio.raw * 100).toFixed(2) + '%';
+      else if (ks.annualReportExpenseRatio?.raw != null)
+        facts['운용보수'] = (ks.annualReportExpenseRatio.raw * 100).toFixed(2) + '%';
+      // 배당
+      if (sd.dividendYield?.raw != null) facts['배당수익률'] = (sd.dividendYield.raw * 100).toFixed(2) + '%';
+      else if (sd.yield?.raw != null) facts['분배수익률'] = (sd.yield.raw * 100).toFixed(2) + '%';
+      if (sd.dividendRate?.raw != null) facts['연간배당'] = sd.dividendRate.raw + ' ' + (pr.currency||'');
+      // 밸류에이션
+      if (sd.trailingPE?.raw != null) facts['PER'] = sd.trailingPE.raw.toFixed(2);
+      if (ks.priceToBook?.raw != null) facts['PBR'] = ks.priceToBook.raw.toFixed(2);
+      // 52주
+      if (sd.fiftyTwoWeekHigh?.raw && sd.fiftyTwoWeekLow?.raw)
+        facts['52주 범위'] = `${sd.fiftyTwoWeekLow.raw} ~ ${sd.fiftyTwoWeekHigh.raw}`;
+      // 펀드 카테고리·지수
+      if (fp.categoryName) facts['카테고리'] = fp.categoryName;
+      if (fp.legalType) facts['유형'] = fp.legalType;
+      if (sp.longBusinessSummary) facts['_요약'] = sp.longBusinessSummary.slice(0, 300);
+
+      if (Object.keys(facts).length > 0) {
+        console.log(`📊 ${ticker} 펀드 기초정보 수집:`, facts);
+        return facts;
+      }
+    } catch (e) {
+      continue;
+    }
+  }
+  console.warn(`${ticker} 펀드 기초정보 수집 실패`);
+  return null;
 }
 
 async function fetchNewsRSS() {
