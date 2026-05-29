@@ -11269,13 +11269,25 @@ function renderAsset() {
             ${fxWarn}
           </div>`;
         } else if (live?.error) {
-          priceInfo = `<div style="font-size:10px; color:var(--text-danger);">시세 조회 실패</div>`;
+          const qtyStr = Number.isInteger(Number(a.qty)) ? Number(a.qty).toLocaleString() : Number(a.qty).toFixed(4).replace(/\.?0+$/, '');
+          priceInfo = `<div style="font-size:10px; display:flex; gap:8px; justify-content:flex-end; margin-top:2px; flex-wrap:wrap;">
+            <span style="color:var(--text-secondary);">${qtyStr}주</span>
+            <span onclick="event.stopPropagation(); manualRefreshAssetPrices();" style="color:var(--text-info); cursor:pointer; text-decoration:underline;">시세 새로고침 ↻</span>
+          </div>`;
         } else if (a.qty && Number(a.qty) > 0 && Number(a.qty) !== 1) {
           // 소수점 매매 지원 - 정수면 그대로, 소수면 최대 4자리
           const qtyStr = Number.isInteger(Number(a.qty))
             ? Number(a.qty).toLocaleString()
             : Number(a.qty).toFixed(4).replace(/\.?0+$/, ''); // 0.5000 → 0.5
-          priceInfo = `<div style="font-size:10px; color:var(--text-tertiary);">${qtyStr}주 × ${Number(a.price).toLocaleString()}</div>`;
+          // 🔧 티커가 있는데 시세가 아직 없으면 → 보유수량 + 시세 유도 (단순 N주×단가 대신)
+          if (a.ticker) {
+            priceInfo = `<div style="font-size:10px; display:flex; gap:8px; justify-content:flex-end; margin-top:2px; flex-wrap:wrap;">
+              <span style="color:var(--text-secondary);">${qtyStr}주</span>
+              <span onclick="event.stopPropagation(); manualRefreshAssetPrices();" style="color:var(--text-info); cursor:pointer; text-decoration:underline;">시세 새로고침 ↻</span>
+            </div>`;
+          } else {
+            priceInfo = `<div style="font-size:10px; color:var(--text-tertiary);">${qtyStr}주 × ${Number(a.price).toLocaleString()}</div>`;
+          }
         }
 
         const liveBadge = a.ticker
