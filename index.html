@@ -13027,6 +13027,31 @@ async function getUSDKRW() {
 // 자산 라이브 데이터
 let liveAssetData = {};
 
+// 🔧 국내 ETF/종목 이름 → 티커 추론 (티커 안 넣어도 시세 뜨게)
+const KR_TICKER_MAP = {
+  'KODEX 미국나스닥100': '379810', 'TIGER 미국S&P500': '360750',
+  'TIGER 미국나스닥100': '133690', 'KODEX 미국S&P500': '379800',
+  'ACE 미국S&P500': '360200', 'ACE 미국나스닥100': '367380',
+  'KODEX 200': '069500', 'TIGER 200': '102110', 'KODEX 코스닥150': '229200',
+  'KODEX 레버리지': '122630', 'TIGER 미국필라델피아반도체나스닥': '381180',
+  'KODEX 미국나스닥100레버리지': '409820', 'SOL 미국S&P500': '433330',
+  'TIGER 미국테크TOP10': '381170', 'KODEX 미국나스닥100TR': '379810',
+  '삼성전자': '005930', 'SK하이닉스': '000660', 'NAVER': '035420',
+  '카카오': '035720', '현대차': '005380', 'LG에너지솔루션': '373220',
+};
+function guessKRTicker(name) {
+  if (!name) return null;
+  const clean = name.trim();
+  if (KR_TICKER_MAP[clean]) return KR_TICKER_MAP[clean];
+  // 부분 일치 (공백·특수문자 무시)
+  const norm = (s) => s.replace(/\s+/g, '').toUpperCase();
+  const target = norm(clean);
+  for (const [k, v] of Object.entries(KR_TICKER_MAP)) {
+    if (norm(k) === target) return v;
+  }
+  return null;
+}
+
 async function fetchAssetLive(asset) {
   // 🔧 OCR 캡처로 보정된 평가금액·수익률 스냅샷 (시세 못 받을 때 폴백용)
   const snap = asset.ocrSnapshot;
@@ -13044,7 +13069,17 @@ async function fetchAssetLive(asset) {
     };
   };
 
-  if (!asset.ticker) {
+  // 🔧 티커가 없으면 종목명으로 국내 티커 추론 시도
+  let effectiveTicker = asset.ticker;
+  if (!effectiveTicker) {
+    const guessed = guessKRTicker(asset.name);
+    if (guessed) {
+      effectiveTicker = guessed;
+      console.log(`🔧 티커 추론: "${asset.name}" → ${guessed}`);
+    }
+  }
+
+  if (!effectiveTicker) {
     return snapResult() || {
       currentPrice: Number(asset.price),
       krwValue: Number(asset.qty) * Number(asset.price),
@@ -13055,7 +13090,7 @@ async function fetchAssetLive(asset) {
   }
 
   // 티커 자동 보정 - 한국 ETF 코드 (숫자 6자리)면 .KS 추가
-  let ticker = asset.ticker.trim();
+  let ticker = effectiveTicker.trim();
   if (/^\d{6}$/.test(ticker)) {
     ticker = ticker + '.KS';
     console.log(`🔧 티커 자동 보정: ${asset.ticker} → ${ticker}`);
@@ -13136,7 +13171,7 @@ async function fetchAssetLive(asset) {
 }
 
 async function refreshAllAssetPrices() {
-  const tickerAssets = assets.filter(a => a.ticker);
+  const tickerAssets = assets.filter(a => a.ticker || guessKRTicker(a.name));
   console.log(`📈 자산 시세 갱신 시작: ${tickerAssets.length}개`);
   if (tickerAssets.length === 0) {
     console.log('티커 입력된 자산 없음 - 시세 갱신 안 함');
@@ -16086,7 +16121,7 @@ function editAsset(id) {
 
       ${(() => {
         // 🔧 같은 종류의 다른 자산이 있으면 "합치기" 버튼 표시
-        const candidates = assets.filter(x => x.id !== id && x.type === asset.type);
+        const candidates = assets.filter(x => x.id !== id && x.type === a.type);
         if (candidates.length === 0) return '';
         return `<button onclick="openMergeAssetPicker(${id})" style="width:100%; padding:12px; border:1px solid var(--text-info); border-radius:var(--radius-md); background:var(--bg-info); color:var(--text-info); font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; margin-top:10px;">🔗 다른 자산과 합치기</button>`;
       })()}
@@ -16177,11 +16212,13 @@ function editAsset(id) {
                     </button>
                     ${autoLots.slice().sort((x, y) => (y.date || '').localeCompare(x.date || '')).map((lot, idx) => {
                       const exact = (lot.exactAmount != null && Number(lot.exactAmount) > 0) ? Number(lot.exactAmount) : null;
-                      const shownAmt = exact != null ? exact : Math.round(lot.qty * lot.price);
+                      const lq = Number(lot.qty) || 0;
+                      const lp = Number(lot.price) || 0;
+                      const shownAmt = exact != null ? exact : Math.round(lq * lp);
                       const isCorrected = exact != null;
                       return `
                       <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 0; font-size:9px;">
-                        <span style="color:var(--text-tertiary);">${lot.date} · ${Number(lot.qty).toFixed(4).replace(/\.?0+$/, '')}주${isCorrected ? ` <span style="color:var(--text-success);">✓보정</span>` : ` × ${Number(lot.price).toLocaleString()}원`}</span>
+                        <span style="color:var(--text-tertiary);">${lot.date || ''} · ${lq.toFixed(4).replace(/\.?0+$/, '')}주${isCorrected ? ` <span style="color:var(--text-success);">✓보정</span>` : ` × ${lp.toLocaleString()}원`}</span>
                         <span style="display:flex; gap:4px; align-items:center;">
                           <span>${shownAmt.toLocaleString()}원</span>
                           <button onclick="editLot(${a.id}, '${lot.id}')" style="border:none; background:transparent; color:var(--text-tertiary); padding:2px; cursor:pointer; font-family:inherit; font-size:11px;">✏️</button>
@@ -16200,15 +16237,17 @@ function editAsset(id) {
               const visibleManual = isLargeList ? manualLots.slice(0, shownCount) : manualLots;
 
               lotHtml += visibleManual.map(lot => {
+                const lq = Number(lot.qty) || 0;
+                const lp = Number(lot.price) || 0;
                 return `<div style="padding:8px 10px; background:white; border-radius:6px; margin-bottom:5px; display:flex; align-items:center; gap:8px; font-size:11px;">
                   <div style="flex:1; min-width:0;">
-                    <div style="font-weight:600;">${lot.source}</div>
+                    <div style="font-weight:600;">${escapeHTML(lot.source || '매수 기록')}</div>
                     <div style="font-size:9px; color:var(--text-tertiary); margin-top:1px;">
-                      ${lot.date} · ${Number(lot.qty).toFixed(4).replace(/\.?0+$/, '')}주 × ${Number(lot.price).toLocaleString()}원
+                      ${lot.date || ''} · ${lq.toFixed(4).replace(/\.?0+$/, '')}주 × ${lp.toLocaleString()}원
                       ${lot.fxDiscount ? ` · 우대 ${lot.fxDiscount}%` : ''}
                     </div>
                   </div>
-                  <div style="font-weight:600; font-size:11px;">${(lot.qty * lot.price).toLocaleString()}원</div>
+                  <div style="font-weight:600; font-size:11px;">${Math.round(lq * lp).toLocaleString()}원</div>
                   <button onclick="editLot(${a.id}, '${lot.id}')" style="border:none; background:transparent; color:var(--text-tertiary); padding:4px; cursor:pointer; font-family:inherit; font-size:14px;">✏️</button>
                   <button onclick="deleteLot(${a.id}, '${lot.id}')" style="border:none; background:transparent; color:var(--text-danger); padding:4px; cursor:pointer; font-family:inherit; font-size:14px;">🗑️</button>
                 </div>`;
@@ -16450,7 +16489,7 @@ function editAsset(id) {
 
     h += `<div class="field">
       <div class="field-label">메모 (선택)</div>
-      <input type="text" id="e-note" value="${a.note || ''}" />
+      <input type="text" id="e-note" value="${escapeAttr(a.note || '')}" />
     </div>`;
 
     container.innerHTML = h;
@@ -16471,19 +16510,39 @@ function editAsset(id) {
     });
   }
 
-  setTimeout(() => {
-    // 초기 종류
-    renderEditDynamic(a.type || '주식');
-
+  const initEditDynamic = () => {
+    try {
+      // 초기 종류
+      renderEditDynamic(a.type || '국내주식');
+    } catch (err) {
+      console.error('자산 수정 필드 렌더 실패:', err);
+      const container = document.getElementById('e-dynamic-fields');
+      if (container) {
+        // 🔧 에러가 나도 최소한 기본 필드는 보이게 (수정 불능 방지)
+        container.innerHTML = `
+          <div class="field"><div class="field-label">자산명</div>
+            <input type="text" id="e-name" value="${escapeAttr(a.name)}" /></div>
+          <div class="field"><div class="field-label">티커 (선택)</div>
+            <input type="text" id="e-ticker" value="${escapeAttr(a.ticker || '')}" placeholder="예: 379810.KS, SPY" /></div>
+          <div class="field"><div class="field-label">수량 (주)</div>
+            <input type="number" step="0.0001" id="e-qty" value="${a.qty || ''}" /></div>
+          <div class="field"><div class="field-label">평균 매입가</div>
+            <input type="number" id="e-price" value="${a.price || ''}" /></div>
+          <div class="field"><div class="field-label">메모 (선택)</div>
+            <input type="text" id="e-note" value="${escapeAttr(a.note || '')}" /></div>
+          <input type="hidden" id="e-subtype" value="" />`;
+      }
+    }
     // 종류 클릭 시 변경
     document.querySelectorAll('#e-type .chip').forEach(b => {
       b.addEventListener('click', () => {
         document.querySelectorAll('#e-type .chip').forEach(x => x.classList.remove('active'));
         b.classList.add('active');
-        renderEditDynamic(b.dataset.t);
+        try { renderEditDynamic(b.dataset.t); } catch (err) { console.error(err); }
       });
     });
-  }, 50);
+  };
+  setTimeout(initEditDynamic, 30);
 }
 
 function updateAsset(id) {
