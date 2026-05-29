@@ -9059,99 +9059,133 @@ async function processAutobuyCapture(input) {
   setTimeout(() => openAutobuyReviewModal(allItems), 120);
 }
 
-// 자동적립 캡처 검토 모달
+// 자동적립/체결내역 캡처 검토 모달 — 회차 수정 + 자동매수 설정 통합
 function openAutobuyReviewModal(items) {
-  window._autobuyReviewItems = items.map(it => ({ ...it, _checked: true }));
+  // 각 항목 정규화: lots는 편집 가능한 배열로, 자동매수 설정 기본값
+  window._autobuyReviewItems = items.map(it => {
+    const lots = Array.isArray(it.lots) ? it.lots.map(l => ({
+      date: l.date || '',
+      qty: Number(l.qty) || 0,
+      price: Number(l.price) || 0,
+      amount: Number(l.amount) > 0 ? Number(l.amount) : Math.round((Number(l.qty)||0) * (Number(l.price)||0)),
+    })) : [];
+    return {
+      ...it,
+      _checked: true,
+      lots,
+      _autoBuy: Number(it.amt) > 0,         // 자동매수도 걸지 여부 (금액 읽혔으면 기본 on)
+      amt: Number(it.amt) || 0,
+      cycle: it.cycle || 'weekly',
+      dayOfWeek: it.dayOfWeek != null ? it.dayOfWeek : 3,  // 기본 수요일
+      startDate: it.startDate || todayKey(),
+    };
+  });
 
   const dowNames = ['일','월','화','수','목','금','토'];
   const render = () => {
     const list = window._autobuyReviewItems.map((it, i) => {
-      const hasLots = Array.isArray(it.lots) && it.lots.length > 0;
-      // 같은 종목 기존 자산 있는지
-      const existAsset = assets.find(a => a.name === it.name || (it.ticker && a.ticker && a.ticker.replace(/\.(KS|KQ)$/,'') === it.ticker));
-      const dup = (budget.fixed || []).find(f => f.autoBuy && f.assetInfo && f.assetInfo.name === it.name);
+      const normT = (t) => (t||'').toUpperCase().replace(/\.(KS|KQ)$/,'');
+      const existAsset = assets.find(a => a.name === it.name || (it.ticker && a.ticker && normT(a.ticker) === normT(it.ticker)));
+      const hasLots = it.lots.length > 0;
+      const lotQty = it.lots.reduce((s,l) => s + (Number(l.qty)||0), 0);
+      const lotCost = it.lots.reduce((s,l) => s + (Number(l.amount)|| (Number(l.qty)||0)*(Number(l.price)||0)), 0);
 
-      if (hasLots) {
-        // 📊 체결 내역 → 회차로 추가
-        const lotQty = it.lots.reduce((s,l) => s + (Number(l.qty)||0), 0);
-        const lotCost = it.lots.reduce((s,l) => s + (Number(l.amount) || (Number(l.qty)||0)*(Number(l.price)||0)), 0);
-        return `
-          <div style="padding:12px; background:white; border:0.5px solid var(--border-tertiary); border-radius:10px; margin-bottom:8px;">
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:6px;">
-              <input type="checkbox" ${it._checked ? 'checked' : ''} onchange="window._autobuyReviewItems[${i}]._checked = this.checked;" style="width:18px; height:18px;" />
-              <div style="flex:1;">
-                <div style="font-size:13px; font-weight:600;">${escapeHTML(it.name)} ${it.isUS ? '🇺🇸' : '🇰🇷'} <span style="font-size:9px; color:#5E5CE6;">📊 체결 ${it.lots.length}회</span></div>
-                <div style="font-size:9px; color:var(--text-tertiary);">${it.ticker ? escapeHTML(it.ticker) : ''} · 총 ${lotQty.toFixed(4).replace(/\.?0+$/,'')}주 · ${Math.round(lotCost).toLocaleString()}원</div>
-              </div>
-            </label>
-            <div style="padding-left:26px; font-size:9px; color:var(--text-tertiary); line-height:1.6;">
-              ${it.lots.map(l => `${l.date || ''} ${(Number(l.qty)||0).toFixed(4).replace(/\.?0+$/,'')}주 × ${(Number(l.price)||0).toLocaleString()}원`).join('<br>')}
-            </div>
-            <div style="padding-left:26px; margin-top:6px; font-size:9px; color:${existAsset ? 'var(--text-warning)' : 'var(--text-info)'};">
-              ${existAsset ? `🔄 기존 "${escapeHTML(existAsset.name)}"의 보유분을 이 회차로 교체해요 (합산 X, 2배 방지)` : '✨ 새 자산으로 만들고 회차를 넣어요'}
-            </div>
-          </div>`;
-      }
+      // 회차 편집 행들
+      const lotRows = it.lots.map((l, li) => `
+        <div style="display:flex; gap:4px; align-items:center; margin-bottom:4px;">
+          <input type="date" value="${l.date || ''}" onchange="window._autobuyReviewItems[${i}].lots[${li}].date = this.value;"
+            style="flex:1.4; padding:5px; border:0.5px solid var(--border-tertiary); border-radius:5px; font-size:10px; font-family:inherit;" />
+          <input type="number" step="0.0001" value="${l.qty || ''}" placeholder="수량" onchange="window._autobuyReviewItems[${i}].lots[${li}].qty = Number(this.value)||0;"
+            style="flex:1; padding:5px; border:0.5px solid var(--border-tertiary); border-radius:5px; font-size:10px; font-family:inherit;" />
+          <input type="number" value="${l.amount || ''}" placeholder="금액" onchange="window._autobuyReviewItems[${i}].lots[${li}].amount = Number(this.value)||0;"
+            style="flex:1.2; padding:5px; border:0.5px solid var(--border-tertiary); border-radius:5px; font-size:10px; font-family:inherit;" />
+          <button onclick="window._autobuyReviewItems[${i}].lots.splice(${li},1); window._renderAutobuyReview();" style="border:none; background:transparent; color:var(--text-danger); cursor:pointer; font-size:13px; padding:2px;">🗑️</button>
+        </div>`).join('');
 
-      // 🤖 자동매수 설정 (금액·주기 입력)
       return `
-        <div style="padding:12px; background:white; border:0.5px solid var(--border-tertiary); border-radius:10px; margin-bottom:8px;">
+        <div style="padding:12px; background:white; border:0.5px solid var(--border-tertiary); border-radius:10px; margin-bottom:10px;">
           <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:8px;">
             <input type="checkbox" ${it._checked ? 'checked' : ''} onchange="window._autobuyReviewItems[${i}]._checked = this.checked;" style="width:18px; height:18px;" />
             <div style="flex:1;">
               <div style="font-size:13px; font-weight:600;">${escapeHTML(it.name)} ${it.isUS ? '🇺🇸' : '🇰🇷'}</div>
-              <div style="font-size:9px; color:var(--text-tertiary);">${it.ticker ? escapeHTML(it.ticker) : '티커 없음'} ${it.fractional ? '· 소수점' : ''}</div>
-              ${dup ? `<div style="font-size:9px; color:var(--text-warning); margin-top:2px;">⚠️ 같은 종목 자동매수가 이미 있어요</div>` : ''}
+              <div style="font-size:9px; color:var(--text-tertiary);">${it.ticker ? escapeHTML(it.ticker) : '티커 없음'} ${it.fractional ? '· 소수점' : ''}${existAsset ? ' · 기존 자산에 반영' : ' · 새 자산'}</div>
             </div>
           </label>
-          <div style="display:flex; gap:6px; align-items:center; padding-left:26px;">
-            <div style="flex:1;">
-              <div style="font-size:9px; color:var(--text-tertiary); margin-bottom:2px;">1회 금액 (원)</div>
-              <input type="number" value="${Number(it.amt) || ''}" placeholder="예: 120000"
-                onchange="window._autobuyReviewItems[${i}].amt = Number(this.value) || 0;"
-                style="width:100%; padding:7px; border:0.5px solid var(--border-tertiary); border-radius:6px; font-size:12px; font-family:inherit;" />
+
+          ${hasLots ? `
+            <div style="padding-left:26px; margin-bottom:8px;">
+              <div style="font-size:9px; color:var(--text-secondary); font-weight:600; margin-bottom:4px;">📊 회차 ${it.lots.length}건 · 총 ${lotQty.toFixed(4).replace(/\.?0+$/,'')}주 · ${Math.round(lotCost).toLocaleString()}원 <span style="color:var(--text-tertiary); font-weight:400;">(날짜·수량·금액 수정 가능)</span></div>
+              ${lotRows}
+              <div style="font-size:9px; color:var(--text-warning); margin-top:4px;">${existAsset ? '🔄 기존 보유분을 이 회차로 교체 (2배 방지)' : '✨ 새 자산 생성'}</div>
             </div>
-            <div style="flex:1;">
-              <div style="font-size:9px; color:var(--text-tertiary); margin-bottom:2px;">주기</div>
-              <select onchange="window._autobuyReviewItems[${i}].cycle = this.value;"
-                style="width:100%; padding:7px; border:0.5px solid var(--border-tertiary); border-radius:6px; font-size:12px; font-family:inherit; background:white;">
-                <option value="weekly" ${it.cycle === 'weekly' ? 'selected' : ''}>매주</option>
-                <option value="biweekly" ${it.cycle === 'biweekly' ? 'selected' : ''}>격주</option>
-                <option value="monthly" ${it.cycle === 'monthly' ? 'selected' : ''}>매월</option>
-              </select>
-            </div>
-          </div>
-          <div style="display:flex; gap:6px; align-items:center; padding-left:26px; margin-top:6px;">
-            <div style="flex:1;">
-              <div style="font-size:9px; color:var(--text-tertiary); margin-bottom:2px;">시작 날짜 (이 날부터 자동매수)</div>
-              <input type="date" value="${it.startDate || todayKey()}"
-                onchange="window._autobuyReviewItems[${i}].startDate = this.value;"
-                style="width:100%; padding:7px; border:0.5px solid var(--border-tertiary); border-radius:6px; font-size:12px; font-family:inherit;" />
-            </div>
-          </div>
-          <div style="padding-left:26px; margin-top:5px; font-size:9px; color:var(--text-tertiary); line-height:1.5;">
-            💡 추가 후 자산 수정 화면에서 요일·결제일 등 세부 설정을 더 다듬을 수 있어요.
+          ` : ''}
+
+          <div style="padding-left:26px; border-top:0.5px dashed var(--border-tertiary); padding-top:8px;">
+            <label style="display:flex; align-items:center; gap:6px; cursor:pointer; margin-bottom:6px;">
+              <input type="checkbox" ${it._autoBuy ? 'checked' : ''} onchange="window._autobuyReviewItems[${i}]._autoBuy = this.checked; window._renderAutobuyReview();" style="width:16px; height:16px;" />
+              <span style="font-size:11px; font-weight:600;">🤖 앞으로 자동매수 걸기</span>
+            </label>
+            ${it._autoBuy ? `
+              <div style="display:flex; gap:5px; margin-bottom:5px;">
+                <div style="flex:1.2;">
+                  <div style="font-size:8px; color:var(--text-tertiary);">1회 금액</div>
+                  <input type="number" value="${it.amt || ''}" placeholder="120000" onchange="window._autobuyReviewItems[${i}].amt = Number(this.value)||0;"
+                    style="width:100%; padding:6px; border:0.5px solid var(--border-tertiary); border-radius:5px; font-size:11px; font-family:inherit;" />
+                </div>
+                <div style="flex:1;">
+                  <div style="font-size:8px; color:var(--text-tertiary);">주기</div>
+                  <select onchange="window._autobuyReviewItems[${i}].cycle = this.value; window._renderAutobuyReview();"
+                    style="width:100%; padding:6px; border:0.5px solid var(--border-tertiary); border-radius:5px; font-size:11px; font-family:inherit; background:white;">
+                    <option value="weekly" ${it.cycle==='weekly'?'selected':''}>매주</option>
+                    <option value="biweekly" ${it.cycle==='biweekly'?'selected':''}>격주</option>
+                    <option value="monthly" ${it.cycle==='monthly'?'selected':''}>매월</option>
+                  </select>
+                </div>
+              </div>
+              <div style="display:flex; gap:5px;">
+                ${it.cycle === 'monthly' ? `
+                  <div style="flex:1;">
+                    <div style="font-size:8px; color:var(--text-tertiary);">결제일</div>
+                    <input type="number" min="1" max="31" value="${it.day || ''}" placeholder="15" onchange="window._autobuyReviewItems[${i}].day = Number(this.value)||undefined;"
+                      style="width:100%; padding:6px; border:0.5px solid var(--border-tertiary); border-radius:5px; font-size:11px; font-family:inherit;" />
+                  </div>
+                ` : `
+                  <div style="flex:1;">
+                    <div style="font-size:8px; color:var(--text-tertiary);">요일</div>
+                    <select onchange="window._autobuyReviewItems[${i}].dayOfWeek = Number(this.value);"
+                      style="width:100%; padding:6px; border:0.5px solid var(--border-tertiary); border-radius:5px; font-size:11px; font-family:inherit; background:white;">
+                      ${dowNames.map((d,di) => `<option value="${di}" ${it.dayOfWeek===di?'selected':''}>${d}</option>`).join('')}
+                    </select>
+                  </div>
+                `}
+                <div style="flex:1.5;">
+                  <div style="font-size:8px; color:var(--text-tertiary);">시작 날짜</div>
+                  <input type="date" value="${it.startDate}" onchange="window._autobuyReviewItems[${i}].startDate = this.value;"
+                    style="width:100%; padding:6px; border:0.5px solid var(--border-tertiary); border-radius:5px; font-size:11px; font-family:inherit;" />
+                </div>
+              </div>
+            ` : ''}
           </div>
         </div>`;
     }).join('');
     const c = document.getElementById('autobuy-review-list');
     if (c) c.innerHTML = list;
   };
+  window._renderAutobuyReview = render;
 
   modal.innerHTML = `
     <div class="modal">
       <div class="modal-handle"></div>
       <div class="modal-header">
         <button class="modal-cancel" onclick="closeModal()">취소</button>
-        <h2>🤖 자동매수 설정 검토</h2>
-        <button class="modal-save" onclick="saveAutobuyReview()">추가</button>
+        <h2>📊 캡처 검토</h2>
+        <button class="modal-save" onclick="saveAutobuyReview()">저장</button>
       </div>
       <div style="padding:10px 12px; background:var(--bg-info); border-radius:8px; margin-bottom:12px; font-size:11px; color:var(--text-info); line-height:1.5;">
-        💡 ${items.length}개 종목을 읽었어요. 체크한 것만 추가됩니다.<br>
-        <b>📊 체결 N회</b>가 보이면 → 회차로 정확히 들어가요 (1원도 안 틀림).<br>
-        금액·주기 입력칸이 보이면 → 자동매수 설정이에요.
+        💡 회차(날짜·수량·금액)를 확인·수정하고, 앞으로 자동매수도 걸 수 있어요.<br>
+        회차는 기존 보유분을 <b>교체</b>해서 2배가 안 돼요. 자동매수는 시작 날짜부터 적용됩니다.
       </div>
-      <div id="autobuy-review-list" style="max-height:55vh; overflow-y:auto;"></div>
+      <div id="autobuy-review-list" style="max-height:60vh; overflow-y:auto;"></div>
     </div>`;
   modal.classList.add('show');
   setTimeout(render, 50);
@@ -9164,91 +9198,101 @@ function saveAutobuyReview() {
   const guessType = (it) => it.isUS
     ? (/etf|qqq|spy|voo|schd|qqqm|spym/i.test(it.name + (it.ticker||'')) ? '해외ETF' : '미국주식')
     : (/etf|tiger|kodex|kbstar|ace|sol|plus/i.test(it.name) ? '국내ETF' : '국내주식');
+  const normT = (t) => (t||'').toUpperCase().replace(/\.(KS|KQ)$/,'');
 
   if (!budget.fixed) budget.fixed = [];
-  let addedAuto = 0, addedLots = 0;
+  let addedLots = 0, addedAuto = 0;
 
   selected.forEach(it => {
-    const hasLots = Array.isArray(it.lots) && it.lots.length > 0;
     const assetType = guessType(it);
+    const hasLots = it.lots && it.lots.length > 0;
 
-    if (hasLots) {
-      // 📊 체결 내역 → 회차(lot)로 추가
-      // 같은 종목 자산 찾기 (이름 또는 티커)
-      const normT = (t) => (t||'').toUpperCase().replace(/\.(KS|KQ)$/,'');
-      let asset = assets.find(a => a.name === it.name ||
-        (it.ticker && a.ticker && normT(a.ticker) === normT(it.ticker)));
+    // 1) 기존 자산 찾거나 새로 생성
+    let asset = assets.find(a => a.name === it.name || (it.ticker && a.ticker && normT(a.ticker) === normT(it.ticker)));
+    if (!asset && (hasLots || it._autoBuy)) {
+      asset = {
+        id: Date.now() + Math.random(),
+        name: it.name,
+        type: assetType,
+        ticker: it.ticker || '',
+        qty: 0, price: 0,
+        priceCurrency: it.isUS ? 'USD' : 'KRW',
+        lots: [],
+        createdDate: todayKey(),
+      };
+      assets.push(asset);
+    }
 
-      if (!asset) {
-        // 새 자산 생성
-        asset = {
+    // 2) 회차(lots) → 기존 lot 교체 (2배 방지). 단, 자동매수 lot은 보존하고 수동/캡처분만 교체
+    if (hasLots && asset) {
+      const validLots = it.lots.filter(l => Number(l.qty) > 0);
+      if (validLots.length > 0) {
+        // 자동매수로 생성된 lot은 남기고, 그 외(기존 캡처/수동/OCR)는 이 캡처로 교체
+        const keptAuto = (asset.lots || []).filter(l => l.autoBuy);
+        const newLots = validLots.map(l => ({
           id: Date.now() + Math.random(),
-          name: it.name,
-          type: assetType,
-          ticker: it.ticker || '',
-          qty: 0, price: 0,
-          priceCurrency: it.isUS ? 'USD' : 'KRW',
-          lots: [],
-          createdDate: todayKey(),
-        };
-        assets.push(asset);
-      }
-
-      // 🔧 체결내역 캡처는 그 종목의 "전체 거래"이므로 보정처럼 동작:
-      //    기존 lot(자동매수·OCR 포함)을 전부 치우고 캡처한 회차로 교체 → 2배 방지
-      const newLots = [];
-      it.lots.forEach(l => {
-        const qty = Number(l.qty) || 0;
-        const price = Number(l.price) || 0;
-        if (qty <= 0) return;
-        const amount = Number(l.amount) > 0 ? Number(l.amount) : Math.round(qty * price);
-        newLots.push({
-          id: Date.now() + Math.random(),
-          source: `📸 체결내역 캡처`,
-          qty: parseFloat(qty.toFixed(4)),
-          price: price,
+          source: '📸 체결내역 캡처',
+          qty: parseFloat((Number(l.qty)||0).toFixed(4)),
+          price: Number(l.price) || 0,
           date: l.date || todayKey(),
           autoBuy: false,
-          exactAmount: amount, // 증권사 실제 체결금액 정확 보존
-        });
-        addedLots++;
-      });
-      asset.lots = newLots; // 교체 (기존 보유분 대체 → 합산되어 2배 안 됨)
-      asset.ticker = asset.ticker || it.ticker || '';
-      recalcAssetFromLots(asset);
-    } else {
-      // 🤖 자동매수 설정
-      if (Number(it.amt) <= 0) return; // 금액 없으면 스킵
-      budget.fixed.push({
-        id: Date.now() + Math.random(),
+          exactAmount: Number(l.amount) > 0 ? Number(l.amount) : Math.round((Number(l.qty)||0)*(Number(l.price)||0)),
+        }));
+        asset.lots = [...newLots, ...keptAuto];
+        if (!asset.ticker && it.ticker) asset.ticker = it.ticker;
+        recalcAssetFromLots(asset);
+        addedLots += newLots.length;
+      }
+    }
+
+    // 3) 자동매수 설정 (앞으로 적용)
+    if (it._autoBuy && Number(it.amt) > 0) {
+      // 같은 종목 기존 자동매수 있으면 갱신, 없으면 추가
+      let fixed = (budget.fixed || []).find(f => f.autoBuy && f.assetInfo &&
+        (f.assetInfo.name === it.name || (it.ticker && f.assetInfo.ticker && normT(f.assetInfo.ticker) === normT(it.ticker))));
+      const fixedData = {
         name: it.name,
         amt: Number(it.amt),
         cycle: it.cycle || 'weekly',
-        dayOfWeek: it.dayOfWeek != null ? it.dayOfWeek : undefined,
-        day: it.day != null ? it.day : undefined,
+        dayOfWeek: (it.cycle !== 'monthly') ? (it.dayOfWeek != null ? it.dayOfWeek : 3) : undefined,
+        day: (it.cycle === 'monthly') ? (it.day || 1) : undefined,
         cat: '투자',
         autoBuy: true,
         fractional: it.fractional === true || it.isUS,
         startDate: it.startDate || todayKey(),
-        lastBuyDate: null,
         assetInfo: { name: it.name, type: assetType, ticker: it.ticker || '' },
-      });
+      };
+      if (fixed) {
+        Object.assign(fixed, fixedData);
+        // 캡처로 과거 회차를 이미 넣었으므로, 자동매수는 캡처 마지막 날짜 이후부터
+        const lastLotDate = (asset && asset.lots || []).map(l => l.date).filter(Boolean).sort().pop();
+        fixed.lastBuyDate = lastLotDate ? new Date(lastLotDate).toISOString() : null;
+      } else {
+        const lastLotDate = (asset && asset.lots || []).map(l => l.date).filter(Boolean).sort().pop();
+        budget.fixed.push({
+          id: Date.now() + Math.random(),
+          ...fixedData,
+          lastBuyDate: lastLotDate ? new Date(lastLotDate).toISOString() : null,
+        });
+      }
       addedAuto++;
     }
   });
 
-  if (addedAuto === 0 && addedLots === 0) {
-    showToast('추가할 항목이 없어요 (금액 또는 회차 확인)');
+  if (addedLots === 0 && addedAuto === 0) {
+    showToast('추가할 항목이 없어요 (회차 또는 자동매수 금액 확인)');
     return;
   }
 
   saveData();
   const msgs = [];
-  if (addedLots > 0) msgs.push(`회차 ${addedLots}개`);
+  if (addedLots > 0) msgs.push(`회차 ${addedLots}건`);
   if (addedAuto > 0) msgs.push(`자동매수 ${addedAuto}개`);
-  showToast(`✅ ${msgs.join(' · ')} 추가됨`);
+  showToast(`✅ ${msgs.join(' · ')} 저장됨`);
   closeModal();
   renderAsset();
+  // 시세 갱신 (LIVE 걸리게)
+  if (typeof manualRefreshAssetPrices === 'function') setTimeout(() => manualRefreshAssetPrices(), 300);
 }
 
 async function processFixedCapture(input) {
@@ -16270,13 +16314,16 @@ function editAsset(id) {
             </div>
           </div>`;
         } else {
-          // 자동매수 연결 X → 추가 버튼
+          // 자동매수 연결 X → 추가 버튼 + 캡처
           return `<div style="margin-top:10px; padding:12px; background:rgba(94,92,230,0.06); border-radius:10px; border:1px dashed rgba(94,92,230,0.3);">
             <div style="font-size:11px; color:var(--text-secondary); margin-bottom:8px; line-height:1.5;">
               🤖 이 자산에 <b>자동매수</b>를 설정하시겠어요?<br>
               <span style="font-size:9px; color:var(--text-tertiary);">매월/매주 정기적으로 자동 누적 매수됩니다</span>
             </div>
-            <button onclick="addAutoBuyForAsset(${a.id})" style="width:100%; padding:9px; border:none; background:#5E5CE6; color:white; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">+ 자동매수 설정</button>
+            <button onclick="addAutoBuyForAsset(${a.id})" style="width:100%; padding:9px; border:none; background:#5E5CE6; color:white; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; margin-bottom:6px;">+ 자동매수 설정</button>
+            <button type="button" onclick="document.getElementById('asset-autobuy-capture-input').click()" style="width:100%; padding:9px; border:1px dashed #5E5CE6; background:white; color:#5E5CE6; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">📸 증권사 체결·자동적립 캡처</button>
+            <input type="file" id="asset-autobuy-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processAutobuyCapture(this)" />
+            <div id="autobuy-capture-status" style="display:none; margin-top:6px; padding:8px; background:rgba(94,92,230,0.06); border-radius:6px; font-size:10px; color:#5E5CE6; text-align:center;"></div>
           </div>`;
         }
       })()}
