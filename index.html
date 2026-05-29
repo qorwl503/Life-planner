@@ -14232,28 +14232,22 @@ async function fetchFundFacts(ticker) {
   const apiUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(t)}?modules=${modules}`;
 
   const proxies = [
-    url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
-    url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
-    url => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`,
+    { url: `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(apiUrl)}`, parse: async (res) => JSON.parse((await res.json()).contents) },
+    { url: `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`, parse: async (res) => JSON.parse((await res.json()).contents) },
+    { url: `https://corsproxy.io/?${encodeURIComponent(apiUrl)}`, parse: async (res) => res.json() },
+    { url: `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(apiUrl)}`, parse: async (res) => res.json() },
   ];
 
-  for (const proxyFn of proxies) {
+  for (const proxy of proxies) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
-      const res = await fetch(proxyFn(apiUrl), { signal: controller.signal });
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch(proxy.url, { signal: controller.signal });
       clearTimeout(timeoutId);
       if (!res.ok) continue;
 
       let json;
-      const ct = res.headers.get('content-type') || '';
-      if (ct.includes('json')) {
-        const w = await res.json();
-        json = (w.contents) ? JSON.parse(w.contents) : w;
-      } else {
-        const txt = await res.text();
-        json = JSON.parse(txt);
-      }
+      try { json = await proxy.parse(res); } catch (pe) { continue; }
 
       const r = json?.quoteSummary?.result?.[0];
       if (!r) continue;
