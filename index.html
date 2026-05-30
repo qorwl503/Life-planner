@@ -5295,6 +5295,15 @@ function editFixed(id) {
         </div>
 
         <div id="ef-asset-dynamic-fields"></div>
+
+        <button type="button" onclick="document.getElementById('ef-autobuy-capture-input').click()" style="width:100%; margin-top:8px; padding:11px; border:1px dashed #5E5CE6; background:white; color:#5E5CE6; border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">
+          📸 증권사 체결·자동적립 캡처로 다시 정리
+        </button>
+        <input type="file" id="ef-autobuy-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processAutobuyCapture(this)" />
+        <div id="autobuy-capture-status" style="display:none; margin-top:6px; padding:8px; background:rgba(94,92,230,0.06); border-radius:6px; font-size:10px; color:#5E5CE6; text-align:center;"></div>
+        <div style="font-size:9px; color:var(--text-tertiary); margin-top:5px; line-height:1.5;">
+          캡처가 이상하게 들어갔으면, 증권사 체결내역을 다시 찍어 올리면 회차가 교체돼요 (2배 안 됨).
+        </div>
       </div>
 
       <div class="row-flex">
@@ -9001,10 +9010,17 @@ async function processAutobuyCapture(input) {
 }
 
 📌 체결/거래 내역 화면이면 각 거래를 lots 배열에 넣어:
-- qty: 체결수량 (예: 9, 0.5984)
-- price: 체결평균가 (예: 28110)  ※ "체결평균" 컬럼
-- amount: 총체결금액 (예: 252990)  ※ 있으면
-- date: 체결일 (있으면)
+- qty: 체결수량/거래수량 (예: 9, 0.5984)
+- price: 체결단가/거래단가 (예: 28110, 30005)  ※ "체결평균", "거래단가" 컬럼
+- amount: 총체결금액/정산금액/거래금액 (예: 252990, 90018)  ※ "정산금액", "총체결금액", "거래금액" 컬럼
+- date: 체결일/거래일 (있으면)
+
+⚠️ 매우 중요 — amount(금액)는 절대 0으로 두지 마:
+- "정산금액", "거래금액", "총체결금액" 같은 값이 보이면 그걸 amount에 넣어.
+- 미국 소수점 ETF(QQQM·SPYM 등)는 보통 "거래금액"이나 "정산금액"이 표시돼. 그 값을 꼭 읽어.
+- amount를 못 찾으면 price(거래단가)라도 반드시 채워. price와 amount 둘 다 0이면 안 됨.
+- 단가가 달러($303.96)로 보이면 원화 환산 말고 그대로 숫자만(303.96) price에 넣고, amount는 원화 정산금액을 넣어.
+
 같은 종목의 여러 거래는 lots에 여러 개. 종목이 여러 개면 items에 여러 개.
 
 📤 출력 (JSON만):
@@ -9297,15 +9313,23 @@ function saveAutobuyReview() {
       if (validLots.length > 0) {
         // 자동매수로 생성된 lot은 남기고, 그 외(기존 캡처/수동/OCR)는 이 캡처로 교체
         const keptAuto = (asset.lots || []).filter(l => l.autoBuy);
-        const newLots = validLots.map(l => ({
-          id: Date.now() + Math.random(),
-          source: '📸 체결내역 캡처',
-          qty: parseFloat((Number(l.qty)||0).toFixed(4)),
-          price: Number(l.price) || 0,
-          date: l.date || todayKey(),
-          autoBuy: false,
-          exactAmount: Number(l.amount) > 0 ? Number(l.amount) : Math.round((Number(l.qty)||0)*(Number(l.price)||0)),
-        }));
+        const newLots = validLots.map(l => {
+          const q = Number(l.qty) || 0;
+          const amt = Number(l.amount) || 0;
+          // 🔧 금액이 있으면 단가 역산 (price 0으로 "× 0원" 표시되던 문제 해결)
+          let pr = Number(l.price) || 0;
+          if (!pr && amt > 0 && q > 0) pr = amt / q;
+          const exact = amt > 0 ? amt : Math.round(q * pr);
+          return {
+            id: Date.now() + Math.random(),
+            source: '📸 체결내역 캡처',
+            qty: parseFloat(q.toFixed(4)),
+            price: Math.round(pr),
+            date: l.date || todayKey(),
+            autoBuy: false,
+            exactAmount: exact,
+          };
+        });
         asset.lots = [...newLots, ...keptAuto];
         if (!asset.ticker && it.ticker) asset.ticker = it.ticker;
         recalcAssetFromLots(asset);
@@ -16670,16 +16694,20 @@ function editAsset(id) {
 
               lotHtml += visibleManual.map(lot => {
                 const lq = Number(lot.qty) || 0;
-                const lp = Number(lot.price) || 0;
+                const exact = Number(lot.exactAmount) || 0;
+                // 🔧 price가 0인데 실제 체결금액(exactAmount)이 있으면 단가 역산
+                let lp = Number(lot.price) || 0;
+                if (!lp && exact > 0 && lq > 0) lp = exact / lq;
+                const lotTotal = exact > 0 ? exact : Math.round(lq * lp);
                 return `<div style="padding:8px 10px; background:white; border-radius:6px; margin-bottom:5px; display:flex; align-items:center; gap:8px; font-size:11px;">
                   <div style="flex:1; min-width:0;">
                     <div style="font-weight:600;">${escapeHTML(lot.source || '매수 기록')}</div>
                     <div style="font-size:9px; color:var(--text-tertiary); margin-top:1px;">
-                      ${lot.date || ''} · ${lq.toFixed(4).replace(/\.?0+$/, '')}주 × ${lp.toLocaleString()}원
+                      ${lot.date || ''} · ${lq.toFixed(4).replace(/\.?0+$/, '')}주 × ${Math.round(lp).toLocaleString()}원
                       ${lot.fxDiscount ? ` · 우대 ${lot.fxDiscount}%` : ''}
                     </div>
                   </div>
-                  <div style="font-weight:600; font-size:11px;">${Math.round(lq * lp).toLocaleString()}원</div>
+                  <div style="font-weight:600; font-size:11px;">${lotTotal.toLocaleString()}원</div>
                   <button onclick="editLot(${a.id}, '${lot.id}')" style="border:none; background:transparent; color:var(--text-tertiary); padding:4px; cursor:pointer; font-family:inherit; font-size:14px;">✏️</button>
                   <button onclick="deleteLot(${a.id}, '${lot.id}')" style="border:none; background:transparent; color:var(--text-danger); padding:4px; cursor:pointer; font-family:inherit; font-size:14px;">🗑️</button>
                 </div>`;
