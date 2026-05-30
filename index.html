@@ -6408,9 +6408,10 @@ function renderAssetAnalysis() {
             // 보유 종목 + 인기 종목 합쳐서 중복 제거
             const owned = (assets || []).filter(a => isStockLikeType(a.type) && a.name).map(a => a.name);
             const popular = [
-              '삼성전자','SK하이닉스','NAVER','카카오','현대차','LG에너지솔루션','기아','셀트리온',
-              'KODEX 200','TIGER 미국S&P500','KODEX 미국나스닥100','TIGER 미국나스닥100',
-              'AAPL','MSFT','NVDA','GOOGL','AMZN','TSLA','META','SPY','QQQ','SCHD','VOO',
+              '삼성전자','SK하이닉스','NAVER','카카오','현대차','LG에너지솔루션','기아','셀트리온','삼성바이오로직스','POSCO홀딩스',
+              'KODEX 200','TIGER 미국S&P500','KODEX 미국나스닥100','TIGER 미국나스닥100','TIGER 미국필라델피아반도체나스닥','KODEX 미국나스닥100레버리지','ACE 미국S&P500',
+              'AAPL','MSFT','NVDA','GOOGL','AMZN','TSLA','META','AVGO','AMD','NFLX','PLTR',
+              'SPY','QQQ','QQQM','SCHD','VOO','SOXL','SOXX','TQQQ','SQQQ','SPYM','VTI','JEPI','JEPQ',
             ];
             const all = [...new Set([...owned, ...popular])];
             return all.map(n => `<option value="${n.replace(/"/g,'&quot;')}"></option>`).join('');
