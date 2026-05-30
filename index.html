@@ -1078,6 +1078,12 @@ function saveData(immediate = false) {
   saveLocal();
 
   if (!currentUser || !window._fb) return;
+  // 🔧 Firebase에서 클라우드 데이터를 아직 다 못 불러왔으면 저장 금지
+  //    (로드 전에 저장하면 빈/옛 로컬 데이터가 서버를 덮어써서 자동매수 등이 날아감)
+  if (window._cloudLoadPending) {
+    console.warn('⏸️ 클라우드 로드 중 — 저장 보류 (덮어쓰기 방지)');
+    return;
+  }
 
   // 🔧 immediate=true → 디바운스 없이 즉시 Firebase 저장 (합치기/삭제 등 중요 변경)
   if (immediate) {
@@ -17649,10 +17655,15 @@ function initAuth() {
   onAuthStateChanged(auth, async (user) => {
     if (user) {
       currentUser = user;
+      window._cloudLoadPending = true; // 🔧 로드 끝날 때까지 저장 차단
       const cloudData = await loadFromFirebase(user.uid);
       if (cloudData) {
         applyData(cloudData);
+        window._cloudLoadPending = false; // 로드 완료 → 저장 허용
         saveLocal();
+      } else {
+        // 클라우드에 데이터 없음(신규 계정 등) → 로컬 유지, 저장 허용
+        window._cloudLoadPending = false;
       }
 
       // AI 키 Firebase에서 복원 (다른 기기에서 저장한 거)
@@ -17692,6 +17703,7 @@ function initAuth() {
       }
     } else {
       currentUser = null;
+      window._cloudLoadPending = false;
       showLoginScreen();
     }
   });
