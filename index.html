@@ -7221,9 +7221,14 @@ async function fixAutoLotsToInteger(assetId) {
   }
 
   // 연결된 자동매수 설정에서 회차 매수 한도(amt) 찾기
-  const linkedFixed = (budget.fixed || []).find(f =>
-    f.autoBuy && f.assetInfo && f.assetInfo.name === asset.name && f.assetInfo.type === asset.type
-  );
+  const _nTk = (t) => (t || '').toUpperCase().replace(/\.(KS|KQ|KQI)$/, '').trim();
+  const _aTk = _nTk(asset.ticker);
+  const linkedFixed = (budget.fixed || []).find(f => {
+    if (!f.autoBuy || !f.assetInfo) return false;
+    const fTk = _nTk(f.assetInfo.ticker);
+    return (fTk && _aTk && fTk === _aTk) ||
+           (f.assetInfo.name === asset.name && f.assetInfo.type === asset.type);
+  });
 
   showToast('🔄 회차별 그날 시세로 보정 중...');
 
@@ -11621,9 +11626,14 @@ function renderAsset() {
 
         // 자동매수 + 환전우대 표시
         let extraInfo = '';
-        const linkedFx = (budget.fixed || []).find(f =>
-          f.autoBuy && f.assetInfo && f.assetInfo.name === a.name && f.assetInfo.type === a.type
-        );
+        const _nT = (t) => (t || '').toUpperCase().replace(/\.(KS|KQ|KQI)$/, '').trim();
+        const aTk = _nT(a.ticker);
+        const linkedFx = (budget.fixed || []).find(f => {
+          if (!f.autoBuy || !f.assetInfo) return false;
+          const fTk = _nT(f.assetInfo.ticker);
+          return (fTk && aTk && fTk === aTk) ||
+                 (f.assetInfo.name === a.name && f.assetInfo.type === a.type);
+        });
         if (linkedFx) {
           const cy = linkedFx.cycle === 'monthly' ? '매월' : linkedFx.cycle === 'weekly' ? '매주' : '격주';
           extraInfo += `<span style="font-size:9px; color:#5E5CE6; margin-right:6px;">🤖 자동매수: ${cy} ${linkedFx.amt.toLocaleString()}원</span>`;
