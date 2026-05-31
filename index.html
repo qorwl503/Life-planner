@@ -4298,6 +4298,9 @@ function renderMoney() {
 
   // 고정지출 합계 - 주기별 (월/주/격주) 횟수 반영
   function countOccurrences(f, year, monthIdx) {
+    // 🔧 이번 달 건너뛰기: skipMonths에 'YYYY-MM'이 있으면 0회 (합계에서 빠짐)
+    const ym = `${year}-${String(monthIdx+1).padStart(2,'0')}`;
+    if (Array.isArray(f.skipMonths) && f.skipMonths.includes(ym)) return 0;
     if (!f.cycle || f.cycle === 'monthly') return 1;
     // 해당 월의 그 요일이 몇 번 있는지
     const daysInMonth = new Date(year, monthIdx + 1, 0).getDate();
@@ -5132,23 +5135,31 @@ function renderFixedRows() {
 
         const fEditing = !!window._fixedEditMode;
         const fSel = (window._fixedSelected || []).includes(f.id);
+        // 🔧 이번(보고 있는) 달 건너뛰기 여부 — 합계 계산과 같은 budgetView 기준
+        const _vy = (typeof budgetViewYear !== 'undefined') ? budgetViewYear : currentYear;
+        const _vm = (typeof budgetViewMonth !== 'undefined') ? budgetViewMonth : currentMonth;
+        const _ym = `${_vy}-${String(_vm+1).padStart(2,'0')}`;
+        const isSkipped = Array.isArray(f.skipMonths) && f.skipMonths.includes(_ym);
+        const dispAmt = isSkipped ? 0 : totalAmt;
         html += `
-        <div class="fixed-row" style="padding-left:20px; background:${fEditing && fSel ? 'var(--bg-info)' : 'var(--bg-secondary)'}; border-bottom:0.5px solid var(--border-tertiary);">
+        <div class="fixed-row" style="padding-left:20px; background:${fEditing && fSel ? 'var(--bg-info)' : 'var(--bg-secondary)'}; border-bottom:0.5px solid var(--border-tertiary); ${isSkipped ? 'opacity:0.5;' : ''}">
           ${fEditing ? `<div onclick="toggleFixedSelect(${f.id})" style="width:22px; height:22px; border-radius:6px; border:2px solid ${fSel ? 'var(--text-info)' : 'var(--border-tertiary)'}; background:${fSel ? 'var(--text-info)' : 'transparent'}; display:flex; align-items:center; justify-content:center; flex-shrink:0; color:white; font-size:13px; cursor:pointer; margin-right:8px;">${fSel ? '✓' : ''}</div>` : `
           <div class="ic" style="background:${f.paid?'var(--bg-success)':'white'}; color:${f.paid?'var(--text-success)':'var(--text-secondary)'}; cursor:pointer;" onclick="toggleFixedPaid(${f.id})">
             <i class="ti ${f.icon}"></i>
           </div>`}
           <div style="flex:1; min-width:0; cursor:pointer;" onclick="${fEditing ? `toggleFixedSelect(${f.id})` : `toggleFixedPaid(${f.id})`}">
-            <div class="nm">${f.name}</div>
+            <div class="nm">${f.name} ${isSkipped ? '<span style="font-size:9px; color:var(--text-tertiary); font-weight:600;">· 이번 달 건너뜀</span>' : ''}</div>
             <div class="meta">${cycleLabel}</div>
           </div>
           <div style="text-align:right; cursor:pointer;" onclick="${fEditing ? `toggleFixedSelect(${f.id})` : `toggleFixedPaid(${f.id})`}">
-            <div class="amt ${f.paid?'paid':'upcoming'}">${totalAmt.toLocaleString()}원</div>
+            <div class="amt ${f.paid?'paid':'upcoming'}" ${isSkipped ? 'style="text-decoration:line-through;"' : ''}>${dispAmt.toLocaleString()}원</div>
             <div class="meta" style="color:${f.paid?'var(--text-success)':'var(--text-tertiary)'};">
-              ${f.paid ? '✓ 완료' : occurCount > 1 ? `${f.amt.toLocaleString()}원 × ${occurCount}` : (f.day && f.day < today ? '⚠ 연체' : (f.day ? `${f.day - today}일 후` : ''))}
+              ${isSkipped ? '건너뜀' : (f.paid ? '✓ 완료' : occurCount > 1 ? `${f.amt.toLocaleString()}원 × ${occurCount}` : (f.day && f.day < today ? '⚠ 연체' : (f.day ? `${f.day - today}일 후` : '')))}
             </div>
           </div>
-          ${fEditing ? '' : `<button onclick="editFixed(${f.id})" style="border:none; background:transparent; cursor:pointer; padding:6px 4px 6px 8px; color:var(--text-tertiary); font-family:inherit; flex-shrink:0;" aria-label="수정">
+          ${fEditing ? '' : `
+          <button onclick="toggleSkipMonth(${f.id})" style="border:none; background:transparent; cursor:pointer; padding:6px 2px; color:${isSkipped ? 'var(--text-info)' : 'var(--text-tertiary)'}; font-family:inherit; flex-shrink:0; font-size:14px;" aria-label="이번 달 건너뛰기" title="이번 달 건너뛰기">${isSkipped ? '↩️' : '⏭️'}</button>
+          <button onclick="editFixed(${f.id})" style="border:none; background:transparent; cursor:pointer; padding:6px 4px 6px 4px; color:var(--text-tertiary); font-family:inherit; flex-shrink:0;" aria-label="수정">
             <i class="ti ti-dots-vertical" style="font-size:16px;"></i>
           </button>`}
         </div>
@@ -5158,6 +5169,26 @@ function renderFixedRows() {
   });
 
   return html;
+}
+
+// ===== 이번(보고 있는) 달 건너뛰기 =====
+function toggleSkipMonth(id) {
+  const f = budget.fixed.find(x => x.id === id);
+  if (!f) return;
+  const vy = (typeof budgetViewYear !== 'undefined') ? budgetViewYear : currentYear;
+  const vm = (typeof budgetViewMonth !== 'undefined') ? budgetViewMonth : currentMonth;
+  const ym = `${vy}-${String(vm+1).padStart(2,'0')}`;
+  if (!Array.isArray(f.skipMonths)) f.skipMonths = [];
+  const idx = f.skipMonths.indexOf(ym);
+  if (idx >= 0) {
+    f.skipMonths.splice(idx, 1);
+    showToast(`'${f.name}' 이번 달 다시 포함`);
+  } else {
+    f.skipMonths.push(ym);
+    showToast(`'${f.name}' 이번 달 건너뜀 (다음 달은 정상)`);
+  }
+  saveData();
+  renderMoney();
 }
 
 // ===== 고정지출 편집 모드 (일괄 삭제) =====
