@@ -16714,8 +16714,13 @@ function editAsset(id) {
           <div style="margin-top:14px; padding:12px; background:rgba(94,92,230,0.06); border-radius:10px; border:0.5px solid rgba(94,92,230,0.2);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
               <div style="font-size:11px; font-weight:600; color:#5E5CE6;">📋 매수 기록 ${lots.length}건</div>
-              <button onclick="addManualLot(${a.id})" style="border:none; background:#5E5CE6; color:white; padding:4px 10px; border-radius:999px; font-size:10px; font-weight:600; cursor:pointer; font-family:inherit;">+ 추가</button>
+              <div style="display:flex; gap:6px;">
+                <button onclick="document.getElementById('asset-lot-capture-input').click()" style="border:none; background:rgba(94,92,230,0.15); color:#5E5CE6; padding:4px 10px; border-radius:999px; font-size:10px; font-weight:600; cursor:pointer; font-family:inherit;">📸 캡처</button>
+                <button onclick="addManualLot(${a.id})" style="border:none; background:#5E5CE6; color:white; padding:4px 10px; border-radius:999px; font-size:10px; font-weight:600; cursor:pointer; font-family:inherit;">+ 추가</button>
+              </div>
             </div>
+            <input type="file" id="asset-lot-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processAutobuyCapture(this)" />
+            <div id="autobuy-capture-status" style="display:none; margin-top:6px; padding:8px; background:rgba(94,92,230,0.06); border-radius:6px; font-size:10px; color:#5E5CE6; text-align:center;"></div>
             ${(() => {
               // 🔧 자동매수와 수동 기록 분리
               const autoLots = lots.filter(l => l.autoBuy);
