@@ -8441,6 +8441,7 @@ function openExpenseModal(forDateKey) {
           <button class="cat-btn" data-c="통신"><i class="ti ti-device-mobile"></i><span>통신</span></button>
           <button class="cat-btn" data-c="경조사"><i class="ti ti-gift"></i><span>경조사</span></button>
           <button class="cat-btn" data-c="교육"><i class="ti ti-book"></i><span>교육</span></button>
+          <button class="cat-btn" data-c="도서"><i class="ti ti-books"></i><span>도서</span></button>
           <button class="cat-btn" data-c="여행"><i class="ti ti-plane"></i><span>여행</span></button>
           <button class="cat-btn" data-c="운동"><i class="ti ti-barbell"></i><span>운동/건강</span></button>
           <button class="cat-btn" data-c="자녀"><i class="ti ti-baby-carriage"></i><span>자녀/육아</span></button>
@@ -9451,6 +9452,13 @@ function saveAutobuyReview() {
         asset.lots = [...newLots, ...keptAuto];
         if (!asset.ticker && it.ticker) asset.ticker = it.ticker;
         recalcAssetFromLots(asset);
+        // 🔧 캡처로 회차를 맞췄으므로 '보정 날짜' 기록 (안 그러면 "아직 안 맞춰졌어요" 경고가 계속 뜸)
+        asset.ocrSnapshot = {
+          date: todayKey(),
+          evalAmount: (it.evalAmount != null && Number(it.evalAmount) > 0) ? Number(it.evalAmount) : (asset.ocrSnapshot?.evalAmount ?? null),
+          profitPct: (it.profitPct != null && isFinite(Number(it.profitPct))) ? Number(it.profitPct) : (asset.ocrSnapshot?.profitPct ?? null),
+          profitAmount: (it.profitAmount != null && isFinite(Number(it.profitAmount))) ? Number(it.profitAmount) : (asset.ocrSnapshot?.profitAmount ?? null),
+        };
         addedLots += newLots.length;
       }
     }
@@ -10127,6 +10135,7 @@ function guessExpenseCategoryFromText(text) {
     { cat:'통신', kw:['kt','skt','lg유플','lg u+','알뜰폰'] },
     { cat:'의료', kw:['병원','약국','한의원','치과','내과'] },
     { cat:'생활', kw:['올리브영','다이소'] },
+    { cat:'도서', kw:['교보문고','예스24','yes24','알라딘','aladin','인터파크도서','리디','ridi','밀리의서재','북센','영풍문고','반디앤루니스','서점','북스토어','bookstore'] },
   ];
   for (const r of rules) {
     if (r.kw.some(k => t.includes(k.toLowerCase()))) return r.cat;
@@ -10281,7 +10290,7 @@ async function processCardCapture(input) {
    - date: "YYYY-MM-DD" 형식 (연도 없으면 ${new Date().getFullYear()})
    - store: 가맹점/사용처 (예: "스타벅스", "이마트")
    - amount: 금액 (숫자만, 콤마 제거, 원화)
-   - category: 다음 중 가장 가까운 것 - 식비, 카페, 교통, 쇼핑, 의료, 문화, 통신, 학습, 기타
+   - category: 다음 중 가장 가까운 것 - 식비, 카페, 교통, 쇼핑, 도서, 의료, 문화, 통신, 학습, 기타
 2. 입금/입금취소는 건너뛰고 지출만 추출
 3. 환불/취소 항목 제외
 4. 결과는 반드시 다음 JSON 형식으로만 (다른 설명 없이):
