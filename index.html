@@ -6211,7 +6211,17 @@ function saveFixed() {
   if (autoBuy) {
     const assetType = document.querySelector('#fx-asset-type .chip.active')?.dataset.t || '주식';
     const assetName = document.getElementById('fx-asset-name')?.value?.trim() || name; // 비워두면 이름 사용
-    const assetTicker = document.getElementById('fx-asset-ticker')?.value?.trim() || '';
+    let assetTicker = document.getElementById('fx-asset-ticker')?.value?.trim() || '';
+    // 🔧 티커가 비어있으면 종목명으로 추론 (없으면 기존 자산이랑 연결이 끊김)
+    if (!assetTicker && typeof guessKRTicker === 'function') {
+      assetTicker = guessKRTicker(assetName) || '';
+    }
+    // 🔧 그래도 없으면, 같은 이름/종류의 기존 자산에서 티커 가져오기
+    if (!assetTicker) {
+      const matchAsset = (assets || []).find(a => a.ticker &&
+        (a.name === assetName || a.name.replace(/\s/g,'') === assetName.replace(/\s/g,'')) && a.type === assetType);
+      if (matchAsset) assetTicker = matchAsset.ticker;
+    }
     assetInfo = { type: assetType, name: assetName, ticker: assetTicker };
   }
 
@@ -6812,7 +6822,21 @@ function addAutoBuyForAsset(assetId) {
           const autoBuyChk = document.getElementById('fx-autobuy');
           if (autoBuyChk) autoBuyChk.checked = true;
 
-          showToast(`💡 "${asset.name}" 자동매수 설정 중`);
+          // 🔧 회차(lots)가 있으면 평균 매수금액을 1회 적립금액으로 자동 추천
+          const lots = (asset.lots || []).filter(l => !l.autoBuy);
+          if (lots.length > 0) {
+            const amts = lots.map(l => {
+              const ex = Number(l.exactAmount) || 0;
+              return ex > 0 ? ex : Math.round((Number(l.qty)||0) * (Number(l.price)||0));
+            }).filter(x => x > 0);
+            if (amts.length > 0) {
+              const avg = Math.round(amts.reduce((a,b)=>a+b,0) / amts.length);
+              const amtInput = document.getElementById('fx-amt');
+              if (amtInput) amtInput.value = avg;
+            }
+          }
+
+          showToast(`💡 "${asset.name}" 자동매수 설정 중 (금액·주기 확인 후 저장)`);
         }, 100);
       }, 100);
     }, 200);
