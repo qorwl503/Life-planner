@@ -1085,16 +1085,19 @@ function saveData(immediate = false) {
     return;
   }
 
+  // 🔧 Firebase는 undefined 값을 거부함(저장 전체 실패) → JSON 왕복으로 undefined 싹 제거
+  const _cleanForFirebase = () => JSON.parse(JSON.stringify({
+    todos, budget, workoutLog, assets, settings, userChannels, economySites, challenges,
+    updatedAt: Date.now()
+  }));
+
   // 🔧 immediate=true → 디바운스 없이 즉시 Firebase 저장 (합치기/삭제 등 중요 변경)
   if (immediate) {
     if (saveTimer) clearTimeout(saveTimer);
     (async () => {
       try {
         const { doc, setDoc, db } = window._fb;
-        await setDoc(doc(db, 'users', currentUser.uid), {
-          todos, budget, workoutLog, assets, settings, userChannels, economySites, challenges,
-          updatedAt: Date.now()
-        });
+        await setDoc(doc(db, 'users', currentUser.uid), _cleanForFirebase());
         showSyncStatus();
       } catch (e) {
         console.error('즉시 저장 실패:', e);
@@ -1112,10 +1115,7 @@ function saveData(immediate = false) {
     isSaving = true;
     try {
       const { doc, setDoc, db } = window._fb;
-      await setDoc(doc(db, 'users', currentUser.uid), {
-        todos, budget, workoutLog, assets, settings, userChannels, economySites, challenges,
-        updatedAt: Date.now()
-      });
+      await setDoc(doc(db, 'users', currentUser.uid), _cleanForFirebase());
       showSyncStatus();
     } catch (e) {
       console.error('저장 실패:', e);
