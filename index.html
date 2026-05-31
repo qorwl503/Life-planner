@@ -9052,7 +9052,8 @@ async function processAutobuyCapture(input) {
       let txt = '';
       let lastErr = '';
       for (const model of ocrModels) {
-        let retried = false;
+        let retryCount = 0;
+        const maxRetry = 4; // 🔧 429(한도) 시 최대 4번 재시도
         while (true) {
           try {
             const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${window.GEMINI_API_KEY}`;
@@ -9062,13 +9063,14 @@ async function processAutobuyCapture(input) {
               body: JSON.stringify(reqBody),
             });
             if (res.status === 429) {
-              // 🔧 한도 초과 → 한 번은 6초 기다렸다 재시도, 그래도 안 되면 다음 모델
-              if (!retried) {
-                retried = true;
+              // 🔧 한도 초과 → 점점 길게 대기하며 여러 번 재시도 (5,10,15,20초)
+              if (retryCount < maxRetry) {
+                retryCount++;
+                const waitSec = retryCount * 5;
                 lastErr = '429: AI 한도초과 (대기 후 재시도)';
-                console.warn(`⏳ 자동적립 OCR ${model} 429 → 6초 대기 후 재시도`);
-                if (statusEl) statusEl.textContent = '⏳ AI 잠시 대기 중... (요청 한도)';
-                await new Promise(r => setTimeout(r, 6000));
+                console.warn(`⏳ 자동적립 OCR ${model} 429 → ${waitSec}초 대기 후 재시도 (${retryCount}/${maxRetry})`);
+                if (statusEl) statusEl.textContent = `⏳ AI 요청 한도 — ${waitSec}초 대기 중... (잠시만요)`;
+                await new Promise(r => setTimeout(r, waitSec * 1000));
                 continue; // 같은 모델 재시도
               }
               lastErr = '429: AI 한도초과'; console.warn(`⚠️ ${model} 429 → 다음 모델`); break;
