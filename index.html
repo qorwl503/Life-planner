@@ -9022,11 +9022,12 @@ async function processAutobuyCapture(input) {
 
 📌 체결/거래 내역 화면이면 각 거래를 lots 배열에 넣어:
 - qty: 체결수량/거래수량 (예: 9, 0.5984) — 화면에 보이는 그대로
-- price: 체결단가/거래단가 (예: 28110, 30005)  ※ "체결평균", "거래단가" 컬럼
-- amount: 총체결금액/정산금액/거래금액 (예: 252990, 90018)  ※ "정산금액", "총체결금액", "거래금액" 컬럼
+- price: **"체결가격" 또는 "체결단가"/"거래단가"** = 1주당 가격 (예: 133286, 28110). ⚠️ "체결가격"은 1주 가격이지 총액이 아니야! 반드시 price에 넣어.
+- amount: **"총체결금액"/"정산금액"/"거래금액"처럼 명시적으로 '총액'인 값만** 넣어 (예: 403266). 화면에 총액이 없으면 amount는 0으로 둬 (price×수량으로 자동 계산됨).
 - date: 체결일/거래일 (있으면)
 
-화면에 실제로 보이는 숫자만 정확히 읽어. 안 보이는 값은 0으로 두거나 생략해 (억지로 만들지 마). 단가가 달러($303.96)면 숫자만(303.96) price에 넣어.
+⚠️ 핵심: "체결가격 133,286원 / 체결수량 3.04주" 같은 화면이면 → price:133286, amount:0 으로 넣어 (133286은 1주 가격이지 총액 아님).
+화면에 실제로 보이는 숫자만 정확히 읽어. 억지로 만들지 마. 단가가 달러($303.96)면 숫자만(303.96) price에 넣어.
 
 같은 종목의 여러 거래는 lots에 여러 개. 종목이 여러 개면 items에 여러 개.
 
@@ -9190,12 +9191,44 @@ async function processAutobuyCapture(input) {
 function openAutobuyReviewModal(items) {
   // 각 항목 정규화: lots는 편집 가능한 배열로, 자동매수 설정 기본값
   window._autobuyReviewItems = items.map(it => {
-    const lots = Array.isArray(it.lots) ? it.lots.map(l => ({
+    let lots = Array.isArray(it.lots) ? it.lots.map(l => ({
       date: l.date || '',
       qty: Number(l.qty) || 0,
       price: Number(l.price) || 0,
-      amount: Number(l.amount) > 0 ? Number(l.amount) : Math.round((Number(l.qty)||0) * (Number(l.price)||0)),
+      amount: Number(l.amount) || 0,
     })) : [];
+
+    // 🔧 보정: price가 0인데 amount가 있는 회차 — amount가 '단가'인지 '총액'인지 판별
+    //    다른 회차들의 단가(price) 평균과 비교해서, amount가 단가에 가까우면 price로 옮김
+    const knownPrices = lots.filter(l => l.price > 0).map(l => l.price);
+    const avgPrice = knownPrices.length ? knownPrices.reduce((a,b)=>a+b,0)/knownPrices.length : 0;
+    lots.forEach(l => {
+      if (l.price === 0 && l.amount > 0 && l.qty > 0) {
+        if (avgPrice > 0) {
+          // 다른 회차 단가를 아는 경우: amount가 단가 범위(0.5~2배)면 단가로 간주
+          if (l.amount >= avgPrice * 0.5 && l.amount <= avgPrice * 2) {
+            l.price = l.amount;       // amount는 사실 단가였음
+            l.amount = 0;             // 총액은 아래서 단가×수량으로 재계산
+          }
+        } else {
+          // 비교할 단가가 없는 경우: amount/qty가 너무 작으면(총액이라기엔) 단가로 간주
+          // (예: 총액 13만 / 3주 = 4.3만 단가는 비현실적 → amount가 단가)
+          const impliedUnit = l.amount / l.qty;
+          if (impliedUnit < l.amount * 0.6) {
+            // amount를 수량으로 나눈 게 amount보다 한참 작으면, amount가 단가일 가능성
+            l.price = l.amount;
+            l.amount = 0;
+          }
+        }
+      }
+    });
+    // 총액 확정: amount 있으면 그대로, 없으면 단가×수량
+    lots = lots.map(l => ({
+      date: l.date,
+      qty: l.qty,
+      price: l.price,
+      amount: l.amount > 0 ? l.amount : Math.round(l.qty * l.price),
+    }));
 
     // 🔧 회차가 있으면: 마지막 회차 다음 주기를 자동매수 시작일로, 그 요일을 기본 요일로 추천
     let defStart = it.startDate || todayKey();
