@@ -13556,7 +13556,7 @@ async function refreshAllAssetPrices() {
     try {
       const data = await fetchAssetLive(a);
       liveAssetData[a.id] = data;
-      console.log(`✅ ${a.name} (${a.ticker}): ${data?.price || '실패'}`);
+      console.log(`✅ ${a.name} (${a.ticker}): ${data?.currentPrice ?? data?.hasLive ?? '실패'}`);
     } catch (e) {
       console.error(`❌ ${a.name} (${a.ticker}):`, e.message);
     }
