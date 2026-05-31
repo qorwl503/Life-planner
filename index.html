@@ -2039,7 +2039,10 @@ function renderCalendar() {
       html += `<div class="empty-state" style="padding:20px;"><span style="font-size:11px;">이 카테고리에 기록이 없어요</span></div>`;
     } else {
       filtered.forEach(e => {
-        html += `<div class="evt evt-${e.type}" ${e.todoId !== undefined ? `onclick="toggleTodoFromCal(${e.todoId})"` : ''}>
+        const clickHandler = e.todoId !== undefined ? `onclick="toggleTodoFromCal(${e.todoId})"`
+          : e.expenseId !== undefined ? `onclick="editExpense(${e.expenseId})" style="cursor:pointer;"`
+          : '';
+        html += `<div class="evt evt-${e.type}" ${clickHandler}>
           ${e.todoId !== undefined
             ? `<div class="evt-check ${e.done?'done':''}">${e.done?'<i class="ti ti-check"></i>':''}</div>`
             : `<i class="evt-icon ti ${e.icon}"></i>`}
@@ -2093,6 +2096,7 @@ function getEventsForDay(d) {
       sub: e.cat,
       amount: `${isIncome ? '+' : '-'}${Number(e.amt).toLocaleString()}원`,
       isIncome,
+      expenseId: e.id,
     });
   });
 
@@ -8646,7 +8650,11 @@ function editExpense(id) {
 
       <div class="field">
         <div class="field-label">카테고리</div>
-        <div style="padding:11px 12px; background:var(--bg-secondary); border-radius:8px; font-size:13px;">${e.cat}</div>
+        <select id="edit-cat" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit;">
+          ${['식비','카페','편의점','마트','교통','쇼핑','문화','의료','미용','생활','통신','경조사','교육','도서','여행','운동','자녀','선물','학회','구독','투자','기타']
+            .concat([e.cat].filter(c => c && !['식비','카페','편의점','마트','교통','쇼핑','문화','의료','미용','생활','통신','경조사','교육','도서','여행','운동','자녀','선물','학회','구독','투자','기타'].includes(c)))
+            .map(c => `<option value="${c}" ${c === e.cat ? 'selected' : ''}>${c}</option>`).join('')}
+        </select>
       </div>
 
       <div class="field">
@@ -8669,10 +8677,12 @@ function saveExpenseEdit(id) {
   const newAmt = Number(document.getElementById('edit-amt').value);
   const newDate = document.getElementById('edit-date').value;
   const newMemo = document.getElementById('edit-memo').value.trim();
+  const newCat = document.getElementById('edit-cat')?.value || e.cat;
 
   if (!newAmt) { showToast('금액을 입력해주세요'); return; }
 
   e.amt = newAmt;
+  e.cat = newCat;
   if (newDate) {
     e.dateKey = newDate;
     const [, , d] = newDate.split('-');
@@ -8683,7 +8693,7 @@ function saveExpenseEdit(id) {
   saveData();
   showToast('수정됨');
   closeModal();
-  renderMoney();
+  render();
 }
 
 function deleteExpense(id) {
@@ -11606,38 +11616,7 @@ function renderAsset() {
         </div>
       </div>`;
 
-      // 🔧 보정 권유 배너 — 자동매수 자산 중 오래 보정 안 한 게 있으면 부드럽게 안내
-      (() => {
-        const todayMs = Date.now();
-        const DAY = 86400000;
-        let needCorrect = [];
-        assets.forEach(a => {
-          const lots = a.lots || [];
-          if (!lots.some(l => l.autoBuy)) return; // 자동매수 자산만
-          const snapDate = a.ocrSnapshot?.date;
-          if (!snapDate) {
-            // 한 번도 보정 안 함
-            needCorrect.push({ name: a.name, days: null });
-          } else {
-            const days = Math.floor((todayMs - new Date(snapDate + 'T00:00:00').getTime()) / DAY);
-            if (days >= 30) needCorrect.push({ name: a.name, days });
-          }
-        });
-        if (needCorrect.length === 0) return;
-        const neverCount = needCorrect.filter(x => x.days === null).length;
-        const oldCount = needCorrect.length - neverCount;
-        let msg = '';
-        if (neverCount > 0) msg += `자동매수 자산 ${neverCount}개가 아직 증권사와 안 맞춰졌어요.`;
-        if (oldCount > 0) msg += (msg ? ' ' : '') + `${oldCount}개는 보정한 지 한 달이 넘었어요.`;
-        html += `
-          <div style="padding:11px 13px; background:var(--bg-warning); border-radius:10px; margin-bottom:10px; line-height:1.6;">
-            <div style="font-size:11px; color:var(--text-warning); font-weight:600; margin-bottom:3px;">💡 수익률을 정확하게 — 캡처 보정</div>
-            <div style="font-size:10px; color:var(--text-warning);">
-              ${msg}<br>증권사 잔고 화면을 캡처해서 올리면 그 시점 수익률이 정확해져요. (한 달에 한 번이면 충분)
-            </div>
-            <button onclick="openAssetCaptureForCorrection()" style="margin-top:8px; width:100%; border:none; background:var(--text-warning); color:white; padding:8px; border-radius:7px; font-size:11px; font-weight:700; cursor:pointer; font-family:inherit;">📸 증권사 잔고 캡처로 보정하기</button>
-          </div>`;
-      })();
+      // (보정 권유 배너 제거됨 — 캡처 보정은 자산 수정 화면에서 언제든 가능)
 
       // 편집 모드: 선택 액션 바
       if (editing) {
