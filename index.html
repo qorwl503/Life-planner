@@ -9047,7 +9047,7 @@ async function processAutobuyCapture(input) {
           { text: prompt },
           { inline_data: { mime_type: mimeType, data: base64 } },
         ]}],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 2000 },
+        generationConfig: { temperature: 0.1, maxOutputTokens: 4096 },
       };
       let txt = '';
       let lastErr = '';
@@ -9091,9 +9091,40 @@ async function processAutobuyCapture(input) {
       if (!txt) { failCount++; if (lastErr) { lastErrGlobal = lastErr; console.warn('자동적립 OCR 최종 실패:', lastErr); } continue; }
 
       const m = txt.match(/\{[\s\S]*\}/);
+      let parsed = null;
       if (m) {
         try {
-          const parsed = JSON.parse(m[0]);
+          parsed = JSON.parse(m[0]);
+        } catch (pe) {
+          // 🔧 JSON이 잘렸으면(토큰 부족 등) 정규식으로 종목·회차 직접 복구
+          console.warn('자동적립 JSON 파싱 실패 → 복구 시도');
+          try {
+            const name = (txt.match(/"name"\s*:\s*"([^"]+)"/) || [])[1];
+            const ticker = (txt.match(/"ticker"\s*:\s*"([^"]*)"/) || [])[1] || '';
+            const isUS = /"isUS"\s*:\s*true/.test(txt);
+            const lots = [];
+            // 각 lot의 date/qty/price/amount 추출
+            const lotRe = /\{[^{}]*?"(?:date|qty|price|amount)"[\s\S]*?\}/g;
+            let lm;
+            while ((lm = lotRe.exec(txt)) !== null) {
+              const blk = lm[0];
+              const date = (blk.match(/"date"\s*:\s*"([^"]*)"/) || [])[1] || '';
+              const qty = parseFloat((blk.match(/"qty"\s*:\s*([\d.]+)/) || [])[1]) || 0;
+              const price = parseFloat((blk.match(/"price"\s*:\s*([\d.]+)/) || [])[1]) || 0;
+              const amount = parseFloat((blk.match(/"amount"\s*:\s*([\d.]+)/) || [])[1]) || 0;
+              if (qty > 0 || amount > 0) lots.push({ date, qty, price, amount });
+            }
+            if (name && lots.length > 0) {
+              parsed = { items: [{ name, ticker, isUS, fractional: true, amt: 0, cycle: 'weekly', lots }] };
+              console.log(`🔧 복구 성공: ${name} 회차 ${lots.length}개`);
+            }
+          } catch (re) { /* 복구도 실패 */ }
+        }
+      }
+      if (parsed) {
+        try {
+          // 🔍 진단: 이 캡처가 준 종목·회차 수
+          console.log(`🔍 캡처 ${fi+1} 파싱:`, (parsed.items||[]).map(x=>`${x.name}(회차${x.lots?.length||0})`).join(', '));
           (parsed.items || []).forEach(it => {
             if (!it.name) return;
             // 🔧 같은 종목이 여러 캡처에 나오면 병합 (따로 안 잡히게)
@@ -9124,8 +9155,8 @@ async function processAutobuyCapture(input) {
           });
           if (parsed.error) lastErrGlobal = parsed.error;
         } catch (pe) {
-          lastErrGlobal = 'JSON 파싱 실패';
-          console.warn('자동적립 JSON 파싱 실패:', m[0]);
+          lastErrGlobal = 'JSON 처리 실패';
+          console.warn('자동적립 처리 실패:', pe);
         }
       } else {
         lastErrGlobal = '응답에서 데이터를 못 찾음';
