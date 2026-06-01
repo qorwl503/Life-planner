@@ -8,6 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Life Planner" />
 <meta name="theme-color" content="#F4F4EE" />
+<link rel="manifest" href="manifest.json" />
 <title>Life Planner</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -97,6 +98,23 @@ const firebaseConfig = {
     overflow: hidden;
     height: 100vh;
     height: 100dvh;
+  }
+
+  /* 🔧 PC(넓은 화면)에서 앱 바깥 배경 — 모바일 화면이 가운데 떠 보이게 */
+  @media (min-width: 520px) {
+    html {
+      background: #E5E7EB;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    body {
+      height: 92vh !important;
+      max-height: 920px;
+      border-radius: 22px;
+      overflow: hidden;
+      box-shadow: 0 12px 48px rgba(0,0,0,0.18);
+    }
   }
 
   body {
@@ -16148,9 +16166,92 @@ function openSettingsModal() {
           <i class="ti ti-chevron-right" style="color:var(--text-tertiary);"></i>
         </div>
       </button>
+
+      <!-- 💾 데이터 백업 -->
+      <button onclick="exportBackup()" style="width:100%; padding:14px; border:0.5px solid var(--border-tertiary); background:white; border-radius:var(--radius-md); cursor:pointer; font-family:inherit; text-align:left; margin-bottom:10px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-size:20px;">💾</span>
+          <div style="flex:1;">
+            <div style="font-size:13px; font-weight:600;">데이터 백업 (다운로드)</div>
+            <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">가계부·자산·할일 전체를 JSON 파일로 저장</div>
+          </div>
+          <i class="ti ti-download" style="color:var(--text-tertiary);"></i>
+        </div>
+      </button>
+
+      <!-- 📂 데이터 복원 -->
+      <button onclick="document.getElementById('backup-restore-input').click()" style="width:100%; padding:14px; border:0.5px solid var(--border-tertiary); background:white; border-radius:var(--radius-md); cursor:pointer; font-family:inherit; text-align:left; margin-bottom:10px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-size:20px;">📂</span>
+          <div style="flex:1;">
+            <div style="font-size:13px; font-weight:600;">백업 복원 (불러오기)</div>
+            <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">백업한 JSON 파일에서 데이터 되살리기</div>
+          </div>
+          <i class="ti ti-upload" style="color:var(--text-tertiary);"></i>
+        </div>
+      </button>
+      <input type="file" id="backup-restore-input" accept="application/json,.json" style="display:none;" onchange="importBackup(this)" />
     </div>
   `;
   modal.classList.add('show');
+}
+
+// 💾 전체 데이터를 JSON 파일로 다운로드
+function exportBackup() {
+  try {
+    const payload = { todos, budget, workoutLog, assets, settings, userChannels, economySites, challenges, _backupAt: new Date().toISOString(), _backupVersion: 'v5' };
+    const json = JSON.stringify(payload, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const ds = new Date().toISOString().slice(0,10);
+    a.href = url;
+    a.download = `life-planner-backup-${ds}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast('💾 백업 파일 다운로드됨');
+  } catch (e) {
+    console.error('백업 실패:', e);
+    showToast('백업 실패: ' + e.message);
+  }
+}
+
+// 📂 JSON 백업 파일에서 데이터 복원
+function importBackup(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = JSON.parse(e.target.result);
+      // 최소 검증
+      if (!data || (typeof data !== 'object')) throw new Error('형식이 올바르지 않아요');
+      const counts = `가계부 지출 ${data.budget?.expenses?.length || 0}건, 자산 ${data.assets?.length || 0}개, 할일 ${data.todos?.length || 0}개`;
+      if (!confirm(`이 백업으로 복원할까요?\n\n${counts}\n\n⚠️ 현재 데이터를 덮어씁니다.`)) { input.value = ''; return; }
+
+      if (data.todos) todos = data.todos;
+      if (data.budget) budget = data.budget;
+      if (data.workoutLog) workoutLog = data.workoutLog;
+      if (data.assets) assets = data.assets;
+      if (data.settings) settings = data.settings;
+      if (data.userChannels) userChannels = data.userChannels;
+      if (data.economySites) economySites = data.economySites;
+      if (data.challenges) challenges = data.challenges;
+
+      saveData();
+      input.value = '';
+      closeModal();
+      showToast('✅ 백업에서 복원됨');
+      render();
+    } catch (err) {
+      console.error('복원 실패:', err);
+      showToast('복원 실패: ' + err.message);
+      input.value = '';
+    }
+  };
+  reader.readAsText(file);
 }
 
 // 자산 코치 설정 (자산탭에서 - 월 소득, 저축 목표, 투자 성향)
