@@ -14910,23 +14910,23 @@ function renderAssetMarket(total, byType) {
       <span style="font-size:11px; opacity:0.7;">+ 사이트 추가로 등록하세요</span>
     </div>`;
   } else {
+    html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:7px;">`;
     economySites.forEach(s => {
       const domain = (s.url.match(/https?:\/\/([^\/]+)/) || [])[1] || s.url;
       html += `
-        <div style="display:flex; gap:10px; padding:12px 14px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); margin-bottom:8px; align-items:center; background:white;">
-          <button onclick="openExt('${s.url}')" style="flex:1; min-width:0; display:flex; gap:10px; align-items:center; border:none; background:transparent; cursor:pointer; padding:0; text-align:left; font-family:inherit;">
-            <div style="width:36px; height:36px; border-radius:8px; background:var(--bg-info); color:var(--text-info); display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:600; flex-shrink:0;">${s.name[0]}</div>
+        <div style="display:flex; gap:7px; padding:8px 9px; border:0.5px solid var(--border-tertiary); border-radius:9px; align-items:center; background:white;">
+          <button onclick="openExt('${s.url}')" style="flex:1; min-width:0; display:flex; gap:7px; align-items:center; border:none; background:transparent; cursor:pointer; padding:0; text-align:left; font-family:inherit;">
+            <div style="width:26px; height:26px; border-radius:7px; background:var(--bg-info); color:var(--text-info); display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:600; flex-shrink:0;">${s.name[0]}</div>
             <div style="flex:1; min-width:0;">
-              <div style="font-size:13px; font-weight:500; color:var(--text-primary);">${s.name}</div>
-              <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${s.desc || domain}</div>
+              <div style="font-size:11px; font-weight:500; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${s.name}</div>
             </div>
-            <i class="ti ti-external-link" style="font-size:14px; color:var(--text-tertiary); flex-shrink:0;"></i>
           </button>
-          <button onclick="editSite(${s.id})" style="border:none; background:transparent; cursor:pointer; padding:6px; color:var(--text-tertiary); font-family:inherit;" aria-label="수정">
-            <i class="ti ti-edit" style="font-size:16px;"></i>
+          <button onclick="editSite(${s.id})" style="border:none; background:transparent; cursor:pointer; padding:2px; color:var(--text-tertiary); font-family:inherit; flex-shrink:0;" aria-label="수정">
+            <i class="ti ti-edit" style="font-size:13px;"></i>
           </button>
         </div>`;
     });
+    html += `</div>`;
   }
 
   return html;
@@ -14947,7 +14947,33 @@ async function loadNewsRSS() {
     return;
   }
 
-  container.innerHTML = items.slice(0, 20).map(item => {
+  // 🔧 성장·호재 뉴스 필터 (증설·해외진출·수주·신규고객 등)
+  const growthKeywords = ['증설','신공장','공장 착공','공장 준공','착공','준공','해외 진출','해외진출','수출','글로벌 진출','수주','대규모 계약','계약 체결','납품','공급 계약','신규 고객','신규고객','고객 확보','수주 확대','파트너십','사상 최대','최대 실적','역대 최대','흑자 전환','흑자전환','신규 수주','대형 수주','투자 유치','증설 투자','MOU','양산','신규 진출','점유율 확대'];
+  const growthNews = items.filter(item =>
+    growthKeywords.some(kw => (item.title || '').includes(kw))
+  );
+
+  let growthHtml = '';
+  if (growthNews.length > 0) {
+    growthHtml = `
+      <div style="margin-bottom:14px; padding:12px; background:linear-gradient(135deg, #EAF7EF, #F5FBF7); border:0.5px solid #BFE3CC; border-radius:12px;">
+        <div style="font-size:12px; font-weight:700; color:#2D8A56; margin-bottom:8px;">📈 성장·호재 뉴스 <span style="font-size:10px; font-weight:500; opacity:0.7;">(증설·진출·수주·신규고객)</span></div>
+        ${growthNews.slice(0, 8).map(item => {
+          const pubDate = item.pubDate ? timeAgo(new Date(item.pubDate).toISOString()) : '';
+          const hit = growthKeywords.find(kw => (item.title || '').includes(kw)) || '';
+          return `<div onclick="openExt('${item.link}')" style="padding:8px 0; border-bottom:0.5px solid rgba(0,0,0,0.05); cursor:pointer;">
+            <div style="font-size:12px; font-weight:500; line-height:1.4; color:var(--text-primary);">${item.title}</div>
+            <div style="display:flex; gap:6px; align-items:center; font-size:9px; color:var(--text-tertiary); margin-top:3px;">
+              <span style="padding:1px 6px; border-radius:3px; background:#2D8A56; color:white; font-weight:600;">${hit}</span>
+              <span>${item.source}</span>
+              ${pubDate ? `<span>·</span><span>${pubDate}</span>` : ''}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`;
+  }
+
+  container.innerHTML = growthHtml + items.slice(0, 20).map(item => {
     const pubDate = item.pubDate ? timeAgo(new Date(item.pubDate).toISOString()) : '';
     return `<div onclick="openExt('${item.link}')" style="padding:12px 0; border-bottom:0.5px solid var(--border-tertiary); cursor:pointer;">
       <div style="display:flex; align-items:flex-start; gap:8px;">
