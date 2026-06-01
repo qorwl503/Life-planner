@@ -12754,7 +12754,7 @@ async function generateMarketBriefing(forceRefresh = false) {
 - KRX 금: ${indices.goldKrx ? `${indices.goldKrx.price.toLocaleString()}원 (${indices.goldKrx.changePct >= 0 ? '+' : ''}${indices.goldKrx.changePct.toFixed(2)}%)` : '조회 불가'}
   `.trim();
 
-  const newsHeadlines = news.slice(0, 10).map((n, i) => `${i+1}. [${n.source}] ${n.title}`).join('\n');
+  const newsHeadlines = news.slice(0, 15).map((n, i) => `${i+1}. [${n.source}] ${n.title}`).join('\n');
   const dateStr = new Date().toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' });
 
   const prompt = `당신은 한국 개인 투자자를 위한 글로벌 자산관리 코치입니다. 오늘(${dateStr}) 미국과 한국 시장을 모두 분석해 균형잡힌 브리핑을 작성해주세요.
@@ -12774,14 +12774,17 @@ ${newsHeadlines || '(뉴스 없음)'}
 
 다음 형식으로 한국어 브리핑을 작성해주세요. **미국과 한국 모두 비중있게 다루세요**. 각 섹션 2~3문장. 마크다운 사용. 광고/홍보 톤 X, 직설적/실용적으로:
 
+**📌 핵심 요약**
+(오늘 시장을 3줄 불릿으로 압축 - 가장 중요한 흐름)
+
+**🔥 오늘 뜨는 테마·섹터**
+(뉴스 헤드라인에서 읽히는 오늘의 주도 테마/섹터 2~3개를 짚어줘. 예: AI·반도체, 로봇, 2차전지, 바이오 등. 각 테마가 왜 움직이는지 1줄. ⚠️ 뉴스에 근거가 없으면 추측하지 말고 "뚜렷한 주도 테마 불명확"이라고 솔직히.)
+
 **🇺🇸 미국 시장**
 (S&P500, 나스닥 동향 + 미국 경제 이슈 - Fed 금리, 기업 실적, 빅테크 등)
 
 **🇰🇷 한국 시장**
 (코스피/코스닥 동향 + 환율 영향 + 한국 특수 이슈)
-
-**🌍 글로벌 상관관계**
-(미국-한국 시장 연관성, 오늘 어느 쪽이 주도했는지)
 
 **💼 내 자산 관점**
 (보유 자산이 국내/해외 어느 쪽에 노출됐는지 + 오늘 시황과의 연관성)
@@ -12789,7 +12792,7 @@ ${newsHeadlines || '(뉴스 없음)'}
 **🎯 오늘의 한 마디**
 (액션 아이템 또는 관망 이유 1줄)
 
-⚠️ 주의: 구체적 종목 매수 권유 금지. "참고용, 투자 결정은 본인 책임"이라는 디스클레이머 끝에 작은 글씨로.`;
+⚠️ 주의: 구체적 종목 매수 권유 금지. 실시간 등락률을 모르는 종목은 단정하지 말 것. "참고용, 투자 결정은 본인 책임"이라는 디스클레이머 끝에 작은 글씨로.`;
 
   return await askGemini(prompt, { useCache: !forceRefresh, cacheKey, maxRetries: 2 });
 }
