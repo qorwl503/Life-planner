@@ -4102,8 +4102,8 @@ function openTodayActionsEdit() {
     ? custom.items
     : auto.map(a => ({ icon: a.icon, text: a.text.replace(/<[^>]+>/g, '') })); // <b> 태그 제거
 
-  // 3개 채우기 (빈 자리는 빈 문자열)
-  while (startItems.length < 3) startItems.push({ icon: '✅', text: '' });
+  // 3개 채우기 (빈 자리는 아이콘·텍스트 모두 빈 문자열)
+  while (startItems.length < 3) startItems.push({ icon: '', text: '' });
 
   modal.innerHTML = `
     <div class="modal">
@@ -4122,7 +4122,7 @@ function openTodayActionsEdit() {
         <div class="field">
           <div class="field-label">액션 ${i+1}</div>
           <div style="display:flex; gap:6px;">
-            <input type="text" id="ta-icon-${i}" maxlength="2" value="${escapeAttr(startItems[i].icon || '✅')}" style="width:50px; text-align:center; font-size:18px;" placeholder="🎯" readonly />
+            <input type="text" id="ta-icon-${i}" maxlength="2" value="${escapeAttr(startItems[i].icon || '')}" style="width:50px; text-align:center; font-size:18px;" placeholder="🎯" readonly />
             <input type="text" id="ta-text-${i}" value="${escapeAttr(startItems[i].text || '')}" placeholder="예: 30분 산책하기" style="flex:1;" />
           </div>
           <div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:6px;">
@@ -4578,9 +4578,6 @@ function renderMoney() {
         <div style="font-size:11px; color:#6B4FB8; font-weight:500;">
           💰 변동 생활비 ${isCurrentMonth ? '· 비상금 가능' : ''}
         </div>
-        <button onclick="editLivingGoal()" style="border:none; background:rgba(91,63,176,0.12); color:#5B3FB0; padding:3px 9px; border-radius:999px; font-size:10px; font-weight:500; cursor:pointer; font-family:inherit;">
-          ${goalLiving > 0 ? '⚙️ 수정' : '+ 목표 설정'}
-        </button>
       </div>
 
       <!-- 메인 숫자 -->
@@ -4603,7 +4600,7 @@ function renderMoney() {
 
       <!-- 일일 페이스 -->
       ${isCurrentMonth ? `
-        <div style="display:flex; gap:12px; padding:9px 0; border-top:0.5px solid #D4C8EC; ${goalLiving > 0 ? 'border-bottom:0.5px solid #D4C8EC; margin-bottom:10px;' : ''}">
+        <div style="display:flex; gap:12px; padding:9px 0; border-top:0.5px solid #D4C8EC;">
           <div style="flex:1;">
             <div style="font-size:12px; font-weight:600; color:#5B3FB0;">${safeDaily.toLocaleString()}원</div>
             <div style="font-size:9px; color:#8770C8; margin-top:1px;">남은 ${daysLeft}일 일일 한도</div>
@@ -4614,29 +4611,43 @@ function renderMoney() {
           </div>
         </div>
       ` : ''}
+    </div>
+  `;
 
+  // 🌹 목표 생활비 — 별도 카드 (로즈 톤)
+  html += `
+    <div style="background:#FDF0F4; border:1px solid #EBC4D2; border-radius:14px; padding:14px; margin-bottom:12px; color:#A8456A;">
       <!-- 목표 생활비 진행 -->
       ${goalLiving > 0 ? `
         <div>
-          <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:3px;">
-            <div style="font-size:13px; font-weight:600; color:#5B3FB0;">🎯 목표 ${goalLiving.toLocaleString()}원 中</div>
-            <div style="font-size:12px; color:#8770C8;">${goalUsedPct}%</div>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <div style="display:flex; align-items:center; gap:6px;">
+              <span style="font-size:14px;">🎯</span>
+              <span style="font-size:11px; font-weight:700; color:#C2557A;">목표 생활비</span>
+            </div>
+            <button onclick="editLivingGoal()" style="border:none; background:rgba(194,85,122,0.12); color:#C2557A; padding:3px 9px; border-radius:999px; font-size:10px; font-weight:500; cursor:pointer; font-family:inherit;">⚙️ 수정</button>
           </div>
-          <div style="font-size:16px; font-weight:700; margin-bottom:5px; color:${goalOver ? '#D14343' : '#3F9F6B'};">
+          <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:3px;">
+            <div style="font-size:13px; font-weight:600; color:#A8456A;">목표 ${goalLiving.toLocaleString()}원 中</div>
+            <div style="font-size:12px; color:#C2557A;">${goalUsedPct}%</div>
+          </div>
+          <div style="font-size:16px; font-weight:700; margin-bottom:5px; color:${goalOver ? '#D14343' : '#C2557A'};">
             ${goalRemaining >= 0 ? goalRemaining.toLocaleString() + '원 남음' : Math.abs(goalRemaining).toLocaleString() + '원 초과'}
           </div>
-          ${isCurrentMonth && variableSpent > 0 ? `
-            <div style="font-size:10px; color:${isOverPace ? '#D14343' : '#3F9F6B'}; margin-bottom:5px; line-height:1.5;">
-              ${isOverPace
-                ? `📈 이 페이스면 월말 <b>${projectedTotal.toLocaleString()}원</b> — 목표 초과 예상`
+          ${isCurrentMonth && variableSpent > 0 && goalLiving > 0 ? (() => {
+            const willExceed = projectedTotal > goalLiving;
+            const diff = Math.abs(projectedTotal - goalLiving);
+            return `<div style="font-size:10px; color:${willExceed ? '#D14343' : '#3F9F6B'}; margin-bottom:5px; line-height:1.5;">
+              ${willExceed
+                ? `📈 이 페이스면 월말 <b>${projectedTotal.toLocaleString()}원</b> — 목표 <b>${diff.toLocaleString()}원</b> 초과 예상`
                 : `✅ 이 페이스면 월말 <b>${projectedTotal.toLocaleString()}원</b> — 목표 안에 들 듯`}
-            </div>
-          ` : ''}
-          <div style="height:4px; background:rgba(91,63,176,0.15); border-radius:3px; overflow:hidden;">
-            <div style="height:100%; width:${Math.min(goalUsedPct, 100)}%; background:${goalOver ? '#D14343' : '#5FBE8E'};"></div>
+            </div>`;
+          })() : ''}
+          <div style="height:4px; background:rgba(168,69,106,0.15); border-radius:3px; overflow:hidden;">
+            <div style="height:100%; width:${Math.min(goalUsedPct, 100)}%; background:${goalOver ? '#D14343' : '#E08AAA'};"></div>
           </div>
           ${isCurrentMonth && !goalOver ? `
-            <div style="font-size:9px; color:#8770C8; margin-top:5px;">
+            <div style="font-size:9px; color:#C2557A; margin-top:5px;">
               하루 ${daysLeft > 0 ? Math.round(goalRemaining / daysLeft).toLocaleString() : 0}원 가능 (${daysLeft}일)
             </div>
           ` : ''}
@@ -4647,12 +4658,16 @@ function renderMoney() {
           ` : ''}
         </div>
       ` : isCurrentMonth ? `
-        <div style="font-size:10px; color:#8770C8; line-height:1.5;">
-          🎯 목표 생활비를 설정하면 절약한 만큼 비상금으로 모을 수 있어요. 우측 상단 [+ 목표 설정] 클릭
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div style="font-size:10px; color:#C2557A; line-height:1.5; flex:1;">
+            🎯 목표 생활비를 설정하면<br>절약한 만큼 비상금으로 모을 수 있어요
+          </div>
+          <button onclick="editLivingGoal()" style="border:none; background:rgba(194,85,122,0.12); color:#C2557A; padding:5px 11px; border-radius:999px; font-size:10px; font-weight:600; cursor:pointer; font-family:inherit; flex-shrink:0;">+ 목표 설정</button>
         </div>
       ` : ''}
     </div>
   `;
+
 
   // (중복 페이스 경고 제거됨 — 위 '소비 페이스 예측' 카드가 같은 역할)
 
