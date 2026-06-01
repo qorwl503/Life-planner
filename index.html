@@ -203,9 +203,9 @@ const firebaseConfig = {
   }
 
   .evt {
-    display: flex; gap: 10px; padding: 10px 12px;
+    display: flex; gap: 8px; padding: 8px 10px;
     border-radius: var(--radius-md);
-    margin-bottom: 6px;
+    margin-bottom: 5px;
     border-left: 2.5px solid;
     align-items: center;
     cursor: pointer;
@@ -215,7 +215,7 @@ const firebaseConfig = {
   .evt-money { background: #FFEDD0; border-left-color: #F5A852; }
   .evt-asset { background: #E8E3F5; border-left-color: #9C8FE0; }
   .evt-challenge { background: #F8E0E8; border-left-color: #E091A8; }
-  .evt-icon { font-size: 16px; flex-shrink: 0; }
+  .evt-icon { font-size: 14px; flex-shrink: 0; }
   .evt-todo .evt-icon { color: #4A82C2; }
   .evt-workout .evt-icon { color: #4DA275; }
   .evt-money .evt-icon { color: #C9863A; }
@@ -223,13 +223,13 @@ const firebaseConfig = {
   .evt-challenge .evt-icon { color: #C9758F; }
   .evt-challenge .title, .evt-challenge .sub { color: #A05674; }
   .evt-body { flex: 1; min-width: 0; }
-  .evt-body .title { font-size: 13px; font-weight: 500; }
-  .evt-body .sub { font-size: 10px; opacity: 0.85; margin-top: 2px; }
+  .evt-body .title { font-size: 12px; font-weight: 500; }
+  .evt-body .sub { font-size: 9px; opacity: 0.85; margin-top: 1px; }
   .evt-todo .title, .evt-todo .sub { color: #3D6FAA; }
   .evt-workout .title, .evt-workout .sub { color: #3D8A60; }
   .evt-money .title, .evt-money .sub { color: #A87836; }
   .evt-asset .title, .evt-asset .sub { color: #6B5CB8; }
-  .evt-amount { font-size: 11px; font-weight: 500; flex-shrink: 0; }
+  .evt-amount { font-size: 10px; font-weight: 500; flex-shrink: 0; }
   .evt-money .evt-amount { color: var(--text-warning); }
   .evt-asset .evt-amount { color: var(--text-info); }
   .evt .checked { text-decoration: line-through; color: var(--text-tertiary); }
@@ -2081,10 +2081,10 @@ function renderCalendar() {
         groups.forEach(g => {
           const items = filtered.filter(e => e.type === g.type);
           if (items.length === 0) return; // 빈 주제는 카드 자체를 안 보여줌
-          const isOpen = window._calExpanded[g.type] !== false; // 기본 펼침
+          const isOpen = window._calExpanded[g.type] === true; // 기본 닫힘, 누른 것만 펼침
           html += `
             <div style="background:#FFFFFF; border-radius:13px; border:1.5px solid ${g.accent}; overflow:hidden;">
-              <div onclick="window._calExpanded['${g.type}']=(window._calExpanded['${g.type}']===false); renderCalendar();" style="display:flex; align-items:center; gap:6px; padding:11px 12px; cursor:pointer;">
+              <div onclick="window._calExpanded['${g.type}']=(window._calExpanded['${g.type}']!==true); renderCalendar();" style="display:flex; align-items:center; gap:6px; padding:11px 12px; cursor:pointer;">
                 <i class="ti ${g.icon}" style="font-size:14px; color:${g.accent};"></i>
                 <span style="font-size:12px; font-weight:700; color:var(--text-primary);">${g.label}</span>
                 <span style="font-size:11px; font-weight:600; color:${g.accent}; background:${g.accent}1A; border-radius:999px; padding:1px 7px;">${items.length}</span>
