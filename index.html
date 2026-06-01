@@ -12423,13 +12423,13 @@ function renderAssetTrendCard() {
         <text x="${padL-4}" y="${padT+innerH+3}" font-size="9" fill="#999" text-anchor="end">${(min/10000).toFixed(0)}만</text>
 
         <!-- 영역 -->
-        <path d="${areaPath}" fill="rgba(94,92,230,0.15)" />
+        <path d="${areaPath}" fill="${isUp ? 'rgba(45,155,90,0.13)' : 'rgba(224,102,102,0.13)'}" />
 
         <!-- 라인 -->
-        <path d="${linePath}" stroke="#5E5CE6" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+        <path d="${linePath}" stroke="${isUp ? '#2D9B5A' : '#E06666'}" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" />
 
         <!-- 점 -->
-        ${points.map(p => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3" fill="#5E5CE6" stroke="white" stroke-width="1.5" />`).join('')}
+        ${points.map(p => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3" fill="${isUp ? '#2D9B5A' : '#E06666'}" stroke="white" stroke-width="1.5" />`).join('')}
 
         <!-- X축 라벨 -->
         ${points.map((p, i) => {
@@ -12464,17 +12464,28 @@ function renderAssetTypeChange(prevByType, currByType) {
   });
   items.sort((a, b) => b.curr - a.curr);
 
+  const barColors = {
+    '국내주식':'#8AB4F8','미국주식':'#5B8DEF','주식':'#8AB4F8','국내ETF':'#A78BFA',
+    '해외ETF':'#C4A0F5','ETF':'#A78BFA','펀드':'#7BC8B5','채권':'#9CD3A5','금':'#F6C76D',
+    '달러':'#85D4D6','예적금':'#A8E6CF','청약':'#FFC9A8','현금':'#C9C5D9','부동산':'#F6A8A8',
+    '코인':'#FFD66E','기타':'#D5D5D5',
+  };
+
   return `
     <div style="margin-top:14px; padding-top:12px; border-top:0.5px solid var(--border-tertiary);">
       <div style="font-size:11px; color:var(--text-tertiary); margin-bottom:8px;">지난달 대비 비율 변화</div>
       ${items.slice(0, 6).map(it => {
         const diffStr = it.diff >= 0.1 ? `+${it.diff.toFixed(1)}%p` : it.diff <= -0.1 ? `${it.diff.toFixed(1)}%p` : '';
         const diffColor = it.diff > 0.1 ? 'var(--text-success)' : it.diff < -0.1 ? 'var(--text-danger)' : 'var(--text-tertiary)';
+        const barColor = barColors[it.type] || '#A78BFA';
         return `
           <div style="display:flex; align-items:center; gap:8px; padding:4px 0; font-size:11px;">
-            <span style="width:50px;">${it.type}</span>
+            <span style="display:flex; align-items:center; gap:5px; width:64px;">
+              <span style="width:8px; height:8px; border-radius:2px; background:${barColor}; flex-shrink:0;"></span>
+              <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${it.type}</span>
+            </span>
             <div style="flex:1; height:5px; background:rgba(0,0,0,0.05); border-radius:3px; overflow:hidden;">
-              <div style="height:100%; width:${it.currPct}%; background:#5E5CE6;"></div>
+              <div style="height:100%; width:${it.currPct}%; background:${barColor};"></div>
             </div>
             <span style="width:42px; text-align:right; font-weight:500;">${it.currPct.toFixed(0)}%</span>
             <span style="width:48px; text-align:right; color:${diffColor}; font-size:10px;">${diffStr}</span>
