@@ -107,10 +107,15 @@ const firebaseConfig = {
       display: flex;
       align-items: center;
       justify-content: center;
+      height: 100vh;
     }
     body {
-      height: 92vh !important;
-      max-height: 920px;
+      height: 90vh !important;
+      min-height: 90vh !important;
+      max-height: 900px;
+      width: 480px !important;
+      min-width: 480px !important;
+      max-width: 480px !important;
       border-radius: 22px;
       overflow: hidden;
       box-shadow: 0 12px 48px rgba(0,0,0,0.18);
@@ -2915,6 +2920,9 @@ function renderChallengeCard(c) {
 
   const isCompleted = progressPct >= 100;
   const accent = isCompleted ? '#3B6D11' : c.type === 'forbidden' ? '#854F0B' : '#2D7BC9';
+  // 🔧 타입별 연한 배경 (단조로움 → 색감)
+  const softBg = isCompleted ? '#EAF3E2' : c.type === 'forbidden' ? '#FBF0DD' : '#E6F0FA';
+  const softBorder = isCompleted ? '#BCDBA6' : c.type === 'forbidden' ? '#EAD3A8' : '#BCD8F0';
   const typeIcon = c.type === 'forbidden' ? '🚫' : c.type === 'count' ? '🔢' : '✅';
 
   // 최근 날짜 점 (최대 7개만, 컴팩트)
@@ -2932,7 +2940,7 @@ function renderChallengeCard(c) {
     dotsHtml += `<button onclick="toggleChallengeDate(${c.id}, '${k}')" style="width:14px; height:14px; border-radius:4px; background:${bg}; border:none; cursor:pointer; padding:0;" title="${k}"></button>`;
   }
 
-  return `<div style="margin-bottom:8px; padding:11px 13px; border-radius:11px; background:var(--bg-secondary); border:0.5px solid var(--border-tertiary); border-left:3px solid ${accent};">
+  return `<div style="margin-bottom:8px; padding:11px 13px; border-radius:11px; background:${softBg}; border:0.5px solid ${softBorder}; border-left:3px solid ${accent};">
     <div style="display:flex; align-items:center; gap:8px;">
       <div style="flex:1; min-width:0;">
         <div style="font-size:13px; font-weight:600; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${typeIcon} ${c.title}</div>
@@ -2945,12 +2953,12 @@ function renderChallengeCard(c) {
               <button onclick="checkChallenge(${c.id}, true)" style="padding:6px 10px; border:none; border-radius:7px; background:${todayChecked===true?accent:'var(--bg-tertiary)'}; color:${todayChecked===true?'white':'var(--text-secondary)'}; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">✓</button>
               <button onclick="checkChallenge(${c.id}, 'fail')" style="padding:6px 10px; border:none; border-radius:7px; background:${todayChecked==='fail'?'#E06666':'var(--bg-tertiary)'}; color:${todayChecked==='fail'?'white':'var(--text-secondary)'}; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">✗</button>
             </div>`
-          : `<button onclick="checkChallenge(${c.id}, ${!todayChecked})" style="padding:7px 14px; border:none; border-radius:8px; background:${todayChecked?accent:'var(--bg-tertiary)'}; color:${todayChecked?'white':'var(--text-secondary)'}; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; flex-shrink:0;">${todayChecked ? '✓ 완료' : '오늘'}</button>`
+          : `<button onclick="checkChallenge(${c.id}, ${!todayChecked})" style="padding:7px 14px; border:none; border-radius:8px; background:${todayChecked?accent:'rgba(255,255,255,0.85)'}; color:${todayChecked?'white':accent}; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; flex-shrink:0;">${todayChecked ? '✓ 완료' : '오늘'}</button>`
       }
       <button onclick="event.stopPropagation(); editChallenge(${c.id})" style="border:none; background:transparent; color:var(--text-tertiary); padding:4px 2px; font-size:14px; cursor:pointer; font-family:inherit; flex-shrink:0;">⋮</button>
     </div>
     <div style="display:flex; align-items:center; gap:7px; margin-top:8px;">
-      <div style="flex:1; height:4px; background:var(--border-tertiary); border-radius:2px; overflow:hidden;">
+      <div style="flex:1; height:4px; background:rgba(255,255,255,0.7); border-radius:2px; overflow:hidden;">
         <div style="height:100%; width:${progressPct}%; background:${accent}; transition:width 0.4s;"></div>
       </div>
       <div style="display:flex; gap:3px;">${dotsHtml}</div>
@@ -3571,22 +3579,22 @@ function renderWorkout() {
     const isDone = todayLog?.done;
     const isMarkedX = todayLog && todayLog.done === false && todayLog.marked === true;
     html += `
-      <div style="margin-bottom:14px; padding:14px; border-radius:12px; background:${isDone ? 'var(--bg-success)' : 'var(--bg-secondary)'}; border:0.5px solid ${isDone ? 'var(--text-success)' : 'var(--border-tertiary)'};">
-        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
-          <div style="font-size:14px; font-weight:600; color:${isDone ? 'var(--text-success)' : 'var(--text-primary)'};">
+      <div style="margin-bottom:12px; padding:11px 13px; border-radius:11px; background:${isDone ? 'var(--bg-success)' : 'var(--bg-secondary)'}; border:0.5px solid ${isDone ? 'var(--text-success)' : 'var(--border-tertiary)'};">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:7px;">
+          <div style="font-size:12px; font-weight:600; color:${isDone ? 'var(--text-success)' : 'var(--text-primary)'};">
             오늘 운동했어요?
           </div>
-          ${isDone || isMarkedX ? `<button onclick="openWorkoutModal('${todayKey()}')" style="border:none; background:white; color:var(--text-info); padding:5px 10px; border-radius:999px; font-size:10px; font-weight:500; cursor:pointer; font-family:inherit;">상세</button>` : ''}
+          ${isDone || isMarkedX ? `<button onclick="openWorkoutModal('${todayKey()}')" style="border:none; background:white; color:var(--text-info); padding:3px 9px; border-radius:999px; font-size:10px; font-weight:500; cursor:pointer; font-family:inherit;">상세</button>` : ''}
         </div>
-        <div style="display:flex; background:rgba(0,0,0,0.05); border-radius:10px; padding:3px; position:relative;">
-          <button onclick="setTodayWorkout(true)" style="flex:1; padding:10px; border-radius:8px; border:none; background:${isDone ? 'var(--text-success)' : 'transparent'}; color:${isDone ? 'white' : 'var(--text-secondary)'}; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; transition: all 0.2s; ${isDone ? 'box-shadow: 0 1px 3px rgba(0,0,0,0.12);' : ''}">
+        <div style="display:flex; background:rgba(0,0,0,0.05); border-radius:9px; padding:3px; position:relative;">
+          <button onclick="setTodayWorkout(true)" style="flex:1; padding:7px; border-radius:7px; border:none; background:${isDone ? 'var(--text-success)' : 'transparent'}; color:${isDone ? 'white' : 'var(--text-secondary)'}; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; transition: all 0.2s; ${isDone ? 'box-shadow: 0 1px 3px rgba(0,0,0,0.12);' : ''}">
             💪 했음
           </button>
-          <button onclick="setTodayWorkout(false)" style="flex:1; padding:10px; border-radius:8px; border:none; background:${isMarkedX ? 'white' : 'transparent'}; color:${isMarkedX ? 'var(--text-secondary)' : 'var(--text-secondary)'}; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; transition: all 0.2s; ${isMarkedX ? 'box-shadow: 0 1px 3px rgba(0,0,0,0.12);' : ''}">
+          <button onclick="setTodayWorkout(false)" style="flex:1; padding:7px; border-radius:7px; border:none; background:${isMarkedX ? 'white' : 'transparent'}; color:var(--text-secondary); font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; transition: all 0.2s; ${isMarkedX ? 'box-shadow: 0 1px 3px rgba(0,0,0,0.12);' : ''}">
             😴 쉼
           </button>
         </div>
-        ${isDone && todayLog ? `<div style="margin-top:8px; font-size:11px; color:var(--text-success); opacity:0.85;">${todayLog.minutes || 0}분 · ${todayLog.kcal || 0} kcal${todayLog.note ? ' · ' + todayLog.note : ''}</div>` : ''}
+        ${isDone && todayLog ? `<div style="margin-top:6px; font-size:10px; color:var(--text-success); opacity:0.85;">${todayLog.minutes || 0}분 · ${todayLog.kcal || 0} kcal${todayLog.note ? ' · ' + todayLog.note : ''}</div>` : ''}
       </div>
     `;
   }
@@ -3935,58 +3943,7 @@ function renderMoneyInsightCards(opts) {
 
   let html = '';
 
-  // ============== 1) 소비 페이스 예측 ==============
-  // 지금 페이스대로 가면 월말까지 얼마 쓸지
-  if (livingGoal > 0 && daysPassed >= 1 && monthSpent > 0) {
-    const dailyPace = monthSpent / daysPassed;
-    const projected = Math.round(dailyPace * daysInMonth);
-    const daysLeft = Math.max(0, daysInMonth - daysPassed);
-    const remainingBudget = livingGoal - monthSpent; // 음수면 이미 초과
-    const recommendedDaily = (daysLeft > 0 && remainingBudget > 0) ? Math.floor(remainingBudget / daysLeft) : 0;
-
-    const alreadyOver = monthSpent >= livingGoal; // 🔧 이미 목표를 넘었는지
-    const projectedOver = projected > livingGoal; // 페이스대로면 넘을지
-
-    let toneColor, toneBg, toneIcon, title, subtext;
-    if (alreadyOver) {
-      // 🔧 이미 초과 — 달성 불가능. 솔직하게 안내.
-      const overAmount = monthSpent - livingGoal;
-      toneColor = 'var(--text-danger)';
-      toneBg = 'rgba(232,72,61,0.08)';
-      toneIcon = '🚨';
-      title = `이번 달 목표를 이미 <b>${overAmount.toLocaleString()}원</b> 초과했어요`;
-      subtext = daysLeft > 0
-        ? `남은 ${daysLeft}일은 꼭 필요한 지출만 — 초과 폭을 줄이는 데 집중해요`
-        : `이번 달은 마감됐어요. 다음 달 목표를 다시 점검해보세요`;
-    } else if (projectedOver) {
-      // 아직 안 넘었지만 페이스대로면 넘을 듯
-      const overBy = projected - livingGoal;
-      toneColor = 'var(--text-warning)';
-      toneBg = 'rgba(232,155,74,0.08)';
-      toneIcon = '⚠️';
-      title = `이대로 가면 월말에 <b>${overBy.toLocaleString()}원</b> 초과 예상`;
-      subtext = (daysLeft > 0 && recommendedDaily > 0)
-        ? `남은 ${daysLeft}일 동안 하루 <b>${recommendedDaily.toLocaleString()}원 이하</b>로 쓰면 목표 달성 가능`
-        : `이번 달 마감 임박`;
-    } else {
-      // 여유 있음
-      toneColor = 'var(--text-success, #2D8B5C)';
-      toneBg = 'rgba(45,139,92,0.08)';
-      toneIcon = '✅';
-      title = `예상 월말 지출 <b>${projected.toLocaleString()}원</b> · 목표 안에 들 듯`;
-      subtext = `현재 페이스: 하루 평균 ${Math.round(dailyPace).toLocaleString()}원 · 남은 예산 ${remainingBudget.toLocaleString()}원`;
-    }
-
-    html += `
-      <div style="padding:14px; background:${toneBg}; border-radius:12px; margin-bottom:10px; border:0.5px solid ${toneColor}33;">
-        <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
-          <span style="font-size:14px;">${toneIcon}</span>
-          <span style="font-size:11px; font-weight:700; color:${toneColor};">소비 페이스 예측</span>
-        </div>
-        <div style="font-size:13px; font-weight:600; line-height:1.5; margin-bottom:3px;">${title}</div>
-        <div style="font-size:11px; color:var(--text-secondary); line-height:1.5;">${subtext}</div>
-      </div>`;
-  }
+  // (소비 페이스 예측은 아래 '목표 생활비' 카드 안으로 통합됨 — 중복 제거)
 
   // ============== 2) 새는 돈 탐지 ==============
   // 같은 메모/카테고리로 자주 발생하는 소액 지출 (예: 매일 카페)
@@ -4628,7 +4585,7 @@ function renderMoney() {
 
       <!-- 메인 숫자 -->
       <div style="margin-bottom:10px;">
-        <div style="font-size:22px; font-weight:700; letter-spacing:-0.3px; color:#5B3FB0;">
+        <div style="font-size:17px; font-weight:700; letter-spacing:-0.3px; color:#5B3FB0;">
           ${isCurrentMonth ? variableRemaining.toLocaleString() : variableSpent.toLocaleString()}원
         </div>
         <div style="font-size:10px; color:#8770C8; margin-top:2px;">
@@ -4662,12 +4619,19 @@ function renderMoney() {
       ${goalLiving > 0 ? `
         <div>
           <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:3px;">
-            <div style="font-size:10px; color:#8770C8;">🎯 목표 ${goalLiving.toLocaleString()}원 中</div>
-            <div style="font-size:10px; color:#8770C8;">${goalUsedPct}%</div>
+            <div style="font-size:13px; font-weight:600; color:#5B3FB0;">🎯 목표 ${goalLiving.toLocaleString()}원 中</div>
+            <div style="font-size:12px; color:#8770C8;">${goalUsedPct}%</div>
           </div>
-          <div style="font-size:12px; font-weight:600; margin-bottom:5px; color:${goalOver ? '#D14343' : '#3F9F6B'};">
+          <div style="font-size:16px; font-weight:700; margin-bottom:5px; color:${goalOver ? '#D14343' : '#3F9F6B'};">
             ${goalRemaining >= 0 ? goalRemaining.toLocaleString() + '원 남음' : Math.abs(goalRemaining).toLocaleString() + '원 초과'}
           </div>
+          ${isCurrentMonth && variableSpent > 0 ? `
+            <div style="font-size:10px; color:${isOverPace ? '#D14343' : '#3F9F6B'}; margin-bottom:5px; line-height:1.5;">
+              ${isOverPace
+                ? `📈 이 페이스면 월말 <b>${projectedTotal.toLocaleString()}원</b> — 목표 초과 예상`
+                : `✅ 이 페이스면 월말 <b>${projectedTotal.toLocaleString()}원</b> — 목표 안에 들 듯`}
+            </div>
+          ` : ''}
           <div style="height:4px; background:rgba(91,63,176,0.15); border-radius:3px; overflow:hidden;">
             <div style="height:100%; width:${Math.min(goalUsedPct, 100)}%; background:${goalOver ? '#D14343' : '#5FBE8E'};"></div>
           </div>
@@ -4690,23 +4654,7 @@ function renderMoney() {
     </div>
   `;
 
-  if (variableSpent > 0 && isCurrentMonth) {
-    if (isOverPace) {
-      html += `<div style="padding:12px 14px; background:var(--bg-warning); border-radius:var(--radius-md); margin-bottom:14px; display:flex; gap:8px; align-items:flex-start;">
-        <i class="ti ti-alert-triangle" style="font-size:14px; color:var(--text-warning); margin-top:1px;"></i>
-        <div style="font-size:11px; color:var(--text-warning); line-height:1.6;">
-          이 페이스라면 월말에 <b style="font-weight:600;">${projectedTotal.toLocaleString()}원</b> 예상. 일일 ${(actualDaily - safeDaily).toLocaleString()}원씩 줄이면 안전.
-        </div>
-      </div>`;
-    } else {
-      html += `<div style="padding:12px 14px; background:var(--bg-success); border-radius:var(--radius-md); margin-bottom:14px; display:flex; gap:8px; align-items:flex-start;">
-        <i class="ti ti-check" style="font-size:14px; color:var(--text-success); margin-top:1px;"></i>
-        <div style="font-size:11px; color:var(--text-success); line-height:1.6;">
-          페이스 좋아요! 이대로면 <b style="font-weight:600;">${(variableBudget - projectedTotal).toLocaleString()}원</b> 남길 수 있어요.
-        </div>
-      </div>`;
-    }
-  }
+  // (중복 페이스 경고 제거됨 — 위 '소비 페이스 예측' 카드가 같은 역할)
 
   // ★ AI 분석 카드
   html += renderMoneyAI(variableSpent, projectedTotal);
