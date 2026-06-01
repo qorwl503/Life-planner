@@ -2038,11 +2038,19 @@ function renderCalendar() {
     if (filtered.length === 0) {
       html += `<div class="empty-state" style="padding:20px;"><span style="font-size:11px;">이 카테고리에 기록이 없어요</span></div>`;
     } else {
-      filtered.forEach(e => {
+      // 🔧 4개 주제 카드로 그룹화: 할일 · 운동 · 가계부 · 챌린지
+      const groups = [
+        { type: 'todo',      label: '할 일',   icon: 'ti-checkbox',       accent: '#5E5CE6' },
+        { type: 'money',     label: '가계부',  icon: 'ti-wallet',         accent: '#E08A3C' },
+        { type: 'workout',   label: '운동',    icon: 'ti-barbell',        accent: '#2D9B5A' },
+        { type: 'challenge', label: '챌린지',  icon: 'ti-flame',          accent: '#C9758F' },
+      ];
+
+      const renderEvt = (e) => {
         const clickHandler = e.todoId !== undefined ? `onclick="toggleTodoFromCal(${e.todoId})"`
           : e.expenseId !== undefined ? `onclick="editExpense(${e.expenseId})" style="cursor:pointer;"`
           : '';
-        html += `<div class="evt evt-${e.type}" ${clickHandler}>
+        return `<div class="evt evt-${e.type}" ${clickHandler} style="background:transparent; padding:7px 0; border-bottom:0.5px solid var(--border-tertiary);">
           ${e.todoId !== undefined
             ? `<div class="evt-check ${e.done?'done':''}">${e.done?'<i class="ti ti-check"></i>':''}</div>`
             : `<i class="evt-icon ti ${e.icon}"></i>`}
@@ -2052,7 +2060,23 @@ function renderCalendar() {
           </div>
           ${e.amount ? `<div class="evt-amount">${e.amount}</div>` : ''}
         </div>`;
+      };
+
+      html += `<div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:0 2px;">`;
+      groups.forEach(g => {
+        const items = filtered.filter(e => e.type === g.type);
+        if (items.length === 0) return; // 빈 주제는 카드 자체를 안 보여줌
+        html += `
+          <div style="background:var(--bg-secondary); border-radius:13px; padding:12px; border:0.5px solid var(--border-tertiary); border-top:2.5px solid ${g.accent};">
+            <div style="display:flex; align-items:center; gap:5px; margin-bottom:8px;">
+              <i class="ti ${g.icon}" style="font-size:13px; color:${g.accent};"></i>
+              <span style="font-size:12px; font-weight:700; color:var(--text-primary);">${g.label}</span>
+              <span style="font-size:10px; color:var(--text-tertiary); margin-left:auto;">${items.length}</span>
+            </div>
+            <div>${items.map(renderEvt).join('')}</div>
+          </div>`;
       });
+      html += `</div>`;
     }
   }
 
@@ -2854,69 +2878,46 @@ function renderChallengeCard(c) {
   }
 
   const isCompleted = progressPct >= 100;
-  const gradient = isCompleted
-    ? 'linear-gradient(135deg, #2A4D1B 0%, #3B6D11 100%)'
-    : c.type === 'forbidden'
-      ? 'linear-gradient(135deg, #6B3F08 0%, #854F0B 100%)'
-      : 'linear-gradient(135deg, #185FA5 0%, #2D7BC9 100%)';
+  const accent = isCompleted ? '#3B6D11' : c.type === 'forbidden' ? '#854F0B' : '#2D7BC9';
+  const typeIcon = c.type === 'forbidden' ? '🚫' : c.type === 'count' ? '🔢' : '✅';
 
-  // 전체 기간 그리드 (시작일 ~ 오늘)
-  let daysGrid = '';
-  const totalDaysShow = Math.min(daysPassed, totalDays);
-  for (let i = 0; i < totalDaysShow; i++) {
+  // 최근 날짜 점 (최대 7개만, 컴팩트)
+  let dotsHtml = '';
+  const showN = Math.min(7, totalDaysShow);
+  for (let i = totalDaysShow - showN; i < totalDaysShow; i++) {
     const d = new Date(startDate);
     d.setDate(d.getDate() + i);
     const k = dateKey(d.getFullYear(), d.getMonth(), d.getDate());
     const check = c.checks?.[k];
-    let bg = 'rgba(255,255,255,0.2)';
-    let icon = '';
-    if (check === true) { bg = 'rgba(255,255,255,0.95)'; icon = `<i class="ti ti-check" style="font-size:9px; color:#2A4D1B;"></i>`; }
-    else if (check === 'fail') { bg = 'rgba(255,100,100,0.6)'; icon = `<i class="ti ti-x" style="font-size:9px; color:white;"></i>`; }
-    daysGrid += `<button onclick="toggleChallengeDate(${c.id}, '${k}')" style="aspect-ratio:1; border-radius:4px; background:${bg}; display:flex; align-items:center; justify-content:center; border:none; cursor:pointer; padding:0; font-size:8px; color:rgba(255,255,255,0.7);" title="${k}">${icon || (i+1)}</button>`;
+    let bg = 'var(--border-tertiary)';
+    if (check === true) bg = accent;
+    else if (check === 'fail') bg = '#E06666';
+    dotsHtml += `<button onclick="toggleChallengeDate(${c.id}, '${k}')" style="width:14px; height:14px; border-radius:4px; background:${bg}; border:none; cursor:pointer; padding:0;" title="${k}"></button>`;
   }
 
-  return `<div style="margin-bottom:12px; padding:14px; border-radius:12px; background:${gradient}; color:white;">
-    <!-- 헤더 -->
-    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px;">
+  return `<div style="margin-bottom:8px; padding:11px 13px; border-radius:11px; background:var(--bg-secondary); border:0.5px solid var(--border-tertiary); border-left:3px solid ${accent};">
+    <div style="display:flex; align-items:center; gap:8px;">
       <div style="flex:1; min-width:0;">
-        <div style="font-size:14px; font-weight:600; margin-bottom:2px;">${c.title}</div>
-        <div style="font-size:10px; opacity:0.7;">${c.type === 'forbidden' ? '🚫 안 하기' : c.type === 'count' ? '🔢 횟수' : '✅ 매일 하기'} · ${daysPassed}일째 / ${totalDays}일</div>
+        <div style="font-size:13px; font-weight:600; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${typeIcon} ${c.title}</div>
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${progressText} · ${daysPassed}일째</div>
       </div>
-      <button onclick="event.stopPropagation(); editChallenge(${c.id})" style="border:none; background:rgba(255,255,255,0.15); color:white; padding:4px 8px; border-radius:6px; font-size:10px; cursor:pointer; font-family:inherit;">⋮</button>
+      ${isCompleted
+        ? `<span style="font-size:11px; font-weight:700; color:${accent};">🎉 완료</span>`
+        : c.type === 'forbidden'
+          ? `<div style="display:flex; gap:4px; flex-shrink:0;">
+              <button onclick="checkChallenge(${c.id}, true)" style="padding:6px 10px; border:none; border-radius:7px; background:${todayChecked===true?accent:'var(--bg-tertiary)'}; color:${todayChecked===true?'white':'var(--text-secondary)'}; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">✓</button>
+              <button onclick="checkChallenge(${c.id}, 'fail')" style="padding:6px 10px; border:none; border-radius:7px; background:${todayChecked==='fail'?'#E06666':'var(--bg-tertiary)'}; color:${todayChecked==='fail'?'white':'var(--text-secondary)'}; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">✗</button>
+            </div>`
+          : `<button onclick="checkChallenge(${c.id}, ${!todayChecked})" style="padding:7px 14px; border:none; border-radius:8px; background:${todayChecked?accent:'var(--bg-tertiary)'}; color:${todayChecked?'white':'var(--text-secondary)'}; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; flex-shrink:0;">${todayChecked ? '✓ 완료' : '오늘'}</button>`
+      }
+      <button onclick="event.stopPropagation(); editChallenge(${c.id})" style="border:none; background:transparent; color:var(--text-tertiary); padding:4px 2px; font-size:14px; cursor:pointer; font-family:inherit; flex-shrink:0;">⋮</button>
     </div>
-
-    <!-- 진행 텍스트 + 그래프 한 줄 -->
-    <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; margin-bottom:4px;">
-      <span style="font-weight:600;">${progressText}</span>
-      <span style="font-size:10px; opacity:0.7;">${Math.round(progressPct)}%</span>
-    </div>
-    <div style="height:5px; background:rgba(255,255,255,0.2); border-radius:3px; overflow:hidden; margin-bottom:12px;">
-      <div style="height:100%; width:${progressPct}%; background:rgba(255,255,255,0.95); transition:width 0.4s;"></div>
-    </div>
-
-    <!-- 날짜 그리드 -->
-    <div style="display:grid; grid-template-columns: repeat(${Math.min(14, totalDays)}, 1fr); gap:3px; margin-bottom:12px;">${daysGrid}</div>
-
-    ${isCompleted ? `
-      <div style="text-align:center; padding:10px; background:rgba(255,255,255,0.18); border-radius:8px; font-size:13px; font-weight:600;">
-        🎉 챌린지 완료!
+    <div style="display:flex; align-items:center; gap:7px; margin-top:8px;">
+      <div style="flex:1; height:4px; background:var(--border-tertiary); border-radius:2px; overflow:hidden;">
+        <div style="height:100%; width:${progressPct}%; background:${accent}; transition:width 0.4s;"></div>
       </div>
-    ` : c.type === 'forbidden' ? `
-      <!-- 금지형 - 성공/실패 -->
-      <div style="display:flex; gap:6px;">
-        <button onclick="checkChallenge(${c.id}, true)" style="flex:1; padding:9px; border:none; border-radius:6px; background:${todayChecked===true?'rgba(255,255,255,0.95)':'rgba(255,255,255,0.2)'}; color:${todayChecked===true?'#2A4D1B':'white'}; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
-          ✓ 성공
-        </button>
-        <button onclick="checkChallenge(${c.id}, 'fail')" style="flex:1; padding:9px; border:none; border-radius:6px; background:${todayChecked==='fail'?'rgba(255,100,100,0.7)':'rgba(255,255,255,0.2)'}; color:white; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
-          ✗ 실패
-        </button>
-      </div>
-    ` : `
-      <!-- 매일/횟수 - 성공만 -->
-      <button onclick="checkChallenge(${c.id}, ${!todayChecked})" style="width:100%; padding:10px; border:none; border-radius:6px; background:${todayChecked?'rgba(255,255,255,0.95)':'rgba(255,255,255,0.25)'}; color:${todayChecked?'#185FA5':'white'}; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">
-        ${todayChecked ? '✓ 오늘 성공' : '오늘 성공'}
-      </button>
-    `}
+      <div style="display:flex; gap:3px;">${dotsHtml}</div>
+    </div>
   </div>`;
 }
 
@@ -3267,6 +3268,32 @@ function saveChallenge() {
 function editChallenge(id) {
   const c = challenges.find(x => x.id === id);
   if (!c) return;
+
+  // 🔧 시작일~오늘까지 전체 날짜 그리드 (지난 날도 눌러서 체크/해제)
+  const startD = new Date(c.startDate + 'T00:00:00');
+  const todayD = new Date(currentYear, currentMonth, today, 0, 0, 0, 0);
+  const msPerDay = 86400000;
+  let daysPassed = Math.floor((todayD - startD) / msPerDay) + 1;
+  if (daysPassed < 1) daysPassed = 1;
+  const showDays = Math.min(daysPassed, c.totalDays);
+  const isForbidden = c.type === 'forbidden';
+
+  let grid = '';
+  for (let i = 0; i < showDays; i++) {
+    const d = new Date(startD);
+    d.setDate(d.getDate() + i);
+    const k = dateKey(d.getFullYear(), d.getMonth(), d.getDate());
+    const check = c.checks?.[k];
+    const mmdd = `${d.getMonth()+1}/${d.getDate()}`;
+    let bg = 'var(--bg-tertiary)', col = 'var(--text-tertiary)', mark = '';
+    if (check === true) { bg = '#3B6D11'; col = 'white'; mark = '✓'; }
+    else if (check === 'fail') { bg = '#E06666'; col = 'white'; mark = '✗'; }
+    grid += `<button onclick="toggleChallengeDate(${id}, '${k}'); editChallenge(${id});" style="aspect-ratio:1; border:none; border-radius:7px; background:${bg}; color:${col}; cursor:pointer; padding:2px; display:flex; flex-direction:column; align-items:center; justify-content:center; font-family:inherit;">
+      <span style="font-size:13px; font-weight:700; line-height:1;">${mark || ''}</span>
+      <span style="font-size:8px; opacity:0.8; margin-top:1px;">${mmdd}</span>
+    </button>`;
+  }
+
   modal.innerHTML = `
     <div class="modal">
       <div class="modal-handle"></div>
@@ -3279,6 +3306,11 @@ function editChallenge(id) {
       <div style="padding:14px; background:var(--bg-secondary); border-radius:var(--radius-md); margin-bottom:14px;">
         <div style="font-size:14px; font-weight:600; margin-bottom:4px;">${c.title}</div>
         <div style="font-size:11px; color:var(--text-secondary);">${c.totalDays}일 챌린지 · 시작 ${c.startDate}</div>
+      </div>
+
+      <div style="margin-bottom:14px;">
+        <div style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:8px;">📅 지난 기록 체크 ${isForbidden ? '(탭: 성공→실패→해제)' : '(탭하면 체크/해제)'}</div>
+        <div style="display:grid; grid-template-columns:repeat(7, 1fr); gap:5px; max-height:260px; overflow-y:auto;">${grid}</div>
       </div>
 
       <button onclick="completeChallenge(${id})" style="width:100%; padding:12px; border:none; border-radius:var(--radius-md); background:var(--bg-success); color:var(--text-success); font-size:13px; font-weight:500; cursor:pointer; font-family:inherit; margin-bottom:8px;">
@@ -4096,8 +4128,13 @@ function openTodayActionsEdit() {
         <div class="field">
           <div class="field-label">액션 ${i+1}</div>
           <div style="display:flex; gap:6px;">
-            <input type="text" id="ta-icon-${i}" maxlength="2" value="${escapeAttr(startItems[i].icon || '✅')}" style="width:50px; text-align:center; font-size:16px;" placeholder="🎯" />
+            <input type="text" id="ta-icon-${i}" maxlength="2" value="${escapeAttr(startItems[i].icon || '✅')}" style="width:50px; text-align:center; font-size:18px;" placeholder="🎯" readonly />
             <input type="text" id="ta-text-${i}" value="${escapeAttr(startItems[i].text || '')}" placeholder="예: 30분 산책하기" style="flex:1;" />
+          </div>
+          <div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:6px;">
+            ${['✅','🎯','🏃','💪','📚','💧','🧘','😴','🥗','💊','✍️','💰','📞','🧹','☀️','🚭','🍵','❤️'].map(emo =>
+              `<button onclick="document.getElementById('ta-icon-${i}').value='${emo}'" style="width:30px; height:30px; border:0.5px solid var(--border-tertiary); background:var(--bg-secondary); border-radius:7px; font-size:15px; cursor:pointer; padding:0; line-height:1;">${emo}</button>`
+            ).join('')}
           </div>
         </div>
       `).join('')}
