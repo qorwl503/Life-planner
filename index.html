@@ -12630,11 +12630,11 @@ async function askGemini(prompt, options = {}) {
               break; // 안쪽 attempt 루프 탈출 → 바깥 for가 다음 모델 시도
             }
             if (res.status === 503) {
-              // 503(서버 일시 혼잡) — 잠깐 대기 후 재시도, 그래도 안 되면 다음 모델
+              // 503(서버 일시 혼잡) — 좀 더 길게 대기 후 재시도, 그래도 안 되면 다음 모델
               console.warn(`⚠️ ${model} 서버 혼잡(503) → ${attempt < maxRetries ? '잠시 후 재시도' : '다음 모델'}`);
               lastError = '503: AI 서버 일시 혼잡';
               if (attempt < maxRetries) {
-                await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+                await new Promise(r => setTimeout(r, 3000 * (attempt + 1)));
                 continue; // 같은 모델 재시도
               }
               break;
@@ -14567,7 +14567,7 @@ async function fetchFundFacts(ticker) {
       continue;
     }
   }
-  console.warn(`${ticker} 펀드정보 수집 실패 — 야후에 없음, AI 학습데이터로 (시점 명시됨)`);
+  console.warn(`${ticker} 펀드 상세정보(AUM·보수 등) 못 가져옴 — 프록시 차단(403). 시세·분석은 정상, 상세수치는 AI 학습데이터로 (시점 명시됨)`);
   return null;
 }
 
