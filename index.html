@@ -8990,7 +8990,7 @@ async function processAssetCapture(input) {
 - 매입단가/평균단가가 직접 있으면 → 그 값 그대로
 - 예: "평가금액 2,800,000원 / 100주" → price=28000, qty=100`;
 
-    const ocrModels = ['gemini-2.5-flash', 'gemini-flash-latest'];
+    const ocrModels = ['gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-flash-latest'];
     const body = {
       contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64 } }] }],
       generationConfig: { temperature: 0.1, maxOutputTokens: 8000 }
@@ -9163,7 +9163,7 @@ async function processAutobuyCapture(input) {
 
 종목이 하나도 없을 때만: {"items":[],"error":"이유"}`;
 
-      const ocrModels = ['gemini-2.5-flash', 'gemini-flash-latest'];
+      const ocrModels = ['gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-flash-latest'];
       const reqBody = {
         contents: [{ parts: [
           { text: prompt },
@@ -9659,7 +9659,7 @@ async function processFixedCapture(input) {
 
 ⚠️ 일회성 지출(한 번만 쓴 것)은 제외하고, 정기적으로 빠져나가는 것만 추출해.`;
 
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${window.GEMINI_API_KEY}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${window.GEMINI_API_KEY}`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -10394,7 +10394,7 @@ async function processCardCapture(input) {
 
 만약 분석 불가하면: {"items":[],"error":"이유"}`;
 
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${window.GEMINI_API_KEY}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${window.GEMINI_API_KEY}`;
 
       const body = {
         contents: [{
@@ -12587,7 +12587,7 @@ async function askGemini(prompt, options = {}) {
     return { error: 'AI 키가 설정되지 않았어요. 우측 상단 톱니바퀴에서 키를 입력하세요.', needsKey: true };
   }
 
-  const models = ['gemini-2.5-flash', 'gemini-flash-latest'];
+  const models = ['gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-flash-latest'];
   let lastError = '알 수 없는 오류';
   let searchFailed = false; // 🔧 검색 도구 때문에 실패했는지
 
