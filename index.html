@@ -2919,6 +2919,7 @@ function renderChallengeCard(c) {
 
   // 최근 날짜 점 (최대 7개만, 컴팩트)
   let dotsHtml = '';
+  const totalDaysShow = Math.min(daysPassed, totalDays);
   const showN = Math.min(7, totalDaysShow);
   for (let i = totalDaysShow - showN; i < totalDaysShow; i++) {
     const d = new Date(startDate);
