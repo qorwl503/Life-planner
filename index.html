@@ -1761,12 +1761,11 @@ function renderMonthlyReportCard() {
   const prevSnap = snapshots[prevMStr];
   const assetChange = (thisSnap && prevSnap) ? thisSnap.total - prevSnap.total : null;
 
-  // 현재 총 자산 (스냅샷 없어도 표시)
+  // 현재 총 자산 — 자산탭과 동일 기준(원화 평가액 krwValue 우선)
   const currentAssetTotal = (assets || []).reduce((sum, a) => {
     const live = liveAssetData?.[a.id];
-    const qty = Number(a.qty) || 1;
-    const price = live?.krwPrice || Number(a.price) || 0;
-    return sum + (qty * price);
+    const v = (live?.hasLive && live.krwValue) ? live.krwValue : Number(a.qty) * Number(a.price);
+    return sum + v;
   }, 0);
 
   // 6. 비상금 (목표 - 사용)
@@ -1852,6 +1851,17 @@ function renderCalendar() {
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
   const monthStart = new Date(viewYear, viewMonth, 1);
   const startOffset = monthStart.getDay();
+
+  // 🔧 시세가 아직 없으면 한 번 불러오기 (리포트 자산이 매입가로 잘못 뜨는 것 방지)
+  if (!window._calPriceLoaded && (assets || []).some(a => a.ticker) && typeof refreshAllAssetPrices === 'function') {
+    const hasAnyLive = Object.keys(liveAssetData || {}).length > 0;
+    if (!hasAnyLive) {
+      window._calPriceLoaded = true;
+      setTimeout(() => {
+        refreshAllAssetPrices().then(() => { if (currentTab === 'calendar') renderCalendar(); }).catch(()=>{});
+      }, 300);
+    }
+  }
 
   header.innerHTML = `
     <h1>홈</h1>
@@ -2040,17 +2050,19 @@ function renderCalendar() {
     } else {
       // 🔧 4개 주제 카드로 그룹화: 할일 · 운동 · 가계부 · 챌린지
       const groups = [
-        { type: 'todo',      label: '할 일',   icon: 'ti-checkbox',       accent: '#5E5CE6' },
-        { type: 'money',     label: '가계부',  icon: 'ti-wallet',         accent: '#E08A3C' },
-        { type: 'workout',   label: '운동',    icon: 'ti-barbell',        accent: '#2D9B5A' },
-        { type: 'challenge', label: '챌린지',  icon: 'ti-flame',          accent: '#C9758F' },
+        { type: 'todo',      label: '할 일',   icon: 'ti-checkbox',  accent: '#5E5CE6' },
+        { type: 'money',     label: '가계부',  icon: 'ti-wallet',    accent: '#E08A3C' },
+        { type: 'workout',   label: '운동',    icon: 'ti-barbell',   accent: '#2D9B5A' },
+        { type: 'challenge', label: '챌린지',  icon: 'ti-flame',     accent: '#C9758F' },
       ];
+
+      if (!window._calExpanded) window._calExpanded = {};
 
       const renderEvt = (e) => {
         const clickHandler = e.todoId !== undefined ? `onclick="toggleTodoFromCal(${e.todoId})"`
           : e.expenseId !== undefined ? `onclick="editExpense(${e.expenseId})" style="cursor:pointer;"`
           : '';
-        return `<div class="evt evt-${e.type}" ${clickHandler} style="background:transparent; padding:7px 0; border-bottom:0.5px solid var(--border-tertiary);">
+        return `<div class="evt evt-${e.type}" ${clickHandler}>
           ${e.todoId !== undefined
             ? `<div class="evt-check ${e.done?'done':''}">${e.done?'<i class="ti ti-check"></i>':''}</div>`
             : `<i class="evt-icon ti ${e.icon}"></i>`}
@@ -2066,14 +2078,16 @@ function renderCalendar() {
       groups.forEach(g => {
         const items = filtered.filter(e => e.type === g.type);
         if (items.length === 0) return; // 빈 주제는 카드 자체를 안 보여줌
+        const isOpen = window._calExpanded[g.type] !== false; // 기본 펼침, 명시적으로 접은 것만 닫힘
         html += `
-          <div style="background:var(--bg-secondary); border-radius:13px; padding:12px; border:0.5px solid var(--border-tertiary); border-top:2.5px solid ${g.accent};">
-            <div style="display:flex; align-items:center; gap:5px; margin-bottom:8px;">
-              <i class="ti ${g.icon}" style="font-size:13px; color:${g.accent};"></i>
+          <div style="background:var(--bg-secondary); border-radius:13px; border:1.5px solid ${g.accent}; overflow:hidden;">
+            <div onclick="window._calExpanded['${g.type}']=(window._calExpanded['${g.type}']===false); renderCalendar();" style="display:flex; align-items:center; gap:6px; padding:11px 12px; cursor:pointer;">
+              <i class="ti ${g.icon}" style="font-size:14px; color:${g.accent};"></i>
               <span style="font-size:12px; font-weight:700; color:var(--text-primary);">${g.label}</span>
-              <span style="font-size:10px; color:var(--text-tertiary); margin-left:auto;">${items.length}</span>
+              <span style="font-size:11px; font-weight:600; color:${g.accent}; background:${g.accent}1A; border-radius:999px; padding:1px 7px;">${items.length}</span>
+              <i class="ti ti-chevron-${isOpen ? 'up' : 'down'}" style="font-size:14px; color:var(--text-tertiary); margin-left:auto;"></i>
             </div>
-            <div>${items.map(renderEvt).join('')}</div>
+            ${isOpen ? `<div style="padding:0 12px 8px;">${items.map(renderEvt).join('')}</div>` : ''}
           </div>`;
       });
       html += `</div>`;
