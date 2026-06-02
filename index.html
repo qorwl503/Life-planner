@@ -8023,7 +8023,36 @@ async function processAutoBuy(fixed) {
 
       const exactClose = getHistPriceExact(histMap, dateStr);
       const exactAvg = getHistAvgPriceExact(histTickerForAvg, dateStr);
-      const basePrice = (exactAvg != null) ? exactAvg : exactClose;
+      let basePrice = (exactAvg != null) ? exactAvg : exactClose;
+      let usedDateStr = dateStr;
+
+      // 🔧 휴장일 처리: 그날 종가가 없는데 '과거(어제 이전)' 회차라면 → 휴장일로 보고
+      //    다음 영업일(최대 5일) 종가를 찾아서 사용. (오늘/미래 회차는 아직 종가 미확정이라 보류 유지)
+      if (basePrice == null) {
+        const dObj = new Date(dateStr);
+        const yesterday = new Date(now);
+        yesterday.setDate(yesterday.getDate() - 1);
+        yesterday.setHours(23, 59, 59, 999);
+        const isPast = dObj < yesterday; // 어제보다 이전 = 종가가 확정됐어야 할 과거 회차
+
+        if (isPast) {
+          // 다음 영업일 종가 탐색 (최대 5일)
+          for (let addDay = 1; addDay <= 5; addDay++) {
+            const nd = new Date(dObj);
+            nd.setDate(nd.getDate() + addDay);
+            const ndStr = `${nd.getFullYear()}-${String(nd.getMonth()+1).padStart(2,'0')}-${String(nd.getDate()).padStart(2,'0')}`;
+            const ndAvg = getHistAvgPriceExact(histTickerForAvg, ndStr);
+            const ndClose = getHistPriceExact(histMap, ndStr);
+            const ndPrice = (ndAvg != null) ? ndAvg : ndClose;
+            if (ndPrice != null) {
+              basePrice = ndPrice;
+              usedDateStr = ndStr;
+              console.log(`📅 ${asset.name} ${dateStr} 휴장 추정 → 다음 영업일 ${ndStr} 종가로 처리`);
+              break;
+            }
+          }
+        }
+      }
 
       if (basePrice == null) {
         console.log(`⏳ ${asset.name} ${dateStr} 그날 시세 미확정 → 회차 보류 (다음에 정확한 값으로 처리)`);
@@ -8035,7 +8064,7 @@ async function processAutoBuy(fixed) {
       let lotBuyRate = null;
       let priceSrc = (exactAvg != null) ? '그날 평균가' : '그날 종가';
       if (histIsUSD) {
-        const histFx = getHistPriceExact(fxHistMap, dateStr);
+        const histFx = getHistPriceExact(fxHistMap, usedDateStr) || getHistPriceExact(fxHistMap, dateStr);
         if (histFx == null) {
           console.log(`⏳ ${asset.name} ${dateStr} 그날 환율 미확정 → 회차 보류`);
           skippedDates.push(d);
@@ -8098,7 +8127,7 @@ async function processAutoBuy(fixed) {
   if (lastValidDate.length === 0) {
     console.log(`⏸️ ${fixed.name} - 진행 가능한 회차 없음`);
     if (skippedDates.length > 0) {
-      showToast(`⚠️ ${fixed.name} 시세 조회 실패 - 잠시 후 자동 재시도`);
+      console.warn(`⚠️ ${fixed.name} 시세 조회 실패 - 다음에 자동 재시도`);
     }
     return;
   }
@@ -8114,7 +8143,7 @@ async function processAutoBuy(fixed) {
       }, 2200);
     }
   } else if (skippedDates.length > 0) {
-    showToast(`⚠️ ${fixed.name} 시세 조회 실패 - 잠시 후 자동 재시도`);
+    console.warn(`⚠️ ${fixed.name} 시세 조회 실패 - 다음에 자동 재시도`);
   }
 }
 
