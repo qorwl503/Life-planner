@@ -14461,21 +14461,20 @@ async function renderWatchlist() {
   const container = document.getElementById('watchlist-container');
   if (!container || watchlist.length === 0) return;
 
-  // 시세 + 뉴스 동시에 가져오기
-  const [results, allNews] = await Promise.all([
-    Promise.all(watchlist.map(async (w) => {
-      try {
-        const yTicker = w.isUS ? w.ticker : `${w.ticker}.KS`;
-        let data = await fetchYahooPrice(yTicker);
-        if (!data?.price && !w.isUS) {
-          data = await fetchYahooPrice(`${w.ticker}.KQ`);
-        }
-        if (!data?.price) return { w, price: null };
-        return { w, price: data.price, changePct: data.changePct ?? 0, currency: data.currency };
-      } catch (e) { return { w, price: null }; }
-    })),
-    fetchNewsRSS().catch(() => []),
-  ]);
+  // 시세 + 종목별 뉴스 검색 동시에
+  const results = await Promise.all(watchlist.map(async (w) => {
+    let priceInfo = { price: null };
+    try {
+      const yTicker = w.isUS ? w.ticker : `${w.ticker}.KS`;
+      let data = await fetchYahooPrice(yTicker);
+      if (!data?.price && !w.isUS) data = await fetchYahooPrice(`${w.ticker}.KQ`);
+      if (data?.price) priceInfo = { price: data.price, changePct: data.changePct ?? 0, currency: data.currency };
+    } catch (e) {}
+    // 🔧 그 종목을 구글 뉴스로 직접 검색 (RSS 필터링 X)
+    let news = [];
+    try { news = await fetchStockNews(w.name); } catch (e) {}
+    return { w, ...priceInfo, news: news.slice(0, 3) };
+  }));
 
   let html = '';
 
@@ -14485,15 +14484,13 @@ async function renderWatchlist() {
     html += `<div style="padding:8px 12px; margin-bottom:8px; background:#E8483D; color:white; border-radius:8px; font-size:11px; font-weight:600;">🔻 관심종목 ${crashCount}개가 5% 이상 급락했어요</div>`;
   }
 
-  results.forEach(({ w, price, changePct, currency }) => {
+  results.forEach(({ w, price, changePct, currency, news }) => {
     const isCrash = price != null && changePct <= -5;
     const chgColor = changePct >= 0 ? 'var(--text-danger)' : 'var(--text-info)';
     const priceStr = price == null ? '시세 없음'
       : currency === 'USD' ? `$${price.toLocaleString(undefined,{maximumFractionDigits:2})}`
       : `${Math.round(price).toLocaleString()}원`;
-
-    // 🔧 우리가 불러온 뉴스 중 이 종목 이름이 들어간 기사 매칭
-    const related = (allNews || []).filter(n => (n.title || '').includes(w.name)).slice(0, 3);
+    const related = news || [];
 
     html += `
       <div style="margin-bottom:8px; background:${isCrash ? 'rgba(232,72,61,0.06)' : 'var(--bg-secondary)'}; border-radius:var(--radius-md); border:${isCrash ? '1px solid rgba(232,72,61,0.3)' : '0.5px solid var(--border-tertiary)'}; overflow:hidden;">
@@ -14514,14 +14511,15 @@ async function renderWatchlist() {
         ${related.length > 0 ? `
           <div style="padding:0 12px 10px;">
             ${related.map(n => {
-              const ago = n.pubDate ? timeAgo(new Date(n.pubDate).toISOString()) : '';
-              return `<div onclick="openExt('${n.link}')" style="padding:7px 0; border-top:0.5px solid var(--border-tertiary); cursor:pointer;">
+              const ago = n.pubDate ? timeAgo(new Date(n.pubDate).toISOString()) : (n.date || '');
+              const safeLink = n.link ? n.link.replace(/'/g, "\\'") : '';
+              return `<div ${safeLink ? `onclick="openExt('${safeLink}')"` : ''} style="padding:7px 0; border-top:0.5px solid var(--border-tertiary); cursor:${safeLink ? 'pointer' : 'default'};">
                 <div style="font-size:11px; line-height:1.4; color:var(--text-primary);">${n.title}</div>
-                <div style="font-size:9px; color:var(--text-tertiary); margin-top:2px;">${n.source}${ago ? ' · ' + ago : ''}</div>
+                ${ago ? `<div style="font-size:9px; color:var(--text-tertiary); margin-top:2px;">${ago}</div>` : ''}
               </div>`;
             }).join('')}
           </div>
-        ` : `<div style="padding:0 12px 10px; font-size:10px; color:var(--text-tertiary);">관련 기사 없음 — <span onclick="openNews('${w.name.replace(/'/g, "\\'")} 주가 뉴스')" style="text-decoration:underline; cursor:pointer;">뉴스 검색</span></div>`}
+        ` : `<div style="padding:0 12px 10px; font-size:10px; color:var(--text-tertiary);">관련 기사 검색 중이거나 없어요</div>`}
       </div>`;
   });
 
@@ -14711,14 +14709,17 @@ async function fetchStockNews(stockName) {
         for (const block of itemMatches.slice(0, 8)) {
           const titleM = block.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
           const dateM = block.match(/<pubDate>([\s\S]*?)<\/pubDate>/);
+          const linkM = block.match(/<link>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/link>/);
           if (titleM) {
             let title = titleM[1].trim().replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;/g,"'");
             let dateStr = '';
+            let pubDate = '';
             if (dateM) {
               const d = new Date(dateM[1]);
-              if (!isNaN(d)) dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+              if (!isNaN(d)) { dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; pubDate = dateM[1].trim(); }
             }
-            if (title) items.push({ title, date: dateStr });
+            const link = linkM ? linkM[1].trim() : '';
+            if (title) items.push({ title, date: dateStr, pubDate, link });
           }
         }
         if (items.length > 0) {
