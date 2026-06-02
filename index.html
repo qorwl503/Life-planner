@@ -4812,8 +4812,8 @@ function renderMoney() {
         const k = e.dateKey || '';
         if (k.startsWith(ym)) variable += Number(e.amt) || 0;
       });
-      // 고정지출 합계 (그 달 발생분, skip 제외)
-      let fixed = 0;
+      // 고정지출 + 투자 분리 (그 달 발생분, skip 제외)
+      let fixed = 0, invest = 0;
       (budget.fixed || []).forEach(f => {
         if (Array.isArray(f.skipMonths) && f.skipMonths.includes(ym)) return;
         const occ = (!f.cycle || f.cycle === 'monthly') ? 1 : (() => {
@@ -4821,9 +4821,12 @@ function renderMoney() {
           for (let d = 1; d <= dim; d++) if (new Date(y, m, d).getDay() === Number(f.dow)) c++;
           return f.cycle === 'biweekly' ? Math.ceil(c/2) : c;
         })();
-        fixed += (Number(f.amt) || 0) * occ;
+        const amt = (Number(f.amt) || 0) * occ;
+        // 투자(자동매수 or 투자 카테고리)는 따로
+        if (f.autoBuy || f.cat === '투자') invest += amt;
+        else fixed += amt;
       });
-      return { y, m, variable, fixed, total: variable + fixed };
+      return { y, m, variable, fixed, invest, total: variable + fixed + invest };
     });
 
     const maxVal = Math.max(...monthData.map(d => d.total), 1);
@@ -4837,30 +4840,55 @@ function renderMoney() {
       </div>`;
 
     if (window.moneyBarExpanded) {
+      // Y축 눈금 (0, 1/3, 2/3, max) — 만원 단위
+      const gridSteps = [1, 0.66, 0.33, 0];
+      const chartH = 165;
       html += `
         <div style="padding:14px 12px 10px; background:var(--bg-secondary); border-radius:12px;">
           <div style="display:flex; gap:12px; margin-bottom:12px; font-size:10px; color:var(--text-secondary);">
             <span style="display:flex; align-items:center; gap:4px;"><span style="width:9px; height:9px; border-radius:2px; background:#E58AA8;"></span>변동</span>
             <span style="display:flex; align-items:center; gap:4px;"><span style="width:9px; height:9px; border-radius:2px; background:#F0C896;"></span>고정</span>
+            <span style="display:flex; align-items:center; gap:4px;"><span style="width:9px; height:9px; border-radius:2px; background:#8FB8E8;"></span>투자</span>
           </div>
-          <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:10px; height:200px;">
-            ${monthData.map((d, idx) => {
-              const totalH = Math.round((d.total / maxVal) * 165);
-              const varH = d.total > 0 ? Math.round((d.variable / d.total) * totalH) : 0;
-              const fixH = totalH - varH;
-              const isCur = d.y === budgetViewYear && d.m === budgetViewMonth;
-              const isSel = window._moneyBarSel === idx;
-              return `
-                <div onclick="window._moneyBarSel = (window._moneyBarSel === ${idx} ? -1 : ${idx}); renderMoney();" style="flex:1; display:flex; flex-direction:column; align-items:center; gap:3px; min-width:0; cursor:pointer;">
-                  <div style="font-size:8px; color:var(--text-secondary); white-space:nowrap; font-weight:500;">${d.total > 0 ? Math.round(d.total/10000)+'만' : ''}</div>
-                  <div style="width:14px; display:flex; flex-direction:column; justify-content:flex-end; height:165px; ${isSel ? 'outline:2px solid var(--text-info); outline-offset:2px; border-radius:3px;' : ''}">
-                    ${d.fixed > 0 ? `<div style="height:${fixH}px; background:#F0C896; border-radius:${d.variable>0?'0':'3px 3px 0 0'};"></div>` : ''}
-                    ${d.variable > 0 ? `<div style="height:${varH}px; background:#E58AA8; border-radius:3px 3px ${d.fixed>0?'0 0':'0 0'};"></div>` : ''}
-                    ${d.total === 0 ? `<div style="height:2px; background:var(--border-tertiary);"></div>` : ''}
-                  </div>
-                  <div style="font-size:8px; color:${isCur ? 'var(--text-primary)' : 'var(--text-tertiary)'}; font-weight:${isCur?'700':'400'}; white-space:nowrap;">${d.m+1}월</div>
-                </div>`;
-            }).join('')}
+          <div style="display:flex; gap:6px;">
+            <!-- Y축 눈금 -->
+            <div style="display:flex; flex-direction:column; justify-content:space-between; height:${chartH}px; padding-top:14px; flex-shrink:0;">
+              ${gridSteps.map(s => `<div style="font-size:8px; color:var(--text-tertiary); text-align:right; line-height:1;">${Math.round(maxVal * s / 10000)}만</div>`).join('')}
+            </div>
+            <!-- 차트 영역 (그리드선 + 막대) -->
+            <div style="flex:1; position:relative; padding-top:14px;">
+              <!-- 가로 그리드선 -->
+              <div style="position:absolute; left:0; right:0; top:14px; height:${chartH}px; pointer-events:none;">
+                ${gridSteps.map(s => `<div style="position:absolute; left:0; right:0; top:${(1-s)*chartH}px; border-top:0.5px ${s===0?'solid var(--text-tertiary)':'dashed var(--border-tertiary)'};"></div>`).join('')}
+              </div>
+              <!-- 막대들 -->
+              <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:10px; height:${chartH}px; position:relative;">
+                ${monthData.map((d, idx) => {
+                  const varH = Math.round((d.variable / maxVal) * chartH);
+                  const fixH = Math.round((d.fixed / maxVal) * chartH);
+                  const invH = Math.round((d.invest / maxVal) * chartH);
+                  const isCur = d.y === budgetViewYear && d.m === budgetViewMonth;
+                  const isSel = window._moneyBarSel === idx;
+                  return `
+                    <div onclick="window._moneyBarSel = (window._moneyBarSel === ${idx} ? -1 : ${idx}); renderMoney();" style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%; min-width:0; cursor:pointer; position:relative;">
+                      <div style="font-size:8px; color:var(--text-secondary); white-space:nowrap; font-weight:500; margin-bottom:2px;">${d.total > 0 ? Math.round(d.total/10000)+'만' : ''}</div>
+                      <div style="width:15px; display:flex; flex-direction:column; justify-content:flex-end; ${isSel ? 'outline:2px solid var(--text-info); outline-offset:2px; border-radius:3px;' : ''}">
+                        ${d.variable > 0 ? `<div style="height:${varH}px; background:#E58AA8; border-radius:3px 3px 0 0;"></div>` : ''}
+                        ${d.fixed > 0 ? `<div style="height:${fixH}px; background:#F0C896;"></div>` : ''}
+                        ${d.invest > 0 ? `<div style="height:${invH}px; background:#8FB8E8;"></div>` : ''}
+                        ${d.total === 0 ? `<div style="height:2px; background:var(--border-tertiary);"></div>` : ''}
+                      </div>
+                    </div>`;
+                }).join('')}
+              </div>
+              <!-- X축 월 라벨 -->
+              <div style="display:flex; justify-content:space-between; gap:10px; margin-top:5px;">
+                ${monthData.map(d => {
+                  const isCur = d.y === budgetViewYear && d.m === budgetViewMonth;
+                  return `<div style="flex:1; text-align:center; font-size:8px; color:${isCur ? 'var(--text-primary)' : 'var(--text-tertiary)'}; font-weight:${isCur?'700':'400'}; white-space:nowrap;">${d.m+1}월</div>`;
+                }).join('')}
+              </div>
+            </div>
           </div>
           ${(() => {
             const sel = window._moneyBarSel;
@@ -4876,6 +4904,10 @@ function renderMoney() {
                 <div style="display:flex; justify-content:space-between; font-size:11px; padding:2px 0;">
                   <span style="color:#C9863A;">📌 고정지출</span>
                   <span style="font-weight:600;">${d.fixed.toLocaleString()}원</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; font-size:11px; padding:2px 0;">
+                  <span style="color:#4A82C2;">📈 투자</span>
+                  <span style="font-weight:600;">${d.invest.toLocaleString()}원</span>
                 </div>
                 <div style="display:flex; justify-content:space-between; font-size:12px; padding:5px 0 0; margin-top:4px; border-top:0.5px solid var(--border-tertiary); font-weight:700;">
                   <span>합계</span>
