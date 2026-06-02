@@ -14499,24 +14499,25 @@ async function renderWatchlist() {
       : currency === 'USD' ? `$${price.toLocaleString(undefined,{maximumFractionDigits:2})}`
       : `${Math.round(price).toLocaleString()}원`;
     const related = news || [];
+    const isOpen = window._watchExpanded && window._watchExpanded[w.id];
 
     html += `
       <div style="margin-bottom:8px; background:${isCrash ? 'rgba(232,72,61,0.06)' : 'var(--bg-secondary)'}; border-radius:var(--radius-md); border:${isCrash ? '1px solid rgba(232,72,61,0.3)' : '0.5px solid var(--border-tertiary)'}; overflow:hidden;">
-        <div style="padding:11px 12px; display:flex; align-items:center; gap:10px;">
+        <div onclick="toggleWatchExpand(${w.id})" style="padding:11px 12px; display:flex; align-items:center; gap:10px; cursor:pointer;">
           <div style="flex:1; min-width:0;">
             <div style="font-size:13px; font-weight:600; display:flex; align-items:center; gap:6px;">
               ${w.name}
               ${isCrash ? `<span style="font-size:9px; font-weight:700; color:white; background:#E8483D; padding:1px 6px; border-radius:4px;">🔻 급락</span>` : ''}
             </div>
-            <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${w.ticker}${related.length > 0 ? ` · 관련기사 ${related.length}` : ''}</div>
+            <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${w.ticker}${related.length > 0 ? ` · 관련기사 ${related.length} ${isOpen ? '▲' : '▼'}` : ''}</div>
           </div>
           <div style="text-align:right;">
             <div style="font-size:13px; font-weight:600;">${priceStr}</div>
             ${price != null ? `<div style="font-size:10px; color:${chgColor};">${changePct >= 0 ? '▲' : '▼'}${Math.abs(changePct).toFixed(2)}%</div>` : ''}
           </div>
-          <button onclick="removeWatchItem(${w.id})" style="border:none; background:transparent; cursor:pointer; padding:4px; color:var(--text-tertiary); font-family:inherit; flex-shrink:0;"><i class="ti ti-x" style="font-size:14px;"></i></button>
+          <button onclick="event.stopPropagation(); removeWatchItem(${w.id})" style="border:none; background:transparent; cursor:pointer; padding:4px; color:var(--text-tertiary); font-family:inherit; flex-shrink:0;"><i class="ti ti-x" style="font-size:14px;"></i></button>
         </div>
-        ${related.length > 0 ? `
+        ${isOpen ? (related.length > 0 ? `
           <div style="padding:0 12px 10px;">
             ${related.map(n => {
               const ago = n.pubDate ? timeAgo(new Date(n.pubDate).toISOString()) : '';
@@ -14527,10 +14528,75 @@ async function renderWatchlist() {
               </div>`;
             }).join('')}
           </div>
-        ` : `<div style="padding:0 12px 10px; font-size:10px; color:var(--text-tertiary);">관련 기사 없음</div>`}
+        ` : `<div style="padding:0 12px 10px; font-size:10px; color:var(--text-tertiary);">관련 기사 없음</div>`) : ''}
       </div>`;
   });
 
+  // 결과 캐시 (토글 시 재요청 없이 다시 그리기)
+  window._watchResults = results;
+  container.innerHTML = html;
+}
+
+// 관심종목 카드 펼치기/접기
+function toggleWatchExpand(id) {
+  if (!window._watchExpanded) window._watchExpanded = {};
+  window._watchExpanded[id] = !window._watchExpanded[id];
+  // 캐시된 결과로 다시 그리기 (재요청 없음)
+  if (window._watchResults) {
+    renderWatchlistFromCache();
+  }
+}
+
+// 캐시된 결과로 관심종목 다시 그리기
+function renderWatchlistFromCache() {
+  const container = document.getElementById('watchlist-container');
+  if (!container || !window._watchResults) return;
+  const results = window._watchResults;
+
+  let html = '';
+  const crashCount = results.filter(r => r.price != null && r.changePct <= -5).length;
+  if (crashCount > 0) {
+    html += `<div style="padding:8px 12px; margin-bottom:8px; background:#E8483D; color:white; border-radius:8px; font-size:11px; font-weight:600;">🔻 관심종목 ${crashCount}개가 5% 이상 급락했어요</div>`;
+  }
+  results.forEach(({ w, price, changePct, currency, news }) => {
+    const isCrash = price != null && changePct <= -5;
+    const chgColor = changePct >= 0 ? 'var(--text-danger)' : 'var(--text-info)';
+    const priceStr = price == null ? '시세 없음'
+      : currency === 'USD' ? `$${price.toLocaleString(undefined,{maximumFractionDigits:2})}`
+      : `${Math.round(price).toLocaleString()}원`;
+    const related = news || [];
+    const isOpen = window._watchExpanded && window._watchExpanded[w.id];
+
+    html += `
+      <div style="margin-bottom:8px; background:${isCrash ? 'rgba(232,72,61,0.06)' : 'var(--bg-secondary)'}; border-radius:var(--radius-md); border:${isCrash ? '1px solid rgba(232,72,61,0.3)' : '0.5px solid var(--border-tertiary)'}; overflow:hidden;">
+        <div onclick="toggleWatchExpand(${w.id})" style="padding:11px 12px; display:flex; align-items:center; gap:10px; cursor:pointer;">
+          <div style="flex:1; min-width:0;">
+            <div style="font-size:13px; font-weight:600; display:flex; align-items:center; gap:6px;">
+              ${w.name}
+              ${isCrash ? `<span style="font-size:9px; font-weight:700; color:white; background:#E8483D; padding:1px 6px; border-radius:4px;">🔻 급락</span>` : ''}
+            </div>
+            <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${w.ticker}${related.length > 0 ? ` · 관련기사 ${related.length} ${isOpen ? '▲' : '▼'}` : ''}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:13px; font-weight:600;">${priceStr}</div>
+            ${price != null ? `<div style="font-size:10px; color:${chgColor};">${changePct >= 0 ? '▲' : '▼'}${Math.abs(changePct).toFixed(2)}%</div>` : ''}
+          </div>
+          <button onclick="event.stopPropagation(); removeWatchItem(${w.id})" style="border:none; background:transparent; cursor:pointer; padding:4px; color:var(--text-tertiary); font-family:inherit; flex-shrink:0;"><i class="ti ti-x" style="font-size:14px;"></i></button>
+        </div>
+        ${isOpen ? (related.length > 0 ? `
+          <div style="padding:0 12px 10px;">
+            ${related.map(n => {
+              const ago = n.pubDate ? timeAgo(new Date(n.pubDate).toISOString()) : '';
+              const safeLink = n.link ? n.link.replace(/'/g, "\\'") : '';
+              return `<div ${safeLink ? `onclick="openExt('${safeLink}')"` : ''} style="padding:7px 0; border-top:0.5px solid var(--border-tertiary); cursor:${safeLink ? 'pointer' : 'default'};">
+                <div style="font-size:11px; line-height:1.4; color:var(--text-primary);">${n.title}</div>
+                ${ago ? `<div style="font-size:9px; color:var(--text-tertiary); margin-top:2px;">${ago}</div>` : ''}
+              </div>`;
+            }).join('')}
+          </div>
+        ` : `<div style="padding:0 12px 10px; font-size:10px; color:var(--text-tertiary);">관련 기사 없음</div>`) : ''}
+      </div>`;
+  });
   container.innerHTML = html;
 }
 
