@@ -14456,45 +14456,54 @@ function removeWatchItem(id) {
   render();
 }
 
-// 관심종목 시세 + 급락 신호 렌더 (비동기)
+// 관심종목 시세 + 급락 신호 + 관련 뉴스 렌더 (비동기)
 async function renderWatchlist() {
   const container = document.getElementById('watchlist-container');
   if (!container || watchlist.length === 0) return;
 
-  const results = await Promise.all(watchlist.map(async (w) => {
-    try {
-      const yTicker = w.isUS ? w.ticker : `${w.ticker}.KS`;
-      const data = await fetchYahooPrice(yTicker);
-      if (!data?.price) {
-        // .KS 실패 시 .KQ 시도 (코스닥)
-        if (!w.isUS) {
-          const data2 = await fetchYahooPrice(`${w.ticker}.KQ`);
-          if (data2?.price) return { w, price: data2.price, changePct: data2.changePct ?? 0, currency: data2.currency };
+  // 시세 + 뉴스 동시에 가져오기
+  const [results, allNews] = await Promise.all([
+    Promise.all(watchlist.map(async (w) => {
+      try {
+        const yTicker = w.isUS ? w.ticker : `${w.ticker}.KS`;
+        let data = await fetchYahooPrice(yTicker);
+        if (!data?.price && !w.isUS) {
+          data = await fetchYahooPrice(`${w.ticker}.KQ`);
         }
-        return { w, price: null };
-      }
-      return { w, price: data.price, changePct: data.changePct ?? 0, currency: data.currency };
-    } catch (e) {
-      return { w, price: null };
-    }
-  }));
+        if (!data?.price) return { w, price: null };
+        return { w, price: data.price, changePct: data.changePct ?? 0, currency: data.currency };
+      } catch (e) { return { w, price: null }; }
+    })),
+    fetchNewsRSS().catch(() => []),
+  ]);
 
   let html = '';
+
+  // 급락 종목 요약 (맨 위)
+  const crashCount = results.filter(r => r.price != null && r.changePct <= -5).length;
+  if (crashCount > 0) {
+    html += `<div style="padding:8px 12px; margin-bottom:8px; background:#E8483D; color:white; border-radius:8px; font-size:11px; font-weight:600;">🔻 관심종목 ${crashCount}개가 5% 이상 급락했어요</div>`;
+  }
+
   results.forEach(({ w, price, changePct, currency }) => {
-    const isCrash = price != null && changePct <= -5; // 🔻 급락 -5% 이상
+    const isCrash = price != null && changePct <= -5;
     const chgColor = changePct >= 0 ? 'var(--text-danger)' : 'var(--text-info)';
     const priceStr = price == null ? '시세 없음'
       : currency === 'USD' ? `$${price.toLocaleString(undefined,{maximumFractionDigits:2})}`
       : `${Math.round(price).toLocaleString()}원`;
+
+    // 🔧 우리가 불러온 뉴스 중 이 종목 이름이 들어간 기사 매칭
+    const related = (allNews || []).filter(n => (n.title || '').includes(w.name)).slice(0, 3);
+
     html += `
-      <div style="padding:11px 12px; margin-bottom:6px; background:${isCrash ? 'rgba(232,72,61,0.08)' : 'var(--bg-secondary)'}; border-radius:var(--radius-md); border:${isCrash ? '1px solid rgba(232,72,61,0.3)' : '0.5px solid var(--border-tertiary)'};">
-        <div style="display:flex; align-items:center; gap:10px;">
-          <div onclick="openNews('${w.name.replace(/'/g, "\\'")} 주가 뉴스')" style="flex:1; min-width:0; cursor:pointer;">
+      <div style="margin-bottom:8px; background:${isCrash ? 'rgba(232,72,61,0.06)' : 'var(--bg-secondary)'}; border-radius:var(--radius-md); border:${isCrash ? '1px solid rgba(232,72,61,0.3)' : '0.5px solid var(--border-tertiary)'}; overflow:hidden;">
+        <div style="padding:11px 12px; display:flex; align-items:center; gap:10px;">
+          <div style="flex:1; min-width:0;">
             <div style="font-size:13px; font-weight:600; display:flex; align-items:center; gap:6px;">
               ${w.name}
               ${isCrash ? `<span style="font-size:9px; font-weight:700; color:white; background:#E8483D; padding:1px 6px; border-radius:4px;">🔻 급락</span>` : ''}
             </div>
-            <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${w.ticker} · 뉴스 보기</div>
+            <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${w.ticker}${related.length > 0 ? ` · 관련기사 ${related.length}` : ''}</div>
           </div>
           <div style="text-align:right;">
             <div style="font-size:13px; font-weight:600;">${priceStr}</div>
@@ -14502,14 +14511,19 @@ async function renderWatchlist() {
           </div>
           <button onclick="removeWatchItem(${w.id})" style="border:none; background:transparent; cursor:pointer; padding:4px; color:var(--text-tertiary); font-family:inherit; flex-shrink:0;"><i class="ti ti-x" style="font-size:14px;"></i></button>
         </div>
+        ${related.length > 0 ? `
+          <div style="padding:0 12px 10px;">
+            ${related.map(n => {
+              const ago = n.pubDate ? timeAgo(new Date(n.pubDate).toISOString()) : '';
+              return `<div onclick="openExt('${n.link}')" style="padding:7px 0; border-top:0.5px solid var(--border-tertiary); cursor:pointer;">
+                <div style="font-size:11px; line-height:1.4; color:var(--text-primary);">${n.title}</div>
+                <div style="font-size:9px; color:var(--text-tertiary); margin-top:2px;">${n.source}${ago ? ' · ' + ago : ''}</div>
+              </div>`;
+            }).join('')}
+          </div>
+        ` : `<div style="padding:0 12px 10px; font-size:10px; color:var(--text-tertiary);">관련 기사 없음 — <span onclick="openNews('${w.name.replace(/'/g, "\\'")} 주가 뉴스')" style="text-decoration:underline; cursor:pointer;">뉴스 검색</span></div>`}
       </div>`;
   });
-
-  // 급락 종목 있으면 맨 위에 요약
-  const crashCount = results.filter(r => r.price != null && r.changePct <= -5).length;
-  if (crashCount > 0) {
-    html = `<div style="padding:8px 12px; margin-bottom:8px; background:#E8483D; color:white; border-radius:8px; font-size:11px; font-weight:600;">🔻 관심종목 ${crashCount}개가 5% 이상 급락했어요</div>` + html;
-  }
 
   container.innerHTML = html;
 }
