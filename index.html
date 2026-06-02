@@ -14662,7 +14662,6 @@ let newsCache = null;
 // 🔧 특정 종목 뉴스 — 구글 뉴스 RSS로 종목명 검색 (AI 투자분석에 최신 뉴스 공급용)
 async function fetchStockNews(stockName) {
   if (!stockName) return [];
-  console.log('🆕 BUILD-0530-B 실행 중');
 
   // 종목명으로 티커 추정 (야후 뉴스는 티커 필요)
   const normN = (s) => (s || '').replace(/\s/g, '').toLowerCase();
