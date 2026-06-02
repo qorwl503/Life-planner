@@ -4843,24 +4843,46 @@ function renderMoney() {
             <span style="display:flex; align-items:center; gap:4px;"><span style="width:9px; height:9px; border-radius:2px; background:#E58AA8;"></span>변동</span>
             <span style="display:flex; align-items:center; gap:4px;"><span style="width:9px; height:9px; border-radius:2px; background:#F0C896;"></span>고정</span>
           </div>
-          <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:6px; height:130px;">
-            ${monthData.map(d => {
-              const totalH = Math.round((d.total / maxVal) * 110);
+          <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:10px; height:200px;">
+            ${monthData.map((d, idx) => {
+              const totalH = Math.round((d.total / maxVal) * 165);
               const varH = d.total > 0 ? Math.round((d.variable / d.total) * totalH) : 0;
               const fixH = totalH - varH;
               const isCur = d.y === budgetViewYear && d.m === budgetViewMonth;
+              const isSel = window._moneyBarSel === idx;
               return `
-                <div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:4px;">
-                  <div style="font-size:8px; color:var(--text-tertiary); white-space:nowrap;">${d.total > 0 ? (d.total/10000).toFixed(0)+'만' : ''}</div>
-                  <div style="width:100%; max-width:32px; display:flex; flex-direction:column; justify-content:flex-end; height:110px;">
-                    ${d.fixed > 0 ? `<div style="height:${fixH}px; background:#F0C896; border-radius:${d.variable>0?'0':'4px 4px 0 0'};"></div>` : ''}
-                    ${d.variable > 0 ? `<div style="height:${varH}px; background:#E58AA8; border-radius:4px 4px ${d.fixed>0?'0 0':'0 0'};"></div>` : ''}
+                <div onclick="window._moneyBarSel = (window._moneyBarSel === ${idx} ? -1 : ${idx}); renderMoney();" style="flex:1; display:flex; flex-direction:column; align-items:center; gap:3px; min-width:0; cursor:pointer;">
+                  <div style="font-size:8px; color:var(--text-secondary); white-space:nowrap; font-weight:500;">${d.total > 0 ? Math.round(d.total/10000)+'만' : ''}</div>
+                  <div style="width:14px; display:flex; flex-direction:column; justify-content:flex-end; height:165px; ${isSel ? 'outline:2px solid var(--text-info); outline-offset:2px; border-radius:3px;' : ''}">
+                    ${d.fixed > 0 ? `<div style="height:${fixH}px; background:#F0C896; border-radius:${d.variable>0?'0':'3px 3px 0 0'};"></div>` : ''}
+                    ${d.variable > 0 ? `<div style="height:${varH}px; background:#E58AA8; border-radius:3px 3px ${d.fixed>0?'0 0':'0 0'};"></div>` : ''}
                     ${d.total === 0 ? `<div style="height:2px; background:var(--border-tertiary);"></div>` : ''}
                   </div>
-                  <div style="font-size:8px; color:${isCur ? 'var(--text-primary)' : 'var(--text-tertiary)'}; font-weight:${isCur?'700':'400'};">${d.m+1}월</div>
+                  <div style="font-size:8px; color:${isCur ? 'var(--text-primary)' : 'var(--text-tertiary)'}; font-weight:${isCur?'700':'400'}; white-space:nowrap;">${d.m+1}월</div>
                 </div>`;
             }).join('')}
           </div>
+          ${(() => {
+            const sel = window._moneyBarSel;
+            if (sel === undefined || sel < 0 || !monthData[sel]) return '';
+            const d = monthData[sel];
+            return `
+              <div style="margin-top:12px; padding:10px 12px; background:white; border-radius:9px; border:0.5px solid var(--border-tertiary);">
+                <div style="font-size:11px; font-weight:700; color:var(--text-primary); margin-bottom:6px;">${d.y}년 ${d.m+1}월</div>
+                <div style="display:flex; justify-content:space-between; font-size:11px; padding:2px 0;">
+                  <span style="color:#C2557A;">🍚 변동지출</span>
+                  <span style="font-weight:600;">${d.variable.toLocaleString()}원</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; font-size:11px; padding:2px 0;">
+                  <span style="color:#C9863A;">📌 고정지출</span>
+                  <span style="font-weight:600;">${d.fixed.toLocaleString()}원</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; font-size:12px; padding:5px 0 0; margin-top:4px; border-top:0.5px solid var(--border-tertiary); font-weight:700;">
+                  <span>합계</span>
+                  <span>${d.total.toLocaleString()}원</span>
+                </div>
+              </div>`;
+          })()}
         </div>`;
     }
     html += `</div>`;
