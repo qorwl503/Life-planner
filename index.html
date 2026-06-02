@@ -14456,12 +14456,38 @@ function removeWatchItem(id) {
   render();
 }
 
+// 주요 종목 한글 ↔ 영문 매핑 (영어 RSS에서도 매칭되게)
+const STOCK_NAME_MAP = {
+  '아마존':'Amazon', '애플':'Apple', '테슬라':'Tesla', '엔비디아':'Nvidia',
+  '마이크로소프트':'Microsoft', '구글':'Google', '알파벳':'Alphabet', '메타':'Meta',
+  '넷플릭스':'Netflix', '인텔':'Intel', '아마존닷컴':'Amazon', '브로드컴':'Broadcom',
+  '팔란티어':'Palantir', '코인베이스':'Coinbase', 'AMD':'AMD', '마이크론':'Micron',
+  '퀄컴':'Qualcomm', '스타벅스':'Starbucks', '디즈니':'Disney', '나이키':'Nike',
+  '버크셔':'Berkshire', '오라클':'Oracle', '세일즈포스':'Salesforce', '우버':'Uber',
+};
+
+// 관심종목 관련 뉴스를 우리 RSS 목록에서 필터링 (한글명+영문명+티커)
+function filterNewsForStock(w, allNews) {
+  const keys = [w.name];
+  if (STOCK_NAME_MAP[w.name]) keys.push(STOCK_NAME_MAP[w.name]);
+  if (w.ticker) keys.push(w.ticker);
+  const lowerKeys = keys.map(k => k.toLowerCase());
+  return (allNews || []).filter(n => {
+    const t = (n.title || '').toLowerCase();
+    return lowerKeys.some(k => t.includes(k));
+  }).slice(0, 4);
+}
+
 // 관심종목 시세 + 급락 신호 + 관련 뉴스 렌더 (비동기)
 async function renderWatchlist() {
   const container = document.getElementById('watchlist-container');
   if (!container || watchlist.length === 0) return;
 
-  // 시세 + 종목별 뉴스 검색 동시에
+  // 우리 RSS 뉴스 목록 한 번만 가져오기 (잘 됨)
+  let allNews = [];
+  try { allNews = await fetchNewsRSS(); } catch (e) {}
+
+  // 시세 가져오기
   const results = await Promise.all(watchlist.map(async (w) => {
     let priceInfo = { price: null };
     try {
@@ -14470,10 +14496,9 @@ async function renderWatchlist() {
       if (!data?.price && !w.isUS) data = await fetchYahooPrice(`${w.ticker}.KQ`);
       if (data?.price) priceInfo = { price: data.price, changePct: data.changePct ?? 0, currency: data.currency };
     } catch (e) {}
-    // 🔧 그 종목을 구글 뉴스로 직접 검색 (RSS 필터링 X)
-    let news = [];
-    try { news = await fetchStockNews(w.name); } catch (e) {}
-    return { w, ...priceInfo, news: news.slice(0, 3) };
+    // 우리 RSS에서 이 종목 관련 기사 필터
+    const news = filterNewsForStock(w, allNews);
+    return { w, ...priceInfo, news };
   }));
 
   let html = '';
@@ -14513,13 +14538,14 @@ async function renderWatchlist() {
             ${related.map(n => {
               const ago = n.pubDate ? timeAgo(new Date(n.pubDate).toISOString()) : (n.date || '');
               const safeLink = n.link ? n.link.replace(/'/g, "\\'") : '';
+              const meta = [n.source, ago].filter(Boolean).join(' · ');
               return `<div ${safeLink ? `onclick="openExt('${safeLink}')"` : ''} style="padding:7px 0; border-top:0.5px solid var(--border-tertiary); cursor:${safeLink ? 'pointer' : 'default'};">
                 <div style="font-size:11px; line-height:1.4; color:var(--text-primary);">${n.title}</div>
-                ${ago ? `<div style="font-size:9px; color:var(--text-tertiary); margin-top:2px;">${ago}</div>` : ''}
+                ${meta ? `<div style="font-size:9px; color:var(--text-tertiary); margin-top:2px;">${meta}</div>` : ''}
               </div>`;
             }).join('')}
           </div>
-        ` : `<div style="padding:0 12px 10px; font-size:10px; color:var(--text-tertiary);">관련 기사 검색 중이거나 없어요</div>`}
+        ` : `<div style="padding:0 12px 10px; font-size:10px; color:var(--text-tertiary);">최근 뉴스 목록에 관련 기사 없음</div>`}
       </div>`;
   });
 
