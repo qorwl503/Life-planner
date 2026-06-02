@@ -1110,7 +1110,7 @@ function saveData(immediate = false) {
 
   // 🔧 Firebase는 undefined 값을 거부함(저장 전체 실패) → JSON 왕복으로 undefined 싹 제거
   const _cleanForFirebase = () => JSON.parse(JSON.stringify({
-    todos, budget, workoutLog, assets, settings, userChannels, economySites, challenges,
+    todos, budget, workoutLog, assets, settings, userChannels, economySites, challenges, watchlist,
     updatedAt: Date.now()
   }));
 
@@ -1153,7 +1153,7 @@ function saveData(immediate = false) {
 }
 
 function saveLocal() {
-  const payload = { todos, budget, workoutLog, assets, settings, userChannels, economySites, challenges };
+  const payload = { todos, budget, workoutLog, assets, settings, userChannels, economySites, challenges, watchlist };
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   } catch(e) {
@@ -1329,6 +1329,8 @@ let economySites = [
 ];
 // 챌린지
 let challenges = [];
+// ⭐ 관심종목 (즐겨찾기) — { id, name, ticker, isUS }
+let watchlist = [];
 // 시세 캐시 (5분간 유효)
 let priceCache = {};
 
@@ -1352,6 +1354,7 @@ function applyData(data) {
   if (data.userChannels) userChannels = data.userChannels;
   if (data.economySites) economySites = data.economySites;
   if (data.challenges) challenges = data.challenges;
+  if (data.watchlist) watchlist = data.watchlist;
   // 고정지출 마이그레이션 - 옛날 데이터에 cycle 없으면 monthly 기본
   if (budget && budget.fixed) {
     budget.fixed.forEach(f => {
@@ -11997,6 +12000,7 @@ function renderAsset() {
     setTimeout(() => loadNewsRSS(), 50);
     setTimeout(() => loadAINewsSummary(), 100);
     setTimeout(async () => { await loadAIBriefing(false); }, 150);
+    if (watchlist.length > 0) setTimeout(() => renderWatchlist(), 60);
   }
 
   // 플랜 탭이면 AI 액션 호출
@@ -14408,6 +14412,108 @@ async function loadVideosInto(containerId, query, maxResults = 8, order = 'relev
 }
 
 // ====== 경제 사이트 추가/수정/삭제 ======
+// ===== ⭐ 관심종목 (즐겨찾기) =====
+function openAddWatchModal() {
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">취소</button>
+        <h2>관심종목 추가</h2>
+        <button class="modal-save" onclick="saveWatchItem()">추가</button>
+      </div>
+      <div class="field">
+        <div class="field-label">종목명</div>
+        <input type="text" id="watch-name" placeholder="예: 엔비디아, 삼성전자" />
+      </div>
+      <div class="field">
+        <div class="field-label">티커 / 종목코드</div>
+        <input type="text" id="watch-ticker" placeholder="예: NVDA, 005930, QQQ" />
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px;">미국: 영문 티커(NVDA) · 국내: 6자리 코드(005930)</div>
+      </div>
+    </div>
+  `;
+  modal.classList.add('show');
+}
+
+function saveWatchItem() {
+  const name = document.getElementById('watch-name').value.trim();
+  let ticker = document.getElementById('watch-ticker').value.trim().toUpperCase();
+  if (!name || !ticker) { showToast('종목명과 티커를 입력해주세요'); return; }
+  // 국내(숫자 6자리)인지 미국인지 판별
+  const isUS = !/^\d{6}$/.test(ticker);
+  watchlist.push({ id: Date.now(), name, ticker, isUS });
+  saveData();
+  closeModal();
+  showToast(`⭐ ${name} 추가됨`);
+  render();
+}
+
+function removeWatchItem(id) {
+  watchlist = watchlist.filter(w => w.id !== id);
+  saveData();
+  showToast('관심종목에서 제거됨');
+  render();
+}
+
+// 관심종목 시세 + 급락 신호 렌더 (비동기)
+async function renderWatchlist() {
+  const container = document.getElementById('watchlist-container');
+  if (!container || watchlist.length === 0) return;
+
+  const results = await Promise.all(watchlist.map(async (w) => {
+    try {
+      const yTicker = w.isUS ? w.ticker : `${w.ticker}.KS`;
+      const data = await fetchYahooPrice(yTicker);
+      if (!data?.price) {
+        // .KS 실패 시 .KQ 시도 (코스닥)
+        if (!w.isUS) {
+          const data2 = await fetchYahooPrice(`${w.ticker}.KQ`);
+          if (data2?.price) return { w, price: data2.price, changePct: data2.changePct ?? 0, currency: data2.currency };
+        }
+        return { w, price: null };
+      }
+      return { w, price: data.price, changePct: data.changePct ?? 0, currency: data.currency };
+    } catch (e) {
+      return { w, price: null };
+    }
+  }));
+
+  let html = '';
+  results.forEach(({ w, price, changePct, currency }) => {
+    const isCrash = price != null && changePct <= -5; // 🔻 급락 -5% 이상
+    const chgColor = changePct >= 0 ? 'var(--text-danger)' : 'var(--text-info)';
+    const priceStr = price == null ? '시세 없음'
+      : currency === 'USD' ? `$${price.toLocaleString(undefined,{maximumFractionDigits:2})}`
+      : `${Math.round(price).toLocaleString()}원`;
+    html += `
+      <div style="padding:11px 12px; margin-bottom:6px; background:${isCrash ? 'rgba(232,72,61,0.08)' : 'var(--bg-secondary)'}; border-radius:var(--radius-md); border:${isCrash ? '1px solid rgba(232,72,61,0.3)' : '0.5px solid var(--border-tertiary)'};">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div onclick="openNews('${w.name.replace(/'/g, "\\'")} 주가 뉴스')" style="flex:1; min-width:0; cursor:pointer;">
+            <div style="font-size:13px; font-weight:600; display:flex; align-items:center; gap:6px;">
+              ${w.name}
+              ${isCrash ? `<span style="font-size:9px; font-weight:700; color:white; background:#E8483D; padding:1px 6px; border-radius:4px;">🔻 급락</span>` : ''}
+            </div>
+            <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${w.ticker} · 뉴스 보기</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:13px; font-weight:600;">${priceStr}</div>
+            ${price != null ? `<div style="font-size:10px; color:${chgColor};">${changePct >= 0 ? '▲' : '▼'}${Math.abs(changePct).toFixed(2)}%</div>` : ''}
+          </div>
+          <button onclick="removeWatchItem(${w.id})" style="border:none; background:transparent; cursor:pointer; padding:4px; color:var(--text-tertiary); font-family:inherit; flex-shrink:0;"><i class="ti ti-x" style="font-size:14px;"></i></button>
+        </div>
+      </div>`;
+  });
+
+  // 급락 종목 있으면 맨 위에 요약
+  const crashCount = results.filter(r => r.price != null && r.changePct <= -5).length;
+  if (crashCount > 0) {
+    html = `<div style="padding:8px 12px; margin-bottom:8px; background:#E8483D; color:white; border-radius:8px; font-size:11px; font-weight:600;">🔻 관심종목 ${crashCount}개가 5% 이상 급락했어요</div>` + html;
+  }
+
+  container.innerHTML = html;
+}
+
 function openAddSiteModal() {
   modal.innerHTML = `
     <div class="modal">
@@ -15014,6 +15120,18 @@ function renderAssetMarket(total, byType) {
         <div class="spinner" style="margin:0 auto 10px;"></div>
         뉴스 불러오는 중...
       </div>
+    </div>`;
+
+  // 3.5) ⭐ 관심종목 (즐겨찾기)
+  html += `
+    <div style="display:flex; align-items:center; justify-content:space-between; margin: 22px 0 8px;">
+      <div style="font-size:14px; font-weight:600;">⭐ 관심종목 ${watchlist.length}개</div>
+      <button onclick="openAddWatchModal()" style="border:none; background:var(--text-info); color:white; padding:6px 12px; border-radius:999px; font-size:11px; font-weight:500; cursor:pointer; font-family:inherit;">+ 종목 추가</button>
+    </div>
+    <div id="watchlist-container">
+      ${watchlist.length === 0
+        ? `<div class="empty-state" style="padding:20px;"><span style="font-size:11px;">관심종목을 추가하면 시세·급락·뉴스를 모아볼 수 있어요</span></div>`
+        : `<div style="font-size:11px; color:var(--text-tertiary); padding:8px;">시세 불러오는 중...</div>`}
     </div>`;
 
   // 4) 내 보유 종목 뉴스
@@ -16317,7 +16435,7 @@ function openSettingsModal() {
 // 💾 전체 데이터를 JSON 파일로 다운로드
 function exportBackup() {
   try {
-    const payload = { todos, budget, workoutLog, assets, settings, userChannels, economySites, challenges, _backupAt: new Date().toISOString(), _backupVersion: 'v5' };
+    const payload = { todos, budget, workoutLog, assets, settings, userChannels, economySites, challenges, watchlist, _backupAt: new Date().toISOString(), _backupVersion: 'v5' };
     const json = JSON.stringify(payload, null, 2);
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
