@@ -4797,11 +4797,23 @@ function renderMoney() {
   if (typeof window.moneyBarExpanded === 'undefined') window.moneyBarExpanded = true;
   (() => {
     // 최근 6개월 (보고 있는 달 기준 직전 6개월)
+    // 가계부 기록이 있는 가장 이른 달 찾기 (그 전엔 데이터 없음)
+    let earliestYM = null;
+    (budget.expenses || []).forEach(e => {
+      const k = e.dateKey || '';
+      if (k && (!earliestYM || k.slice(0,7) < earliestYM)) earliestYM = k.slice(0,7);
+    });
+
     const months = [];
-    for (let i = 5; i >= 0; i--) {
+    // 보고 있는 달부터 거꾸로, 최대 12개월 — 단 데이터 첫 달 이전은 제외
+    for (let i = 0; i < 12; i++) {
       const d = new Date(budgetViewYear, budgetViewMonth - i, 1);
-      months.push({ y: d.getFullYear(), m: d.getMonth() });
+      const ym = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      if (earliestYM && ym < earliestYM) break; // 가계부 시작 전이면 중단
+      months.unshift({ y: d.getFullYear(), m: d.getMonth() });
     }
+    // 최소 1개는 보이게 (데이터 없어도 이번 달은)
+    if (months.length === 0) months.push({ y: budgetViewYear, m: budgetViewMonth });
 
     // 월별 변동지출 합계
     const monthData = months.map(({ y, m }) => {
@@ -4883,9 +4895,13 @@ function renderMoney() {
               </div>
               <!-- X축 월 라벨 -->
               <div style="display:flex; justify-content:space-between; gap:10px; margin-top:5px;">
-                ${monthData.map(d => {
+                ${monthData.map((d, i) => {
                   const isCur = d.y === budgetViewYear && d.m === budgetViewMonth;
-                  return `<div style="flex:1; text-align:center; font-size:8px; color:${isCur ? 'var(--text-primary)' : 'var(--text-tertiary)'}; font-weight:${isCur?'700':'400'}; white-space:nowrap;">${d.m+1}월</div>`;
+                  // 첫 막대이거나, 연도가 바뀌는 지점(1월)이면 'YY년' 표시
+                  const prevY = i > 0 ? monthData[i-1].y : null;
+                  const showYear = (i === 0) || (d.y !== prevY);
+                  const label = showYear ? `${String(d.y).slice(2)}년 ${d.m+1}월` : `${d.m+1}월`;
+                  return `<div style="flex:1; text-align:center; font-size:8px; color:${isCur ? 'var(--text-primary)' : 'var(--text-tertiary)'}; font-weight:${isCur?'700':'400'}; white-space:nowrap; line-height:1.3;">${label}</div>`;
                 }).join('')}
               </div>
             </div>
