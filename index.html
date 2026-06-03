@@ -944,7 +944,7 @@ const firebaseConfig = {
 
       <div style="margin-top:20px; padding-top:18px; border-top:0.5px solid var(--border-tertiary); font-size:11px; color:var(--text-tertiary); line-height:1.6; text-align:center;">
         <i class="ti ti-shield-check" style="font-size:13px; vertical-align:-1px;"></i>
-        모든 데이터는 본인만 볼 수 있게 암호화 저장돼요.
+        모든 데이터는 본인 계정에만 안전하게 저장돼요.
       </div>
     </div>
   </div>
@@ -1333,6 +1333,101 @@ let challenges = [];
 let watchlist = [];
 // 시세 캐시 (5분간 유효)
 let priceCache = {};
+
+// ===== 🔒 화면 잠금 (PIN) =====
+// PIN은 이 기기(localStorage)에만 저장. 간단 해시로 보관.
+function _hashPin(pin) {
+  let h = 0;
+  const s = 'lp_' + pin + '_salt';
+  for (let i = 0; i < s.length; i++) { h = ((h << 5) - h + s.charCodeAt(i)) | 0; }
+  return String(h);
+}
+function hasAppLock() { return !!localStorage.getItem('app_lock_pin'); }
+
+function showLockScreen() {
+  if (!hasAppLock()) return;
+  if (document.getElementById('lock-screen')) return; // 이미 떠있음
+  const ov = document.createElement('div');
+  ov.id = 'lock-screen';
+  ov.style.cssText = 'position:fixed; inset:0; z-index:99999; background:var(--bg-primary, #F4F4EE); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:20px;';
+  ov.innerHTML = `
+    <div style="font-size:34px;">🔒</div>
+    <div style="font-size:15px; font-weight:600; color:var(--text-primary);">PIN을 입력하세요</div>
+    <div id="lock-dots" style="display:flex; gap:12px; margin:4px 0;"></div>
+    <div id="lock-err" style="font-size:12px; color:var(--text-danger); height:16px;"></div>
+    <div id="lock-pad" style="display:grid; grid-template-columns:repeat(3,64px); gap:14px;"></div>
+  `;
+  document.body.appendChild(ov);
+
+  let entered = '';
+  const dots = ov.querySelector('#lock-dots');
+  const err = ov.querySelector('#lock-err');
+  const pad = ov.querySelector('#lock-pad');
+  function drawDots() {
+    dots.innerHTML = [0,1,2,3].map(i => `<div style="width:13px; height:13px; border-radius:50%; background:${i < entered.length ? 'var(--accent-primary, #5E5CE6)' : 'var(--border-tertiary, #ccc)'};"></div>`).join('');
+  }
+  drawDots();
+  function press(n) {
+    if (entered.length >= 4) return;
+    entered += n;
+    drawDots();
+    if (entered.length === 4) {
+      setTimeout(() => {
+        if (_hashPin(entered) === localStorage.getItem('app_lock_pin')) {
+          ov.remove();
+        } else {
+          err.textContent = 'PIN이 일치하지 않아요';
+          entered = '';
+          drawDots();
+          setTimeout(() => { err.textContent = ''; }, 1500);
+        }
+      }, 120);
+    }
+  }
+  ['1','2','3','4','5','6','7','8','9','','0','⌫'].forEach(k => {
+    const btn = document.createElement('button');
+    btn.textContent = k;
+    btn.style.cssText = `width:64px; height:64px; border-radius:50%; border:none; font-size:22px; font-family:inherit; cursor:pointer; background:${k===''?'transparent':'var(--bg-secondary, #fff)'}; color:var(--text-primary); ${k===''?'pointer-events:none;':''}`;
+    btn.onclick = () => {
+      if (k === '⌫') { entered = entered.slice(0, -1); drawDots(); }
+      else if (k !== '') press(k);
+    };
+    pad.appendChild(btn);
+  });
+}
+
+function setupAppLock() {
+  // 앱 처음 켤 때 잠금
+  if (hasAppLock()) showLockScreen();
+  // 백그라운드 갔다 돌아오면 잠금
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && hasAppLock()) {
+      window._wentBackground = Date.now();
+    } else if (document.visibilityState === 'visible' && hasAppLock()) {
+      // 10초 이상 백그라운드였으면 잠금 (잠깐 알림 확인 등은 제외)
+      if (window._wentBackground && Date.now() - window._wentBackground > 10000) {
+        showLockScreen();
+      }
+    }
+  });
+}
+
+function openAppLockSetup() {
+  if (hasAppLock()) {
+    // 이미 설정됨 → 해제 여부
+    const ok = confirm('화면 잠금을 해제할까요?');
+    if (ok) { localStorage.removeItem('app_lock_pin'); showToast('화면 잠금 해제됨'); render(); }
+    return;
+  }
+  const pin1 = prompt('설정할 4자리 PIN을 입력하세요');
+  if (!pin1) return;
+  if (!/^\d{4}$/.test(pin1)) { showToast('숫자 4자리로 입력해주세요'); return; }
+  const pin2 = prompt('확인을 위해 다시 입력하세요');
+  if (pin1 !== pin2) { showToast('PIN이 일치하지 않아요'); return; }
+  localStorage.setItem('app_lock_pin', _hashPin(pin1));
+  showToast('🔒 화면 잠금 설정됨');
+  render();
+}
 
 // 데이터 적용 함수
 function applyData(data) {
@@ -16520,6 +16615,18 @@ function openSettingsModal() {
         </div>
       </button>
 
+      <!-- 🔒 화면 잠금 -->
+      <button onclick="openAppLockSetup()" style="width:100%; padding:14px; border:0.5px solid var(--border-tertiary); background:white; border-radius:var(--radius-md); cursor:pointer; font-family:inherit; text-align:left; margin-bottom:10px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-size:20px;">🔒</span>
+          <div style="flex:1;">
+            <div style="font-size:13px; font-weight:600;">화면 잠금 (PIN)</div>
+            <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${hasAppLock() ? '설정됨 · 눌러서 해제' : '4자리 PIN으로 앱 잠그기'}</div>
+          </div>
+          <i class="ti ti-${hasAppLock() ? 'lock' : 'lock-open'}" style="color:var(--text-tertiary);"></i>
+        </div>
+      </button>
+
       <!-- 💾 데이터 백업 -->
       <button onclick="exportBackup()" style="width:100%; padding:14px; border:0.5px solid var(--border-tertiary); background:white; border-radius:var(--radius-md); cursor:pointer; font-family:inherit; text-align:left; margin-bottom:10px;">
         <div style="display:flex; align-items:center; gap:10px;">
@@ -18309,6 +18416,7 @@ function startApp() {
   document.getElementById('loading-screen').classList.add('hidden');
   document.getElementById('auth-screen').classList.add('hidden');
   render();
+  setupAppLock(); // 🔒 화면 잠금 (설정돼 있으면)
 }
 
 function showLoginScreen() {
