@@ -14579,16 +14579,20 @@ async function fetchNaverStockNews(query, ticker) {
     if (!res.ok) return [];
     const data = await res.json();
     const all = data.items || [];
-    // 🔧 제목에 종목명(또는 티커)이 든 기사만 — 본문만 걸린 엉뚱한 기사 제거.
-    //    주가뿐 아니라 그 회사 신제품·실적·이슈도 제목에 회사명 있으면 다 잡힘.
-    const keys = [query.toLowerCase()];
-    if (ticker) keys.push(ticker.toLowerCase());
+    // 🔧 제목 매칭 완화: 종목명을 토큰으로 쪼개 한 단어라도 제목에 들면 통과
+    //    (ETF·영문·축약명은 풀네임이 제목에 통째로 안 들어가 전부 걸러지던 문제 해결)
+    const stop = new Set(['etf','tiger','kodex','plus','korea','us','미국','인덱스','증권','상장','투자','펀드']);
+    const tokens = String(query || '')
+      .split(/[\s·,\-()\[\]]+/)
+      .map(s => s.trim().toLowerCase())
+      .filter(s => s.length >= 2 && !stop.has(s));
+    if (ticker) tokens.push(ticker.toLowerCase());
     const filtered = all.filter(n => {
       const t = (n.title || '').toLowerCase();
-      return keys.some(k => k.length >= 2 && t.includes(k));
+      return tokens.some(k => t.includes(k));
     });
-    // 제목 매칭된 게 있으면 그것만, 하나도 없으면 빈 배열(엉뚱한 거 보여주느니)
-    return filtered.slice(0, 4);
+    // 매칭된 게 있으면 그것, 하나도 없으면 최신 기사라도 일부 노출
+    return (filtered.length ? filtered : all).slice(0, 4);
   } catch (e) { return []; }
 }
 
@@ -14653,7 +14657,9 @@ async function renderWatchlist() {
       let data = await fetchYahooPrice(yTicker);
       if (!data?.price && !isUS) data = await fetchYahooPrice(`${w.ticker}.KQ`);
       if (data?.price) {
-        priceInfo = { price: data.price, changePct: data.changePct ?? 0, currency: data.currency };
+        // 🔧 국내 종목(.KS/.KQ)은 야후가 currency를 비워도 KRW로 강제 — USD 오표기 방지
+        const cur = isUS ? (data.currency || 'USD') : 'KRW';
+        priceInfo = { price: data.price, changePct: data.changePct ?? 0, currency: cur };
       } else if (!isUS) {
         // 야후 실패 + 국내 종목 → 네이버 시세 폴백 (신생/특이 ETF)
         const nv = await fetchNaverPrice(w.ticker);
