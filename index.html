@@ -14553,7 +14553,8 @@ function saveWatchItem() {
   const name = document.getElementById('watch-name').value.trim();
   let ticker = document.getElementById('watch-ticker').value.trim().toUpperCase();
   if (!name || !ticker) { showToast('종목명과 티커를 입력해주세요'); return; }
-  const isUS = !/^\d{6}$/.test(ticker);
+  // 한국 종목코드: 6자리이고 숫자를 포함 (005930, 0167A0 같은 신형 포함). 미국: 순수 영문(GOOGL, QQQ)
+  const isUS = !(ticker.length === 6 && /\d/.test(ticker));
   watchlist.push({ id: Date.now(), name, ticker, isUS });
   saveData();
   closeModal();
@@ -14645,13 +14646,15 @@ async function renderWatchlist() {
 
   const results = await Promise.all(watchlist.map(async (w) => {
     let priceInfo = { price: null };
+    // 저장된 isUS를 믿지 말고 재판정 (0167A0 같은 신형 국내코드 교정)
+    const isUS = !(w.ticker.length === 6 && /\d/.test(w.ticker));
     try {
-      const yTicker = w.isUS ? w.ticker : `${w.ticker}.KS`;
+      const yTicker = isUS ? w.ticker : `${w.ticker}.KS`;
       let data = await fetchYahooPrice(yTicker);
-      if (!data?.price && !w.isUS) data = await fetchYahooPrice(`${w.ticker}.KQ`);
+      if (!data?.price && !isUS) data = await fetchYahooPrice(`${w.ticker}.KQ`);
       if (data?.price) {
         priceInfo = { price: data.price, changePct: data.changePct ?? 0, currency: data.currency };
-      } else if (!w.isUS) {
+      } else if (!isUS) {
         // 야후 실패 + 국내 종목 → 네이버 시세 폴백 (신생/특이 ETF)
         const nv = await fetchNaverPrice(w.ticker);
         if (nv?.price) priceInfo = nv;
