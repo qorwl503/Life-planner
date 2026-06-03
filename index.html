@@ -15273,42 +15273,81 @@ async function fetchNewsRSS() {
 
 // 🔧 시장·뉴스 통합 탭 — AI 시장 브리핑 + AI 뉴스요약 + 경제뉴스 + 보유종목 뉴스 + 내 경제 사이트
 // 🔧 공포탐욕 게이지 (VIX 변동성 지수 기반) — 시장·뉴스 탭
+// CNN 실제 Fear & Greed Index (0~100) 조회 — Worker/allorigins 프록시 경유
+const _fngCache = { data: null, time: 0 };
+async function fetchCnnFearGreed() {
+  // 4시간 캐시 (CNN은 하루 한 번 갱신)
+  if (_fngCache.data && Date.now() - _fngCache.time < 4 * 60 * 60 * 1000) return _fngCache.data;
+  const target = 'https://production.dataviz.cnn.io/index/fearandgreed/graphdata';
+  const proxies = [
+    { url: `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(target)}`, parse: async (r) => { const w = await r.json(); return w.contents ? JSON.parse(w.contents) : w; } },
+    { url: `https://api.allorigins.win/get?url=${encodeURIComponent(target)}`, parse: async (r) => JSON.parse((await r.json()).contents) },
+    { url: `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(target)}`, parse: async (r) => r.json() },
+  ];
+  for (const p of proxies) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 6000);
+      const res = await fetch(p.url, { signal: ctrl.signal });
+      clearTimeout(t);
+      if (!res.ok) continue;
+      const json = await p.parse(res);
+      const fg = json.fear_and_greed;
+      if (fg && fg.score != null) {
+        const out = { score: Number(fg.score), rating: fg.rating, prev: fg.previous_close != null ? Number(fg.previous_close) : null };
+        _fngCache.data = out; _fngCache.time = Date.now();
+        return out;
+      }
+    } catch (e) { /* 다음 프록시 */ }
+  }
+  return null;
+}
+
+// 🔧 공포탐욕 게이지 — CNN 실제 지수(0~100) 우선, 실패 시 VIX 추정 폴백
 async function loadFearGreedGauge() {
   const container = document.getElementById('fear-greed-gauge');
   if (!container) return;
 
+  // 0~100 점수 → 단계/이모지/색/설명
+  const stageFromScore = (s) => {
+    if (s < 25) return { stage: '극도의 공포', emoji: '😱', color: '#3B7DE0', desc: '패닉 수준이에요. 역사적으로 이런 구간은 장기 매수 기회였던 경우가 많아요.' };
+    if (s < 45) return { stage: '공포', emoji: '😨', color: '#5B9BD5', desc: '시장이 불안해하고 있어요. 분할매수 기회가 될 수도, 더 빠질 수도 있어요.' };
+    if (s < 55) return { stage: '중립', emoji: '😐', color: '#C9C04A', desc: '시장이 균형 상태예요. 평소대로 적립식 투자하기 무난한 구간.' };
+    if (s < 75) return { stage: '탐욕', emoji: '😌', color: '#E89B4A', desc: '낙관이 우세해요. 분위기에 휩쓸린 추격매수는 신중히.' };
+    return { stage: '극도의 탐욕', emoji: '😎', color: '#E2483D', desc: '과열 신호예요. 과도한 낙관일 수 있으니 신규 진입은 보수적으로.' };
+  };
+
   try {
-    const indices = await fetchMarketIndices();
-    const vix = indices.vix?.price;
-    if (vix == null) {
-      container.innerHTML = `<div style="padding:14px; background:var(--bg-secondary); border-radius:14px; text-align:center; font-size:11px; color:var(--text-tertiary);">시장 분위기 지수를 불러올 수 없어요.</div>`;
-      return;
+    let score = null, rating = null, prev = null, source = '';
+    const cnn = await fetchCnnFearGreed();
+    if (cnn) { score = cnn.score; rating = cnn.rating; prev = cnn.prev; source = 'cnn'; }
+
+    // 폴백: CNN 실패 시 VIX를 0~100 점수로 환산 (대략적, VIX 10→90 / 40→10)
+    if (score == null) {
+      const indices = await fetchMarketIndices();
+      const vix = indices.vix?.price;
+      if (vix == null) {
+        container.innerHTML = `<div style="padding:14px; background:var(--bg-secondary); border-radius:14px; text-align:center; font-size:11px; color:var(--text-tertiary);">시장 분위기 지수를 불러올 수 없어요.</div>`;
+        return;
+      }
+      score = Math.max(0, Math.min(100, Math.round(100 - (vix - 10) * (80 / 30))));
+      source = 'vix';
     }
 
-    // VIX → 공포탐욕 단계 (VIX는 낮을수록 안정/탐욕, 높을수록 공포)
-    // 보통 12↓ 매우안정 / 12~20 안정 / 20~28 경계 / 28~40 공포 / 40↑ 극공포
-    let stage, emoji, color, gaugePct, desc;
-    if (vix < 12) {
-      stage = '매우 안정 (탐욕)'; emoji = '😎'; color = '#E2483D'; gaugePct = 90;
-      desc = '시장이 매우 차분해요. 과열·낙관이 클 수 있으니 추격매수는 신중히.';
-    } else if (vix < 20) {
-      stage = '안정'; emoji = '😌'; color = '#E89B4A'; gaugePct = 70;
-      desc = '대체로 안정적인 시장이에요. 평소대로 적립식 투자하기 좋은 구간.';
-    } else if (vix < 28) {
-      stage = '경계'; emoji = '😐'; color = '#C9C04A'; gaugePct = 50;
-      desc = '변동성이 조금씩 커지고 있어요. 뉴스 흐름을 살펴보세요.';
-    } else if (vix < 40) {
-      stage = '공포'; emoji = '😨'; color = '#5B9BD5'; gaugePct = 28;
-      desc = '시장이 불안해하고 있어요. 분할매수 기회가 될 수도, 더 빠질 수도 있어요.';
-    } else {
-      stage = '극도의 공포'; emoji = '😱'; color = '#3B7DE0'; gaugePct = 10;
-      desc = '패닉 수준의 변동성. 역사적으로 이런 구간은 장기 매수 기회였던 경우가 많아요.';
-    }
+    const { stage, emoji, color, desc } = stageFromScore(score);
+    const gaugePct = Math.max(0, Math.min(100, score));
 
-    const chg = indices.vix?.changePct;
-    const chgStr = (chg != null)
-      ? `<span style="font-size:10px; color:${chg >= 0 ? 'var(--text-danger)' : 'var(--text-info)'};">VIX ${chg >= 0 ? '▲' : '▼'}${Math.abs(chg).toFixed(1)}%</span>`
-      : '';
+    let chgStr = '';
+    if (source === 'cnn' && prev != null) {
+      const d = score - prev;
+      chgStr = `<span style="font-size:10px; color:${d >= 0 ? 'var(--text-danger)' : 'var(--text-info)'};">전일 대비 ${d >= 0 ? '▲' : '▼'}${Math.abs(d).toFixed(0)}</span>`;
+    }
+    const sub = source === 'cnn'
+      ? `CNN 공포·탐욕 지수 ${score}/100`
+      : `VIX 기반 추정 ${score}/100`;
+    const note = source === 'cnn'
+      ? '※ CNN Fear &amp; Greed Index 기준. 미국 시장 심리이며 참고용이에요.'
+      : '※ CNN 지수 연결 실패 → VIX 기반 추정값. 참고용이에요.';
 
     container.innerHTML = `
       <div style="padding:16px; background:var(--bg-secondary); border-radius:14px;">
@@ -15320,19 +15359,17 @@ async function loadFearGreedGauge() {
           <div style="font-size:38px;">${emoji}</div>
           <div style="flex:1; min-width:0;">
             <div style="font-size:16px; font-weight:800; color:${color};">${stage}</div>
-            <div style="font-size:10px; color:var(--text-tertiary);">VIX 변동성 지수 ${vix.toFixed(1)}</div>
+            <div style="font-size:10px; color:var(--text-tertiary);">${sub}</div>
           </div>
         </div>
         <div style="position:relative; height:8px; border-radius:4px; margin:12px 0 4px; background:linear-gradient(90deg,#3B7DE0 0%,#5B9BD5 25%,#C9C04A 50%,#E89B4A 75%,#E2483D 100%);">
           <div style="position:absolute; top:-3px; left:${gaugePct}%; transform:translateX(-50%); width:14px; height:14px; border-radius:50%; background:white; border:2px solid ${color}; box-shadow:0 1px 3px rgba(0,0,0,0.3);"></div>
         </div>
         <div style="display:flex; justify-content:space-between; font-size:8px; color:var(--text-tertiary);">
-          <span>극공포</span><span>공포</span><span>중립</span><span>안정</span><span>탐욕</span>
+          <span>극공포</span><span>공포</span><span>중립</span><span>탐욕</span><span>극탐욕</span>
         </div>
         <div style="font-size:10px; color:var(--text-secondary); margin-top:8px; line-height:1.5;">${desc}</div>
-        <div style="font-size:8px; color:var(--text-tertiary); margin-top:6px;">
-          ※ VIX(S&P500 변동성 지수) 기반 추정. 미국 시장 기준이며 참고용이에요.
-        </div>
+        <div style="font-size:8px; color:var(--text-tertiary); margin-top:6px;">${note}</div>
       </div>`;
   } catch (e) {
     console.warn('공포탐욕 게이지 로드 실패', e);
