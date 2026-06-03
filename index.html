@@ -494,17 +494,6 @@ const firebaseConfig = {
   .budget-hero .label { font-size: 10px; opacity: 0.85; margin-bottom: 3px; }
   .budget-hero .big-num { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; margin-bottom: 2px; }
   .budget-hero .sub { font-size: 10px; opacity: 0.9; }
-    background: linear-gradient(135deg, #2A4D1B 0%, #3B6D11 100%);
-    border-radius: 16px;
-    padding: 18px;
-    color: white;
-    margin-bottom: 14px;
-  }
-  .budget-hero.warning { background: linear-gradient(135deg, #6B3F08 0%, #854F0B 100%); }
-  .budget-hero.danger { background: linear-gradient(135deg, #7A1F1F 0%, #A32D2D 100%); }
-  .budget-hero .label { font-size: 11px; opacity: 0.85; margin-bottom: 4px; }
-  .budget-hero .big-num { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; margin-bottom: 2px; }
-  .budget-hero .sub { font-size: 10px; opacity: 0.9; }
   .budget-bar {
     height: 6px;
     background: rgba(255,255,255,0.2);
@@ -14580,7 +14569,7 @@ function removeWatchItem(id) {
 }
 
 // 네이버 검색 API로 종목 뉴스 가져오기 (Worker의 /news 라우트)
-async function fetchNaverStockNews(query) {
+async function fetchNaverStockNews(query, ticker) {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
@@ -14588,8 +14577,65 @@ async function fetchNaverStockNews(query) {
     clearTimeout(timeoutId);
     if (!res.ok) return [];
     const data = await res.json();
-    return (data.items || []).slice(0, 4);
+    const all = data.items || [];
+    // 🔧 제목에 종목명(또는 티커)이 든 기사만 — 본문만 걸린 엉뚱한 기사 제거.
+    //    주가뿐 아니라 그 회사 신제품·실적·이슈도 제목에 회사명 있으면 다 잡힘.
+    const keys = [query.toLowerCase()];
+    if (ticker) keys.push(ticker.toLowerCase());
+    const filtered = all.filter(n => {
+      const t = (n.title || '').toLowerCase();
+      return keys.some(k => k.length >= 2 && t.includes(k));
+    });
+    // 제목 매칭된 게 있으면 그것만, 하나도 없으면 빈 배열(엉뚱한 거 보여주느니)
+    return filtered.slice(0, 4);
   } catch (e) { return []; }
+}
+
+// 네이버 국내 종목 시세 (야후가 못 가져오는 신생/특이 ETF용 폴백)
+async function fetchNaverPrice(code) {
+  // Worker 프록시 통해 네이버 통합 정보 호출
+  const proxies = [
+    u => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(u)}`,
+    u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,
+  ];
+  const target = `https://m.stock.naver.com/api/stock/${code}/integration`;
+  for (const wrap of proxies) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 7000);
+      const res = await fetch(wrap(target), { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (!res.ok) continue;
+      const raw = await res.text();
+      let json;
+      try {
+        const w = JSON.parse(raw);
+        json = (w.contents) ? JSON.parse(w.contents) : w; // Worker는 {contents}로 감쌈
+      } catch { continue; }
+      // 현재가·등락률 찾기 (네이버 통합 응답 구조: totalInfos 배열 또는 dealTrendInfos)
+      let price = null, changePct = null;
+      // 1) totalInfos에서 현재가
+      if (Array.isArray(json.totalInfos)) {
+        const cur = json.totalInfos.find(x => x.code === 'closePrice' || x.key === 'closePrice');
+        if (cur && cur.value) price = parseFloat(String(cur.value).replace(/,/g, ''));
+        const fl = json.totalInfos.find(x => x.code === 'fluctuationsRatio' || x.key === 'fluctuationsRatio');
+        if (fl && fl.value != null) changePct = parseFloat(String(fl.value).replace(/,/g, ''));
+      }
+      // 2) dealTrendInfos 최신 종가
+      if (price == null && Array.isArray(json.dealTrendInfos) && json.dealTrendInfos.length) {
+        const last = json.dealTrendInfos[0];
+        if (last && last.closePrice) price = parseFloat(String(last.closePrice).replace(/,/g, ''));
+      }
+      // 3) 최상위 필드 직접
+      if (price == null && json.closePrice) price = parseFloat(String(json.closePrice).replace(/,/g, ''));
+      if (changePct == null && json.fluctuationsRatio != null) changePct = parseFloat(String(json.fluctuationsRatio).replace(/,/g, ''));
+      if (price != null && !isNaN(price)) {
+        console.log(`💰 ${code} 네이버 시세: ${price}원 (${changePct ?? '?'}%)`);
+        return { price, changePct: changePct ?? 0, currency: 'KRW' };
+      }
+    } catch (e) { /* 다음 프록시 */ }
+  }
+  return null;
 }
 
 // 관심종목 시세 + 급락 + 뉴스 렌더
@@ -14603,10 +14649,16 @@ async function renderWatchlist() {
       const yTicker = w.isUS ? w.ticker : `${w.ticker}.KS`;
       let data = await fetchYahooPrice(yTicker);
       if (!data?.price && !w.isUS) data = await fetchYahooPrice(`${w.ticker}.KQ`);
-      if (data?.price) priceInfo = { price: data.price, changePct: data.changePct ?? 0, currency: data.currency };
+      if (data?.price) {
+        priceInfo = { price: data.price, changePct: data.changePct ?? 0, currency: data.currency };
+      } else if (!w.isUS) {
+        // 야후 실패 + 국내 종목 → 네이버 시세 폴백 (신생/특이 ETF)
+        const nv = await fetchNaverPrice(w.ticker);
+        if (nv?.price) priceInfo = nv;
+      }
     } catch (e) {}
-    // 네이버 검색으로 그 종목 뉴스
-    const news = await fetchNaverStockNews(w.name);
+    // 네이버 검색으로 그 종목 뉴스 (제목에 종목명 든 기사만 — 회사 전반 소식 포함, 엉뚱한 건 제외)
+    const news = await fetchNaverStockNews(w.name, w.ticker);
     return { w, ...priceInfo, news };
   }));
 
