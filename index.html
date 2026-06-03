@@ -15322,55 +15322,96 @@ async function loadFearGreedGauge() {
     const cnn = await fetchCnnFearGreed();
     if (cnn) { score = cnn.score; rating = cnn.rating; prev = cnn.prev; source = 'cnn'; }
 
-    // 폴백: CNN 실패 시 VIX를 0~100 점수로 환산 (대략적, VIX 10→90 / 40→10)
-    if (score == null) {
-      const indices = await fetchMarketIndices();
-      const vix = indices.vix?.price;
-      if (vix == null) {
-        container.innerHTML = `<div style="padding:14px; background:var(--bg-secondary); border-radius:14px; text-align:center; font-size:11px; color:var(--text-tertiary);">시장 분위기 지수를 불러올 수 없어요.</div>`;
-        return;
+    // ===== CNN 연결됨: 실제 0~100 공포탐욕 지수 표시 =====
+    if (source === 'cnn') {
+      const { stage, emoji, color, desc } = stageFromScore(score);
+      const gaugePct = Math.max(0, Math.min(100, score));
+      let chgStr = '';
+      if (prev != null) {
+        const d = score - prev;
+        chgStr = `<span style="font-size:10px; color:${d >= 0 ? 'var(--text-danger)' : 'var(--text-info)'};">전일 대비 ${d >= 0 ? '▲' : '▼'}${Math.abs(d).toFixed(0)}</span>`;
       }
-      score = Math.max(0, Math.min(100, Math.round(100 - (vix - 10) * (80 / 30))));
-      source = 'vix';
+      container.innerHTML = `
+        <div style="padding:16px; background:var(--bg-secondary); border-radius:14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <span style="font-size:12px; font-weight:600;">🌡️ 시장 공포·탐욕 지수</span>
+            ${chgStr}
+          </div>
+          <div style="display:flex; align-items:center; gap:14px;">
+            <div style="font-size:38px;">${emoji}</div>
+            <div style="flex:1; min-width:0;">
+              <div style="font-size:16px; font-weight:800; color:${color};">${stage}</div>
+              <div style="font-size:10px; color:var(--text-tertiary);">CNN 공포·탐욕 지수 ${score}/100</div>
+            </div>
+          </div>
+          <div style="position:relative; height:8px; border-radius:4px; margin:12px 0 4px; background:linear-gradient(90deg,#3B7DE0 0%,#5B9BD5 25%,#C9C04A 50%,#E89B4A 75%,#E2483D 100%);">
+            <div style="position:absolute; top:-3px; left:${gaugePct}%; transform:translateX(-50%); width:14px; height:14px; border-radius:50%; background:white; border:2px solid ${color}; box-shadow:0 1px 3px rgba(0,0,0,0.3);"></div>
+          </div>
+          <div style="display:flex; justify-content:space-between; font-size:8px; color:var(--text-tertiary);">
+            <span>극공포</span><span>공포</span><span>중립</span><span>탐욕</span><span>극탐욕</span>
+          </div>
+          <div style="font-size:10px; color:var(--text-secondary); margin-top:8px; line-height:1.5;">${desc}</div>
+          <div style="font-size:8px; color:var(--text-tertiary); margin-top:6px;">※ CNN Fear &amp; Greed Index 기준. 미국 시장 심리이며 참고용이에요.</div>
+        </div>`;
+      return;
     }
 
-    const { stage, emoji, color, desc } = stageFromScore(score);
-    const gaugePct = Math.max(0, Math.min(100, score));
-
-    let chgStr = '';
-    if (source === 'cnn' && prev != null) {
-      const d = score - prev;
-      chgStr = `<span style="font-size:10px; color:${d >= 0 ? 'var(--text-danger)' : 'var(--text-info)'};">전일 대비 ${d >= 0 ? '▲' : '▼'}${Math.abs(d).toFixed(0)}</span>`;
+    // ===== CNN 실패 → VIX 폴백: 구간표 그대로 (환산 없음) =====
+    const indices = await fetchMarketIndices();
+    const vix = indices.vix?.price;
+    if (vix == null) {
+      container.innerHTML = `<div style="padding:14px; background:var(--bg-secondary); border-radius:14px; text-align:center; font-size:11px; color:var(--text-tertiary);">시장 분위기 지수를 불러올 수 없어요.</div>`;
+      return;
     }
-    const sub = source === 'cnn'
-      ? `CNN 공포·탐욕 지수 ${score}/100`
-      : `VIX 기반 추정 ${score}/100`;
-    const note = source === 'cnn'
-      ? '※ CNN Fear &amp; Greed Index 기준. 미국 시장 심리이며 참고용이에요.'
-      : '※ CNN 지수 연결 실패 → VIX 기반 추정값. 참고용이에요.';
+
+    // VIX 구간별 해석 (10↓ 과도한 안도 / 10~20 안정 / 20~30 불안 / 30~40 공포 / 40↑ 패닉)
+    let vStage, vEmoji, vColor, vDesc;
+    if (vix < 10) {
+      vStage = '과도한 안도감'; vEmoji = '😎'; vColor = '#E2483D';
+      vDesc = '시장 과열·지나친 낙관 구간이에요. 추격매수는 신중히.';
+    } else if (vix < 20) {
+      vStage = '안정'; vEmoji = '😌'; vColor = '#C9C04A';
+      vDesc = '보통의 시장 심리예요. 평소대로 적립식 투자하기 무난한 구간.';
+    } else if (vix < 30) {
+      vStage = '불안'; vEmoji = '😐'; vColor = '#E89B4A';
+      vDesc = '경계심이 확산되고 리스크 인식이 강해지는 구간이에요.';
+    } else if (vix < 40) {
+      vStage = '공포'; vEmoji = '😨'; vColor = '#5B9BD5';
+      vDesc = '위험회피 심리가 우세하고 주가 급락이 동반될 수 있어요.';
+    } else {
+      vStage = '패닉'; vEmoji = '😱'; vColor = '#3B7DE0';
+      vDesc = '시스템 리스크·금융위기급 불안 구간. 역사적으로 장기 매수 기회였던 경우가 많아요.';
+    }
+    // 게이지 위치: VIX 8~44를 막대에 매핑 (낮을수록 우측=안정/탐욕). 8→100%, 44→0%
+    const vGaugePct = Math.max(0, Math.min(100, Math.round((44 - vix) / (44 - 8) * 100)));
+    const vChg = indices.vix?.changePct;
+    const vChgStr = (vChg != null)
+      ? `<span style="font-size:10px; color:${vChg >= 0 ? 'var(--text-danger)' : 'var(--text-info)'};">VIX ${vChg >= 0 ? '▲' : '▼'}${Math.abs(vChg).toFixed(1)}%</span>`
+      : '';
 
     container.innerHTML = `
       <div style="padding:16px; background:var(--bg-secondary); border-radius:14px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-          <span style="font-size:12px; font-weight:600;">🌡️ 시장 공포·탐욕 지수</span>
-          ${chgStr}
+          <span style="font-size:12px; font-weight:600;">🌡️ 시장 변동성 지수 (VIX)</span>
+          ${vChgStr}
         </div>
         <div style="display:flex; align-items:center; gap:14px;">
-          <div style="font-size:38px;">${emoji}</div>
+          <div style="font-size:38px;">${vEmoji}</div>
           <div style="flex:1; min-width:0;">
-            <div style="font-size:16px; font-weight:800; color:${color};">${stage}</div>
-            <div style="font-size:10px; color:var(--text-tertiary);">${sub}</div>
+            <div style="font-size:16px; font-weight:800; color:${vColor};">${vStage}</div>
+            <div style="font-size:10px; color:var(--text-tertiary);">VIX ${vix.toFixed(1)}</div>
           </div>
         </div>
-        <div style="position:relative; height:8px; border-radius:4px; margin:12px 0 4px; background:linear-gradient(90deg,#3B7DE0 0%,#5B9BD5 25%,#C9C04A 50%,#E89B4A 75%,#E2483D 100%);">
-          <div style="position:absolute; top:-3px; left:${gaugePct}%; transform:translateX(-50%); width:14px; height:14px; border-radius:50%; background:white; border:2px solid ${color}; box-shadow:0 1px 3px rgba(0,0,0,0.3);"></div>
+        <div style="position:relative; height:8px; border-radius:4px; margin:12px 0 4px; background:linear-gradient(90deg,#3B7DE0 0%,#5B9BD5 25%,#E89B4A 50%,#C9C04A 75%,#E2483D 100%);">
+          <div style="position:absolute; top:-3px; left:${vGaugePct}%; transform:translateX(-50%); width:14px; height:14px; border-radius:50%; background:white; border:2px solid ${vColor}; box-shadow:0 1px 3px rgba(0,0,0,0.3);"></div>
         </div>
         <div style="display:flex; justify-content:space-between; font-size:8px; color:var(--text-tertiary);">
-          <span>극공포</span><span>공포</span><span>중립</span><span>탐욕</span><span>극탐욕</span>
+          <span>패닉<br>40↑</span><span>공포<br>30~40</span><span>불안<br>20~30</span><span>안정<br>10~20</span><span>안도<br>10↓</span>
         </div>
-        <div style="font-size:10px; color:var(--text-secondary); margin-top:8px; line-height:1.5;">${desc}</div>
-        <div style="font-size:8px; color:var(--text-tertiary); margin-top:6px;">${note}</div>
+        <div style="font-size:10px; color:var(--text-secondary); margin-top:8px; line-height:1.5;">${vDesc}</div>
+        <div style="font-size:8px; color:var(--text-tertiary); margin-top:6px;">※ VIX(S&amp;P500 변동성 지수) 구간 기준. CNN 공포·탐욕 지수 연결 실패 시 표시돼요.</div>
       </div>`;
+    return;
   } catch (e) {
     console.warn('공포탐욕 게이지 로드 실패', e);
     container.innerHTML = `<div style="padding:14px; background:var(--bg-secondary); border-radius:14px; text-align:center; font-size:11px; color:var(--text-tertiary);">시장 분위기 지수를 불러오지 못했어요.</div>`;
