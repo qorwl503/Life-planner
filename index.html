@@ -12199,7 +12199,7 @@ async function loadMarketIndices() {
       data: intlGoldKrwPerG ? { price: intlGoldKrwPerG, changePct: intlGoldChangePct } : null,
       prefix:'₩', suffix:'/g',
       decimals:0,
-      sub: data.gold?.price ? `($${data.gold.price.toFixed(1)}/oz)` : '환산',
+      sub: data.gold?.price ? `($${data.gold.price.toFixed(1)}/oz ${data.gold.goldSource === 'spot' ? '현물' : '선물'})` : '환산',
       link: 'https://finance.naver.com/marketindex/worldGoldDetail.nhn?marketindexCd=CMDT_GC'
     },
     {
@@ -14017,6 +14017,17 @@ async function fetchMarketIndices() {
     ['usdkrw', () => fetchNaverExchange()],
     ['goldDomestic', () => fetchNaverGoldDomestic()],
     ['goldKrx', () => fetchNaverDomesticStock('411060')],
+    // 🔧 국제 금: 현물(spot) 우선. 야후 XAUUSD=X(현물)을 먼저 시도.
+    //    실패하면 아래 yahooFallback의 GC=F(선물)가 자동으로 채움.
+    //    (선물은 보관·이자 비용만큼 현물보다 비싸 김프가 과대 계산되던 문제 보정)
+    ['gold', async () => {
+      const r = await fetchYahooPrice('XAUUSD=X');
+      if (r?.price > 1000) { // 금 현물은 온스당 1000달러 이상 — 비정상 값 차단
+        console.log(`🪙 국제 금 현물(spot) XAUUSD=X: $${r.price.toFixed(1)}/oz`);
+        return { ...r, goldSource: 'spot' };
+      }
+      return null; // null이면 GC=F 폴백으로 넘어감
+    }],
   ];
 
   await Promise.all(naverCalls.map(async ([name, fn]) => {
