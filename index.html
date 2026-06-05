@@ -9385,8 +9385,65 @@ async function processAssetCapture(input) {
   if (statusEl) statusEl.style.display = 'none';
   closeModal();
 
-  showToast(`✅ ${files.length}장에서 ${allItems.length}개 자산 추출됨`);
-  openAssetReviewModal(allItems);
+  // 🔧 같은 종목이 여러 줄로 잡히는 경우(증권사가 정수 매매분 / 소수점 자동적립분을
+  //    별도 행으로 표시) → 버리지 말고 수량·금액을 '합산'해서 하나로 묶는다.
+  //    평단 = 총매입금액 / 총수량 (가중평균). 평가금액·손익도 합산.
+  const mergeKey = (it) => {
+    const tk = (it.ticker || '').toString().toUpperCase().trim();
+    if (tk) return 'T:' + tk;
+    return 'N:' + (it.name || '').toString().trim() + '|' + (it.type || '');
+  };
+  const pickStr = (a, b) => (a && String(a).trim()) ? a : b;
+  const num = (v) => { const n = Number(v); return isFinite(n) ? n : 0; };
+  const mergedMap = {};
+  for (const it of allItems) {
+    const k = mergeKey(it);
+    if (!mergedMap[k]) {
+      // 누적용 내부 필드(_qtySum, _costSum)로 시작
+      const q = num(it.qty), p = num(it.price);
+      mergedMap[k] = {
+        ...it,
+        _qtySum: q,
+        _costSum: q * p,             // 매입금액 누적 (수량×단가)
+        _evalSum: num(it.evalAmount),
+        _profitSum: num(it.profitAmount),
+      };
+      continue;
+    }
+    const cur = mergedMap[k];
+    const q = num(it.qty), p = num(it.price);
+    cur._qtySum   += q;
+    cur._costSum  += q * p;
+    cur._evalSum  += num(it.evalAmount);
+    cur._profitSum+= num(it.profitAmount);
+    cur.ticker        = pickStr(cur.ticker, it.ticker);
+    cur.name          = pickStr(cur.name, it.name);
+    cur.type          = pickStr(cur.type, it.type);
+    cur.priceCurrency = pickStr(cur.priceCurrency, it.priceCurrency);
+    if (!num(cur.avgBuyRate) && num(it.avgBuyRate)) cur.avgBuyRate = it.avgBuyRate;
+  }
+  const mergedItems = Object.values(mergedMap).map(m => {
+    const totQty = m._qtySum;
+    const avg = totQty > 0 ? m._costSum / totQty : num(m.price);
+    const out = {
+      ...m,
+      qty: parseFloat(totQty.toFixed(4)),
+      price: Math.round(avg),                       // 가중평균 평단
+      evalAmount: m._evalSum > 0 ? Math.round(m._evalSum) : m.evalAmount,
+      profitAmount: m._profitSum !== 0 ? Math.round(m._profitSum) : m.profitAmount,
+    };
+    // 합산된 평가금액·매입원금에서 수익률 재계산 (행마다 따로였던 %를 통합)
+    const cost = m._costSum;
+    if (m._evalSum > 0 && cost > 0) out.profitPct = ((m._evalSum - cost) / cost) * 100;
+    delete out._qtySum; delete out._costSum; delete out._evalSum; delete out._profitSum;
+    return out;
+  });
+  if (mergedItems.length < allItems.length) {
+    console.log(`🔗 같은 종목 여러 줄 합산: ${allItems.length}개 → ${mergedItems.length}개 (정수+소수점 보유분 합침)`);
+  }
+
+  showToast(`✅ ${files.length}장에서 ${mergedItems.length}개 자산 추출됨`);
+  openAssetReviewModal(mergedItems);
 
   input.value = '';
 }
@@ -10251,10 +10308,48 @@ function openAssetReviewModal(items) {
 }
 
 function saveAssetReviewItems() {
-  const selected = (window._assetReviewItems || []).filter(it => it._checked && it._action !== 'skip');
+  let selected = (window._assetReviewItems || []).filter(it => it._checked && it._action !== 'skip');
   if (selected.length === 0) {
     showToast('선택된 항목이 없어요');
     return;
+  }
+
+  // 🔧 같은 종목이 여러 항목으로 잡힌 경우(증권사가 정수분/소수점분을 두 줄로 표시,
+  //    또는 따로 찍어 올림) 적용 전에 하나로 합산한다. 안 합치면 correct가 같은 자산을
+  //    두 번 덮어써서 한 줄이 통째로 버려진다(데이터 손실). 같은 _action·_existingId끼리만 합침.
+  {
+    const num = (v) => { const n = Number(v); return isFinite(n) ? n : 0; };
+    const keyOf = (it) => {
+      const tk = (it.ticker || '').toString().toUpperCase().trim();
+      const base = tk ? 'T:' + tk : 'N:' + (it.name || '').trim() + '|' + (it.type || '');
+      return base + '|' + (it._action || '') + '|' + (it._existingId || '');
+    };
+    const map = {};
+    selected.forEach(it => {
+      const k = keyOf(it);
+      if (!map[k]) {
+        const q = num(it.qty), p = num(it.price);
+        map[k] = { ...it, _q: q, _cost: q * p, _eval: num(it.evalAmount), _pa: num(it.profitAmount) };
+      } else {
+        const c = map[k]; const q = num(it.qty), p = num(it.price);
+        c._q += q; c._cost += q * p; c._eval += num(it.evalAmount); c._pa += num(it.profitAmount);
+        if (!num(c.avgBuyRate) && num(it.avgBuyRate)) c.avgBuyRate = it.avgBuyRate;
+      }
+    });
+    const before = selected.length;
+    selected = Object.values(map).map(m => {
+      const tot = m._q;
+      const avg = tot > 0 ? m._cost / tot : num(m.price);
+      const o = { ...m, qty: parseFloat(tot.toFixed(4)), price: Math.round(avg) };
+      if (m._eval > 0) o.evalAmount = Math.round(m._eval);
+      if (m._pa !== 0) o.profitAmount = Math.round(m._pa);
+      if (m._eval > 0 && m._cost > 0) o.profitPct = ((m._eval - m._cost) / m._cost) * 100;
+      delete o._q; delete o._cost; delete o._eval; delete o._pa;
+      return o;
+    });
+    if (selected.length < before) {
+      console.log(`🔗 적용 단계 합산: ${before}개 → ${selected.length}개 (같은 종목 여러 줄 합침)`);
+    }
   }
 
   let addedCount = 0;
@@ -11821,8 +11916,8 @@ function renderAssetReliabilitySummary(total) {
   ].filter(([k]) => bucket[k] > 0);
   if (rows.length === 0) return '';
   return `
-    <div onclick="openAssetCaptureForCorrection()" style="padding:10px 12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:12px; cursor:pointer;" title="탭하면 증권사 잔고 캡처로 수량·평단을 보정합니다">
-      <div style="font-size:10px; font-weight:600; margin-bottom:6px; color:var(--text-secondary); display:flex; justify-content:space-between;"><span>🔎 자산 신뢰도</span><span style="color:#5E5CE6; font-weight:600;">📸 탭하여 보정</span></div>
+    <div style="padding:10px 12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:12px;">
+      <div style="font-size:10px; font-weight:600; margin-bottom:6px; color:var(--text-secondary);">🔎 자산 신뢰도</div>
       <div style="display:flex; gap:3px; height:6px; border-radius:999px; overflow:hidden; background:rgba(0,0,0,0.05); margin-bottom:6px;">
         ${rows.map(([k,,c]) => `<div style="width:${Math.max(3, bucket[k]/total*100)}%; background:${c};"></div>`).join('')}
       </div>
