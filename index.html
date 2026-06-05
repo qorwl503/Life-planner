@@ -11460,16 +11460,19 @@ function buildAssetDetailCard(a, live) {
     const profitPct = totalBuy > 0 ? (profit / totalBuy) * 100 : 0;
     const pColor = profit >= 0 ? 'var(--text-danger)' : 'var(--text-info)';
 
-    const usdAvg = isUSD && live.currentPrice && krwNow ? (krwAvg / krwNow * live.currentPrice) : null;
+    // 🔧 원화로 입력한 종목은 매입 평단도 원화로 표시 (오늘 환율 역산 금지 — 환차 왜곡 방지).
+    //    달러로 입력했거나 매입환율이 있는 종목만 달러 평단을 보여준다.
+    const showUsdAvg = isUSD && a.priceCurrency !== 'KRW' && live.currentPrice && krwNow;
+    const usdAvg = showUsdAvg ? (krwAvg / krwNow * live.currentPrice) : null;
 
     const qtyDisp = Number.isInteger(qty) ? qty.toLocaleString() : qty.toFixed(4).replace(/\.?0+$/, '');
     body = `
       <div style="display:flex; gap:12px; margin-bottom:10px;">
-        ${row('매입가', isUSD && usdAvg ? `$${usdAvg.toFixed(2)}` : `${Math.round(krwAvg).toLocaleString()}원`, isUSD ? `₩${Math.round(krwAvg).toLocaleString()}` : `${qtyDisp}주`)}
+        ${row('매입가', usdAvg ? `$${usdAvg.toFixed(2)}` : `${Math.round(krwAvg).toLocaleString()}원`, usdAvg ? `₩${Math.round(krwAvg).toLocaleString()}` : `${qtyDisp}주`)}
         ${row('총 매입금액', `${Math.round(totalBuy).toLocaleString()}원`, `${qtyDisp}주 보유`)}
       </div>
       <div style="display:flex; gap:12px; margin-bottom:10px;">
-        ${row('현재가', isUSD ? `$${(live.currentPrice||0).toFixed(2)}` : `${Math.round(krwNow).toLocaleString()}원`, isUSD ? `₩${Math.round(krwNow).toLocaleString()}` : '')}
+        ${row('현재가', (isUSD && a.priceCurrency !== 'KRW') ? `$${(live.currentPrice||0).toFixed(2)}` : `${Math.round(krwNow).toLocaleString()}원`, (isUSD && a.priceCurrency !== 'KRW') ? `₩${Math.round(krwNow).toLocaleString()}` : (isUSD ? `$${(live.currentPrice||0).toFixed(2)}` : ''))}
         ${row('총 평가금액', `${Math.round(totalEval).toLocaleString()}원`, '')}
       </div>
       <div style="display:flex; gap:12px; padding-top:8px; border-top:0.5px solid var(--border-tertiary);">
