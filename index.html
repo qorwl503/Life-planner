@@ -1446,6 +1446,18 @@ function applyData(data) {
     });
   }
   migrateTodos();
+  // 🔧 자산 통화 교정: 매수기록(lots) 기반 주식/ETF는 평단이 원화인데
+  //    priceCurrency가 USD로 남아 환차손익이 사라지던 문제(예: SPYM)를 일괄 교정.
+  if (Array.isArray(assets)) {
+    assets.forEach(a => {
+      const isStock = ['국내주식','미국주식','국내ETF','해외ETF','주식','ETF','펀드','채권'].includes(a.type);
+      if (isStock && Array.isArray(a.lots) && a.lots.length > 0 && a.priceCurrency === 'USD') {
+        a.priceCurrency = 'KRW';
+        if (a.avgBuyRate) delete a.avgBuyRate;
+        recalcAssetFromLots(a);
+      }
+    });
+  }
 }
 
 // 옛날 todo (date가 숫자) → dateKey (YYYY-MM-DD)로 마이그레이션
@@ -7225,6 +7237,16 @@ function recalcAssetFromLots(asset) {
     // 주식/ETF/금/달러 등 - 수량 × 평단가
     asset.qty = parseFloat(totalQty.toFixed(4));
     asset.price = totalQty > 0 ? Math.round(totalCost / totalQty) : 0;
+    // 🔧 매수기록(lots)의 체결금액·단가는 모두 '원화' 기준이다.
+    //    (수동/OCR: 원화 총체결금액 입력 / 자동매수: 매수일 환율로 원화 환산 저장)
+    //    따라서 평단도 원화. priceCurrency가 USD로 남아 있으면 손익 계산이
+    //    이 원화 평단을 달러로 오인해 환차손익이 통째로 사라진다(예: SPYM +15%가 +2.76%로).
+    //    → lot 기반 주식/ETF는 평단 통화를 KRW로 통일한다.
+    if (asset.priceCurrency === 'USD') {
+      asset.priceCurrency = 'KRW';
+      // 달러 평단 전제였던 매입환율 필드도 무의미해지므로 제거
+      if (asset.avgBuyRate) delete asset.avgBuyRate;
+    }
   }
 }
 
@@ -7900,10 +7922,41 @@ async function processAutoBuy(fixed) {
   const occurDates = [];
 
   // 자동매수 시작 날짜 (createdAt 또는 lastBuyDate)
-  const startDate = fixed.createdAt
+  let startDate = fixed.createdAt
     ? new Date(fixed.createdAt)
     : new Date(year, month, 1); // 기본: 이번 달 1일
   startDate.setHours(0, 0, 0, 0);
+
+  // 🔧 OCR 캡처 경계선: 연결 자산에 캡처 기준점(ocrSnapshot.date 또는 isCaptureBase lot)이 있으면
+  //    그 '다음 날'부터만 회차를 생성한다. 캡처가 그 시점까지의 보유분을 전부 확정했으므로,
+  //    캡처 이전 기간을 자동매수가 다시 세면 중복이 된다. (한 달째 어긋나던 고질병의 핵심)
+  {
+    const linkedForBase = findMatchingAsset({
+      name: fixed.assetInfo.name,
+      type: fixed.assetInfo.type,
+      ticker: fixed.assetInfo.ticker,
+    });
+    if (linkedForBase) {
+      // 캡처 기준일 후보: ocrSnapshot.date, 그리고 isCaptureBase lot들의 가장 최근 날짜
+      let captureBaseStr = linkedForBase.ocrSnapshot?.date || null;
+      (linkedForBase.lots || []).forEach(l => {
+        if (l.isCaptureBase && l.date && (!captureBaseStr || l.date > captureBaseStr)) {
+          captureBaseStr = l.date;
+        }
+      });
+      if (captureBaseStr) {
+        const capDate = new Date(captureBaseStr);
+        capDate.setHours(0, 0, 0, 0);
+        if (!isNaN(capDate.getTime()) && capDate >= startDate) {
+          // 캡처일 '다음 날'부터 (캡처일 당일은 캡처에 포함된 것으로 간주)
+          const afterCap = new Date(capDate);
+          afterCap.setDate(afterCap.getDate() + 1);
+          startDate = afterCap;
+          console.log(`📸 ${fixed.name} OCR 캡처 기준일(${captureBaseStr}) 감지 → 자동매수는 그 다음 날부터`);
+        }
+      }
+    }
+  }
   console.log(`📅 ${fixed.name} 시작 날짜: ${startDate.toLocaleDateString()}`);
 
   if (cycle === 'monthly') {
@@ -10283,6 +10336,23 @@ function saveAssetReviewItems() {
           existing.priceCurrency = 'KRW';
           delete existing.avgBuyRate;
         }
+        // 🔧 이 자산에 연결된 자동매수의 lastBuyDate를 캡처일로 맞춘다.
+        //    (캡처가 그 시점까지를 확정했으므로, 자동매수는 캡처 다음 회차부터 이어감.
+        //     lastBuyDate가 캡처일보다 앞/뒤 어느 쪽이든 캡처일로 통일해 중복·누락 방지)
+        try {
+          const capIso = new Date(today + 'T23:59:59').toISOString();
+          (budget?.fixed || []).forEach(fx => {
+            if (!fx.assetInfo) return;
+            const sameTicker = fx.assetInfo.ticker && existing.ticker &&
+              fx.assetInfo.ticker.toUpperCase() === existing.ticker.toUpperCase();
+            const sameName = fx.assetInfo.name && existing.name &&
+              fx.assetInfo.name === existing.name;
+            if (sameTicker || sameName) {
+              fx.lastBuyDate = capIso;
+              console.log(`📸→🤖 ${fx.name} lastBuyDate를 캡처일(${today})로 동기화`);
+            }
+          });
+        } catch (e) { console.warn('자동매수 동기화 건너뜀', e); }
         correctedCount++;
       }
     } else if (it._action === 'merge' && it._existingId) {
