@@ -11821,8 +11821,8 @@ function renderAssetReliabilitySummary(total) {
   ].filter(([k]) => bucket[k] > 0);
   if (rows.length === 0) return '';
   return `
-    <div style="padding:10px 12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:12px;">
-      <div style="font-size:10px; font-weight:600; margin-bottom:6px; color:var(--text-secondary);">🔎 자산 신뢰도</div>
+    <div onclick="openAssetCaptureForCorrection()" style="padding:10px 12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:12px; cursor:pointer;" title="탭하면 증권사 잔고 캡처로 수량·평단을 보정합니다">
+      <div style="font-size:10px; font-weight:600; margin-bottom:6px; color:var(--text-secondary); display:flex; justify-content:space-between;"><span>🔎 자산 신뢰도</span><span style="color:#5E5CE6; font-weight:600;">📸 탭하여 보정</span></div>
       <div style="display:flex; gap:3px; height:6px; border-radius:999px; overflow:hidden; background:rgba(0,0,0,0.05); margin-bottom:6px;">
         ${rows.map(([k,,c]) => `<div style="width:${Math.max(3, bucket[k]/total*100)}%; background:${c};"></div>`).join('')}
       </div>
@@ -12043,6 +12043,7 @@ function renderAsset() {
         const selCount = (window._assetSelected || []).length;
         html += `<div style="display:flex; gap:6px; margin-bottom:10px; padding:8px; background:var(--bg-secondary); border-radius:8px;">
           <span style="flex:1; font-size:11px; color:var(--text-secondary); align-self:center;">${selCount}개 선택됨</span>
+          <button onclick="openAssetCaptureForCorrection()" style="border:none; background:rgba(94,92,230,0.1); color:#5E5CE6; padding:6px 12px; border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">📸 보정</button>
           <button onclick="mergeSelectedAssets()" style="border:none; background:${selCount >= 2 ? 'var(--bg-info)' : 'var(--bg-tertiary)'}; color:${selCount >= 2 ? 'var(--text-info)' : 'var(--text-tertiary)'}; padding:6px 12px; border-radius:6px; font-size:11px; font-weight:600; cursor:${selCount >= 2 ? 'pointer' : 'default'}; font-family:inherit;">🔗 합치기</button>
           <button onclick="deleteSelectedAssets()" style="border:none; background:${selCount >= 1 ? 'var(--bg-danger)' : 'var(--bg-tertiary)'}; color:${selCount >= 1 ? 'var(--text-danger)' : 'var(--text-tertiary)'}; padding:6px 12px; border-radius:6px; font-size:11px; font-weight:600; cursor:${selCount >= 1 ? 'pointer' : 'default'}; font-family:inherit;">🗑️ 삭제</button>
         </div>`;
