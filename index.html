@@ -10093,9 +10093,20 @@ function openAssetReviewModal(items) {
     const name = it.name || '이름없음';
     const existing = findMatchingAsset({ name, type, ticker: it.ticker });
     // 🔧 기존 자산이 자동매수 연동 중이면 → 기본 액션을 '보정'으로 (회차 유지하며 교정)
-    const linkedAuto = existing && (budget.fixed || []).some(f =>
-      f.autoBuy && f.assetInfo && f.assetInfo.name === existing.name && f.assetInfo.type === existing.type
-    );
+    //    매칭은 티커 우선 + 이름 보조. (증권사 정식명 "STATE STREET..."과
+    //    자동매수 약칭 "SPYM"이 달라도 티커가 같으면 연동된 것으로 인식해야
+    //    correct 경로로 가서 캡처 기준점이 박힌다. 이름만 비교하면 merge로 빠져
+    //    기준점이 안 생기고 자동매수가 처음부터 다시 세어 중복/누락 발생)
+    const linkedAuto = existing && (budget.fixed || []).some(f => {
+      if (!f.autoBuy || !f.assetInfo) return false;
+      const tkA = (f.assetInfo.ticker || '').toUpperCase().trim();
+      const tkB = (existing.ticker || '').toUpperCase().trim();
+      const tickerMatch = tkA && tkB && tkA === tkB;
+      const nameMatch = f.assetInfo.name && existing.name &&
+        f.assetInfo.name === existing.name;
+      const typeOk = f.assetInfo.type === existing.type;
+      return tickerMatch || (nameMatch && typeOk);
+    });
     return {
       ...it,
       _checked: true,
