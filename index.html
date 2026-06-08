@@ -2007,7 +2007,7 @@ function renderCalendar() {
     if (workoutLog[k]?.done) dots.push('w');
     const dayExpenses = budget.expenses.filter(e => (e.dateKey === k) || (e.date === d && (!e.dateKey) && isViewingCurrentMonth()));
     // 🔧 고정지출 결제일도 money 점에 포함
-    const lastDayOfMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+    const lastDayOfMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
     const hasFixedToday = (budget.fixed || []).some(f => {
       if ((f.cycle || 'monthly') !== 'monthly') return false;
       const eff = Math.min(Number(f.day) || 1, lastDayOfMonth);
@@ -2277,7 +2277,7 @@ function getEventsForDay(d) {
     if (cycle !== 'monthly') return; // 매주/격주는 날짜 특정이 어려워 제외
     const payDay = Number(f.day) || 1;
     // 그 달에 결제일이 없는 경우(예: 31일인데 2월) 말일로 보정
-    const lastDay = new Date(currentYear, currentMonth + 1, 0).getDate();
+    const lastDay = new Date(viewYear, viewMonth + 1, 0).getDate();
     const effectiveDay = Math.min(payDay, lastDay);
     if (effectiveDay !== d) return;
     events.push({
