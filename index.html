@@ -14658,6 +14658,29 @@ async function fetchNaverGoldDomestic() {
     if (!text) continue;
     try {
       const data = JSON.parse(text);
+
+      // 🔧 /prices 응답(최근 2일 종가 배열)이면 → 등락률을 직접 계산.
+      //    응답의 fluctuationsRatio 필드는 현재가와 기준일이 어긋날 수 있어
+      //    "가격은 떨어졌는데 +2.68%" 같은 모순이 생긴다. 두 종가로 계산하면 정확.
+      if (target.includes('/prices')) {
+        const arr = Array.isArray(data) ? data : (data.result || data.datas || data.data || []);
+        if (Array.isArray(arr) && arr.length >= 2) {
+          const numv = (v) => Number(String(v ?? '').replace(/,/g, ''));
+          // 날짜로 정렬(최신 먼저) — 응답 순서가 바뀌어도 안전
+          const sorted = [...arr].filter(x => x && x.closePrice != null).sort((a, b) => {
+            const da = String(a.localTradedAt || a.dt || ''); const db = String(b.localTradedAt || b.dt || '');
+            return db.localeCompare(da);
+          });
+          const today2 = numv(sorted[0]?.closePrice);
+          const prev2 = numv(sorted[1]?.closePrice);
+          if (today2 > 50000 && today2 < 500000 && prev2 > 0) {
+            const pct = ((today2 - prev2) / prev2) * 100;
+            console.log(`✅ 국내 금(2일 계산): ${today2.toLocaleString()}원/g, ${pct.toFixed(2)}% (오늘 ${today2} / 어제 ${prev2})`);
+            return { price: today2, changePct: parseFloat(pct.toFixed(2)) };
+          }
+        }
+      }
+
       const r = dig(data);
       if (r) {
         console.log(`✅ 국내 금: ${r.price.toLocaleString()}원/g, ${r.changePct}% (${target})`);
