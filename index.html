@@ -4630,6 +4630,22 @@ function renderMoney() {
               </div>
               <div style="font-size:11px; font-weight:600; color:#FF6B6B;">${livingSpent.toLocaleString()}원 <span style="font-size:9px; color:var(--text-tertiary);">${livingPct.toFixed(0)}%</span></div>
             </div>
+            ${variableInvestSpent > 0 ? `
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:5px 0; border-bottom:0.5px solid var(--border-tertiary);">
+              <div style="display:flex; align-items:center; gap:6px;">
+                <div style="width:8px; height:8px; border-radius:50%; background:#5E5CE6;"></div>
+                <span style="font-size:11px;">자산 투자 <span style="font-size:9px; color:var(--text-tertiary);">(자동·고정)</span></span>
+              </div>
+              <div style="font-size:11px; font-weight:600; color:#5E5CE6;">${fixedInvestTotal.toLocaleString()}원 <span style="font-size:9px; color:var(--text-tertiary);">${pct(fixedInvestTotal).toFixed(0)}%</span></div>
+            </div>
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:5px 0; border-bottom:0.5px solid var(--border-tertiary);">
+              <div style="display:flex; align-items:center; gap:6px;">
+                <div style="width:8px; height:8px; border-radius:50%; background:#9D8DF1;"></div>
+                <span style="font-size:11px;">추가 투자 <span style="font-size:9px; color:var(--text-tertiary);">(직접·변동)</span></span>
+              </div>
+              <div style="font-size:11px; font-weight:600; color:#9D8DF1;">${variableInvestSpent.toLocaleString()}원 <span style="font-size:9px; color:var(--text-tertiary);">${pct(variableInvestSpent).toFixed(0)}%</span></div>
+            </div>
+            ` : `
             <div style="display:flex; align-items:center; justify-content:space-between; padding:5px 0; border-bottom:0.5px solid var(--border-tertiary);">
               <div style="display:flex; align-items:center; gap:6px;">
                 <div style="width:8px; height:8px; border-radius:50%; background:#5E5CE6;"></div>
@@ -4637,6 +4653,7 @@ function renderMoney() {
               </div>
               <div style="font-size:11px; font-weight:600; color:#5E5CE6;">${investSpent.toLocaleString()}원 <span style="font-size:9px; color:var(--text-tertiary);">${investPct.toFixed(0)}%</span></div>
             </div>
+            `}
             <div style="display:flex; align-items:center; justify-content:space-between; padding:5px 0;">
               <div style="display:flex; align-items:center; gap:6px;">
                 <div style="width:8px; height:8px; border-radius:50%; background:#34C759;"></div>
@@ -4802,10 +4819,11 @@ function renderMoney() {
     납부 완료 <b style="color:var(--text-success);">${fixedPaid.toLocaleString()}원</b> · 남음 <b>${fixedRemaining.toLocaleString()}원</b>
   </div>`;
 
-  // ===== 카테고리별 도넛 차트 (변동지출 = budget.expenses 전체, 고정지출은 자동 제외) =====
-  // viewMonthExpenses는 budget.expenses 기반이므로 고정지출은 이미 안 포함됨
-  // → 변동지출의 모든 카테고리 (ETF, 식비, 카페 등) 다 표시
-  const expensesOnly = viewMonthExpenses.filter(e => e.type !== 'income');
+  // ===== 카테고리별 도넛 차트 (순수 소비 지출만 — 투자 카테고리 제외) =====
+  // 🔧 금·주식·ETF·펀드·달러·예적금·청약·부동산은 '자산 이동'이지 소비가 아니므로
+  //    소비 분석 도넛에서 빼낸다. (안 그러면 금 산 게 식비·카페와 섞여 비율이 왜곡됨)
+  const INVEST_CATS_EXCLUDE = ['주식','국내주식','미국주식','ETF','국내ETF','해외ETF','펀드','채권','금','달러','예적금','청약','부동산'];
+  const expensesOnly = viewMonthExpenses.filter(e => e.type !== 'income' && !INVEST_CATS_EXCLUDE.includes(e.cat));
   if (expensesOnly.length > 0) {
     // 카테고리별 합계
     const catTotals = {};
@@ -4914,17 +4932,21 @@ function renderMoney() {
     // 최소 1개는 보이게 (데이터 없어도 이번 달은)
     if (months.length === 0) months.push({ y: budgetViewYear, m: budgetViewMonth });
 
-    // 월별 변동지출 합계
+    // 월별 변동지출 합계 (투자 카테고리는 소비에서 분리)
+    const INVEST_CATS_TREND = ['주식','국내주식','미국주식','ETF','국내ETF','해외ETF','펀드','채권','금','달러','예적금','청약','부동산'];
     const monthData = months.map(({ y, m }) => {
       const ym = `${y}-${String(m+1).padStart(2,'0')}`;
-      let variable = 0;
+      let variable = 0, variableInvest = 0;
       (budget.expenses || []).forEach(e => {
         if (e.type === 'income') return;
         const k = e.dateKey || '';
-        if (k.startsWith(ym)) variable += Number(e.amt) || 0;
+        if (!k.startsWith(ym)) return;
+        const amt = Number(e.amt) || 0;
+        if (INVEST_CATS_TREND.includes(e.cat)) variableInvest += amt;  // 투자는 따로
+        else variable += amt;                                          // 순수 소비만
       });
       // 고정지출 + 투자 분리 (그 달 발생분, skip 제외)
-      let fixed = 0, invest = 0;
+      let fixed = 0, invest = variableInvest;
       (budget.fixed || []).forEach(f => {
         if (Array.isArray(f.skipMonths) && f.skipMonths.includes(ym)) return;
         const occ = (!f.cycle || f.cycle === 'monthly') ? 1 : (() => {
