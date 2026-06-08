@@ -14063,6 +14063,27 @@ async function fetchAssetLive(asset) {
     }
   }
 
+  // 🔧 금 자산(티커 없음) → 네이버 국내 금 시세(g당 원)로 평가.
+  //    이 메인 평가 함수에 금 처리가 빠져 있어, 새로 산 금이 시세를 못 받아
+  //    평가금액=매입가, 비중 0%, 수익률 미표시되던 문제를 해결.
+  if (asset.type === '금' && !effectiveTicker) {
+    try {
+      const goldData = await fetchNaverGoldDomestic();
+      if (goldData?.price) {
+        const gPrice = goldData.price;                 // g당 원
+        const gAvg = Number(asset.price) || 0;          // 매입 단가(g당 원)
+        return {
+          currentPrice: gPrice,
+          krwPrice: gPrice,
+          krwValue: Number(asset.qty) * gPrice,
+          changePct: goldData.changePct || 0,
+          profitPct: gAvg > 0 ? ((gPrice - gAvg) / gAvg) * 100 : 0,
+          hasLive: true,
+        };
+      }
+    } catch (e) { console.warn('금 시세 평가 실패:', e); }
+  }
+
   if (!effectiveTicker) {
     return snapResult() || {
       currentPrice: Number(asset.price),
