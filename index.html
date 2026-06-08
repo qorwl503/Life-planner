@@ -11934,7 +11934,7 @@ function renderAsset() {
   //    (수동 새로고침 안 눌러도 국내·해외 모두 시세가 걸리게)
   (function autoRefreshOnEnter() {
     if (window._assetRefreshInFlight) return; // 갱신 중이면 중복 방지
-    const stockAssets = assets.filter(a => isStockLikeType(a.type) && (a.ticker || guessKRTicker(a.name)));
+    const stockAssets = assets.filter(a => (isStockLikeType(a.type) && (a.ticker || guessKRTicker(a.name))) || a.type === '금' || a.type === '달러');
     if (stockAssets.length === 0) return;
     const anyMissing = stockAssets.some(a => !liveAssetData[a.id] || !liveAssetData[a.id].hasLive);
     const stale = !window._lastAutoAssetRefresh || (Date.now() - window._lastAutoAssetRefresh > 5 * 60 * 1000);
@@ -14177,7 +14177,9 @@ async function fetchAssetLive(asset) {
 }
 
 async function refreshAllAssetPrices() {
-  const tickerAssets = assets.filter(a => a.ticker || guessKRTicker(a.name));
+  const tickerAssets = assets.filter(a =>
+    a.ticker || guessKRTicker(a.name) || a.type === '금' || a.type === '달러'
+  );
   console.log(`📈 자산 시세 갱신 시작: ${tickerAssets.length}개`);
   if (tickerAssets.length === 0) {
     console.log('티커 입력된 자산 없음 - 시세 갱신 안 함');
