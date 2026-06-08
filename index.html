@@ -16906,11 +16906,7 @@ function assetKrwValue(a) {
   const live = liveAssetData[a.id];
   if (live?.hasLive && Number(live.krwValue) > 0) return Number(live.krwValue);
 
-  // OCR/캡처로 들어온 평가금액이 있으면 반영 (현금/예적금/청약 등 수량·단가 없는 자산 포함)
-  const evalAmount = Number(a.evalAmount || a.currentAmount || a.amount || a.krwValue || 0);
-  if (evalAmount > 0) return evalAmount;
-
-  // 매수 기록(lots)이 있으면 원가 기준으로라도 반영 (exactAmount=증권사 실제 체결금액 우선)
+  // lots가 있으면 원가 합산 우선 (자동매수로 계속 갱신되므로 가장 최신 — exactAmount=증권사 실제 체결금액 우선)
   if (Array.isArray(a.lots) && a.lots.length > 0) {
     const lotTotal = a.lots.reduce((s, l) => {
       const exact = Number(l.exactAmount ?? 0);
@@ -16921,7 +16917,15 @@ function assetKrwValue(a) {
     if (lotTotal > 0) return lotTotal;
   }
 
-  return (Number(a.qty) || 0) * (Number(a.price) || 0);
+  // qty×price가 유효하면 사용 (예전 기본 계산과 동일 — 회귀 방지)
+  const qp = (Number(a.qty) || 0) * (Number(a.price) || 0);
+  if (qp > 0) return qp;
+
+  // 수량·단가·lot이 전혀 없는 자산(청약/현금 등 캡처 자산)만 평가금액 폴백
+  const evalAmount = Number(a.evalAmount || a.currentAmount || a.amount || a.krwValue || 0);
+  if (evalAmount > 0) return evalAmount;
+
+  return qp;
 }
 
 // 전체 자산을 표준 버킷별 합계로 — AI 코치 / 자산플랜 공용
