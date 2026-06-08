@@ -1642,7 +1642,7 @@ function renderDdayCard() {
         return `${dt.getMonth() + 1}/${dt.getDate()}`;
       })();
       html += `<div onclick="openDdayModal(${d.id})" style="flex:0 0 auto; min-width:100px; padding:12px; background:${bg}; border-radius:10px; text-align:center; cursor:pointer;">
-        <div style="font-size:22px;">${d.emoji || '📅'}</div>
+        <div style="font-size:22px;">${escapeHTML(d.emoji || '📅')}</div>
         <div style="font-size:11px; font-weight:600; margin-top:4px; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:90px;">${escapeHTML(d.title)}</div>
         <div style="font-size:13px; font-weight:700; margin-top:4px; color:${color};">${label}</div>
         <div style="font-size:9px; color:var(--text-tertiary); margin-top:2px;">${dateLabel}</div>
@@ -3773,7 +3773,7 @@ function renderWorkout() {
             <i class="ti ti-check" style="font-size:12px;"></i>
           </div>
           <div style="flex:1;">
-            <div style="font-size:13px; font-weight:500;">${log.note || '운동 완료'}</div>
+            <div style="font-size:13px; font-weight:500;">${escapeHTML(log.note || '운동 완료')}</div>
             <div style="font-size:10px; color:var(--text-tertiary);">${log.minutes || 0}분 · ${log.kcal || 0} kcal</div>
           </div>
           <i class="ti ti-chevron-right" style="font-size:14px; color:var(--text-tertiary);"></i>
@@ -5469,7 +5469,7 @@ function renderFixedRows() {
     const isOpen = !!window.fixedGroupOpen[cat];
 
     html += `
-      <div onclick="window.fixedGroupOpen['${cat}'] = !window.fixedGroupOpen['${cat}']; renderMoney();" style="display:flex; align-items:center; justify-content:space-between; padding:12px 0; border-bottom:0.5px solid var(--border-tertiary); cursor:pointer;">
+      <div onclick="window.fixedGroupOpen[${jsString(cat)}] = !window.fixedGroupOpen[${jsString(cat)}]; renderMoney();" style="display:flex; align-items:center; justify-content:space-between; padding:12px 0; border-bottom:0.5px solid var(--border-tertiary); cursor:pointer;">
         <div style="display:flex; align-items:center; gap:8px; min-width:0;">
           <span style="font-size:18px;">${meta.emoji}</span>
           <span style="font-size:13px; font-weight:600;">${cat}</span>
@@ -7433,7 +7433,7 @@ function addManualLot(assetId, lotIdToEdit) {
 
       <div class="field">
         <div class="field-label">메모 (선택)</div>
-        <input type="text" id="lot-note" value="${existingLot?.note || ''}" placeholder="추가 메모" />
+        <input type="text" id="lot-note" value="${escapeAttr(existingLot?.note || '')}" placeholder="추가 메모" />
       </div>
 
       <div id="lot-total-preview" style="padding:10px; background:var(--bg-secondary); border-radius:8px; text-align:center; font-size:11px; line-height:1.6;">
@@ -11884,7 +11884,7 @@ function buildAssetDetailCard(a, live) {
         <button onclick="closeAssetDetail()" style="border:none; background:var(--bg-secondary); width:34px; height:34px; border-radius:8px; font-size:16px; cursor:pointer; font-family:inherit;">←</button>
         <div style="flex:1; min-width:0;">
           <div style="font-size:16px; font-weight:700;">${escapeHTML(a.name)}</div>
-          <div style="font-size:11px; color:var(--text-tertiary);">${a.type}${a.ticker ? ' · ' + a.ticker : ''}</div>
+          <div style="font-size:11px; color:var(--text-tertiary);">${escapeHTML(a.type)}${a.ticker ? ' · ' + escapeHTML(a.ticker) : ''}</div>
         </div>
       </div>
 
@@ -12417,7 +12417,7 @@ function renderAsset() {
           <div style="width:38px; height:38px; border-radius:8px; background:var(--bg-secondary); color:var(--text-primary); display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600;">${badge}</div>
           <div style="flex:1; min-width:0;">
             <div style="font-size:14px; font-weight:500;">${escapeHTML(a.name)}${liveBadge}</div>
-            <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">${a.type}${a.ticker ? ' · ' + a.ticker : ''}${a.note ? ' · ' + a.note : ''}</div>
+            <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">${escapeHTML(a.type)}${a.ticker ? ' · ' + escapeHTML(a.ticker) : ''}${a.note ? ' · ' + escapeHTML(a.note) : ''}</div>
             ${extraInfo ? `<div style="margin-top:3px;">${extraInfo}</div>` : ''}
           </div>
           <div style="text-align:right;">
@@ -12618,13 +12618,24 @@ function saveAssetSnapshot(total, byType) {
   const now = new Date();
   const key = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
 
-  // 이번 달 스냅샷 - 항상 최신 값으로 덮어쓰기 (오늘 본 시세)
-  settings.assetSnapshots[key] = {
+  const next = {
     total: Math.round(total),
     byType: Object.fromEntries(Object.entries(byType).map(([k,v]) => [k, Math.round(v)])),
     count: (assets || []).length,
     date: now.toISOString(),
+    savedAt: Date.now(),
   };
+
+  // 직전 스냅샷과 거의 같으면 저장 생략 (자산 탭 왔다갔다 할 때마다 저장되는 것 방지)
+  const prev = settings.assetSnapshots[key];
+  if (prev) {
+    const sameTotal = Math.abs(Number(prev.total || 0) - next.total) < 1000;
+    const sameCount = Number(prev.count || 0) === next.count;
+    const sameByType = JSON.stringify(prev.byType || {}) === JSON.stringify(next.byType || {});
+    if (sameTotal && sameCount && sameByType) return;
+  }
+
+  settings.assetSnapshots[key] = next;
   saveData();
 }
 
@@ -17954,7 +17965,7 @@ function openMergeAssetPicker(targetId) {
       <div style="display:flex; flex-direction:column; gap:8px;">
         ${candidates.map(c => {
           const live = liveAssetData[c.id];
-          const v = live?.hasLive && live.krwValue ? live.krwValue : Number(c.qty) * Number(c.price);
+          const v = assetKrwValue(c);
           const sameTicker = normT(c.ticker) && normT(c.ticker) === normT(target.ticker);
           const qtyStr = Number.isInteger(Number(c.qty)) ? Number(c.qty).toLocaleString() : Number(c.qty).toFixed(4).replace(/\.?0+$/, '');
           return `
@@ -18814,7 +18825,7 @@ function renderMergePreview() {
       <div style="width:18px; height:18px; border-radius:50%; border:2px solid ${isBase ? 'var(--text-info)' : 'var(--border-tertiary)'}; background:${isBase ? 'var(--text-info)' : 'transparent'}; flex-shrink:0; display:flex; align-items:center; justify-content:center; color:white; font-size:10px;">${isBase ? '✓' : ''}</div>
       <div style="flex:1; min-width:0;">
         <div style="font-size:13px; font-weight:${isBase ? '600' : '500'};">${escapeHTML(a.name)} ${isBase ? '<span style="font-size:9px; color:var(--text-info);">(기준)</span>' : ''}</div>
-        <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${a.type}${a.ticker ? ' · ' + a.ticker : ' · 티커없음'} · ${qStr}주 · 평균 ${(Number(a.price)||0).toLocaleString()}원</div>
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${escapeHTML(a.type)}${a.ticker ? ' · ' + escapeHTML(a.ticker) : ' · 티커없음'} · ${qStr}주 · 평균 ${(Number(a.price)||0).toLocaleString()}원</div>
       </div>
     </div>`;
   });
