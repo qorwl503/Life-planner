@@ -1548,6 +1548,11 @@ function escapeHTML(value) {
 function escapeAttr(value) {
   return escapeHTML(value);
 }
+// inline onclick 등에 사용자 문자열을 안전하게 넣기 위한 JS 리터럴 이스케이프
+// 결과는 그 자체로 따옴표를 포함하므로 onclick="fn(${jsString(v)})" 형태로 사용 (바깥 따옴표 불필요)
+function jsString(value) {
+  return escapeHTML(JSON.stringify(String(value ?? '')));
+}
 
 // 🔧 자산 종류 분류 헬퍼 — 새 분류(국내주식/미국주식/국내ETF/해외ETF 등)를 안전하게 묶음
 // 시세·차트·AI분석이 동작해야 하는 '증권성 자산' 판별
@@ -1726,7 +1731,7 @@ function openDdayModal(id) {
 
       <div class="field">
         <div class="field-label">제목</div>
-        <input type="text" id="dday-title" placeholder="예: 시험, 생일, 여행" value="${existing?.title || ''}" />
+        <input type="text" id="dday-title" placeholder="예: 시험, 생일, 여행" value="${escapeAttr(existing?.title || "")}" />
       </div>
 
       <div class="field">
@@ -2179,8 +2184,8 @@ function renderCalendar() {
             ? `<div class="evt-check ${e.done?'done':''}">${e.done?'<i class="ti ti-check"></i>':''}</div>`
             : `<i class="evt-icon ti ${e.icon}"></i>`}
           <div class="evt-body">
-            <div class="title ${e.done ? 'checked' : ''}">${e.title}</div>
-            <div class="sub">${e.sub}</div>
+            <div class="title ${e.done ? 'checked' : ''}">${escapeHTML(e.title)}</div>
+            <div class="sub">${escapeHTML(e.sub)}</div>
           </div>
           ${e.amount ? `<div class="evt-amount">${e.amount}</div>` : ''}
         </div>`;
@@ -2874,14 +2879,14 @@ function renderTodoRow(t) {
       ${t.done ? '<i class="ti ti-check"></i>' : ''}
     </div>
     <div style="flex:1; min-width:0;">
-      <div class="todo-title">${t.time ? `<span style="color:var(--text-info); font-weight:700; margin-right:5px;">${t.time}</span>` : ''}${t.title}</div>
+      <div class="todo-title">${t.time ? `<span style="color:var(--text-info); font-weight:700; margin-right:5px;">${escapeHTML(t.time)}</span>` : ''}${escapeHTML(t.title)}</div>
       <div class="todo-meta">
-        <span class="tag">${t.tag}</span>
+        <span class="tag">${escapeHTML(t.tag)}</span>
         ${t.dateKey ? `<span class="meta-mini" style="font-size:10px;"><i class="ti ti-calendar" style="font-size:10px;"></i> ${dateLabel(t.dateKey)}</span>` : ''}
-        ${t.due ? `<span class="meta-mini">~ ${t.due}</span>` : ''}
-        ${t.money ? `<span class="meta-money"><i class="ti ti-wallet" style="font-size:11px;"></i> ${t.money}</span>` : ''}
+        ${t.due ? `<span class="meta-mini">~ ${escapeHTML(t.due)}</span>` : ''}
+        ${t.money ? `<span class="meta-money"><i class="ti ti-wallet" style="font-size:11px;"></i> ${escapeHTML(t.money)}</span>` : ''}
       </div>
-      ${t.memo ? `<div style="font-size:11px; color:var(--text-tertiary); margin-top:3px; line-height:1.5; white-space:pre-wrap; word-break:break-word;">📝 ${t.memo.replace(/</g,'&lt;')}</div>` : ''}
+      ${t.memo ? `<div style="font-size:11px; color:var(--text-tertiary); margin-top:3px; line-height:1.5; white-space:pre-wrap; word-break:break-word;">📝 ${escapeHTML(t.memo)}</div>` : ''}
     </div>
     ${t.flag ? '<i class="ti ti-flag" style="font-size:14px; color:var(--text-danger);"></i>' : ''}
     <button class="todo-del" onclick="event.stopPropagation(); delTodo(${t.id}, event)" aria-label="삭제"><i class="ti ti-trash"></i></button>
@@ -3042,7 +3047,7 @@ function renderChallengeCard(c) {
   return `<div style="margin-bottom:8px; padding:11px 13px; border-radius:11px; background:${softBg}; border:0.5px solid ${softBorder}; border-left:3px solid ${accent};">
     <div style="display:flex; align-items:center; gap:8px;">
       <div style="flex:1; min-width:0;">
-        <div style="font-size:13px; font-weight:600; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${typeIcon} ${c.title}</div>
+        <div style="font-size:13px; font-weight:600; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${typeIcon} ${escapeHTML(c.title)}</div>
         <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${progressText} · ${daysPassed}일째</div>
       </div>
       ${isCompleted
@@ -3448,7 +3453,7 @@ function editChallenge(id) {
       </div>
 
       <div style="padding:14px; background:var(--bg-secondary); border-radius:var(--radius-md); margin-bottom:14px;">
-        <div style="font-size:14px; font-weight:600; margin-bottom:4px;">${c.title}</div>
+        <div style="font-size:14px; font-weight:600; margin-bottom:4px;">${escapeHTML(c.title)}</div>
         <div style="font-size:11px; color:var(--text-secondary);">${c.totalDays}일 챌린지 · 시작 ${c.startDate}</div>
       </div>
 
@@ -3534,7 +3539,7 @@ function showCompletedChallenges() {
         return `<div style="padding:14px; background:var(--bg-secondary); border-radius:12px; margin-bottom:8px; display:flex; align-items:center; gap:12px;">
           <div style="font-size:26px;">${isPerfect ? '🏆' : '🎖️'}</div>
           <div style="flex:1; min-width:0;">
-            <div style="font-size:14px; font-weight:600;">${c.title}</div>
+            <div style="font-size:14px; font-weight:600;">${escapeHTML(c.title)}</div>
             <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">
               ${c.totalDays}일 챌린지 · ${checkedDays}일 실천 · 달성률 ${rate}%
               ${c.startDate ? ` · ${c.startDate} 시작` : ''}
@@ -3693,7 +3698,7 @@ function renderWorkout() {
             😴 쉼
           </button>
         </div>
-        ${isDone && todayLog ? `<div style="margin-top:6px; font-size:10px; color:var(--text-success); opacity:0.85;">${todayLog.minutes || 0}분 · ${todayLog.kcal || 0} kcal${todayLog.note ? ' · ' + todayLog.note : ''}</div>` : ''}
+        ${isDone && todayLog ? `<div style="margin-top:6px; font-size:10px; color:var(--text-success); opacity:0.85;">${todayLog.minutes || 0}분 · ${todayLog.kcal || 0} kcal${todayLog.note ? ' · ' + escapeHTML(todayLog.note) : ''}</div>` : ''}
       </div>
     `;
   }
@@ -3797,7 +3802,7 @@ function renderWorkout() {
 
   // 검색창
   html += `<div style="display:flex; gap:6px; margin-bottom:12px;">
-    <input type="text" id="wo-yt-search" placeholder="예: 10분 복근 운동" value="${currentWorkoutYtQuery}" style="flex:1; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit; -webkit-appearance:none;" onkeypress="if(event.key==='Enter') woYtSearch()" />
+    <input type="text" id="wo-yt-search" placeholder="예: 10분 복근 운동" value="${escapeAttr(currentWorkoutYtQuery)}" style="flex:1; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit; -webkit-appearance:none;" onkeypress="if(event.key==='Enter') woYtSearch()" />
     <button onclick="woYtSearch()" style="padding:11px 16px; border:none; border-radius:var(--radius-md); background:var(--text-danger); color:white; font-size:13px; font-weight:500; cursor:pointer; font-family:inherit;">
       <i class="ti ti-search" style="font-size:14px;"></i>
     </button>
@@ -3819,7 +3824,7 @@ function renderWorkout() {
     workoutChannels.forEach(c => {
       html += `
         <div style="position:relative;">
-          <button onclick="setWorkoutYtQuery('${c.q}')" style="width:100%; display:flex; flex-direction:column; align-items:center; gap:6px; padding:12px 4px; border:0.5px solid ${currentWorkoutYtQuery === c.q ? 'var(--text-danger)' : 'var(--border-tertiary)'}; border-radius:var(--radius-md); background:${currentWorkoutYtQuery === c.q ? 'var(--bg-danger)' : 'white'}; cursor:pointer; font-family:inherit;">
+          <button onclick="setWorkoutYtQuery(${jsString(c.q)})" style="width:100%; display:flex; flex-direction:column; align-items:center; gap:6px; padding:12px 4px; border:0.5px solid ${currentWorkoutYtQuery === c.q ? 'var(--text-danger)' : 'var(--border-tertiary)'}; border-radius:var(--radius-md); background:${currentWorkoutYtQuery === c.q ? 'var(--bg-danger)' : 'white'}; cursor:pointer; font-family:inherit;">
             <div style="width:44px; height:44px; border-radius:50%; background:var(--bg-secondary); display:flex; align-items:center; justify-content:center; font-size:20px;">
               ${c.emoji || '💪'}
             </div>
@@ -3849,7 +3854,7 @@ function renderWorkout() {
 
   html += `<div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px;">`;
   workoutCats.forEach(c => {
-    html += `<button onclick="setWorkoutYtQuery('${c.q}')" style="padding:8px 14px; border:0.5px solid ${currentWorkoutYtQuery === c.q ? 'var(--text-danger)' : 'var(--border-tertiary)'}; border-radius:999px; background:${currentWorkoutYtQuery === c.q ? 'var(--bg-danger)' : 'white'}; color:${currentWorkoutYtQuery === c.q ? 'var(--text-danger)' : 'var(--text-secondary)'}; font-size:12px; font-weight:${currentWorkoutYtQuery === c.q ? '600' : '400'}; cursor:pointer; font-family:inherit;">${c.t}</button>`;
+    html += `<button onclick="setWorkoutYtQuery(${jsString(c.q)})" style="padding:8px 14px; border:0.5px solid ${currentWorkoutYtQuery === c.q ? 'var(--text-danger)' : 'var(--border-tertiary)'}; border-radius:999px; background:${currentWorkoutYtQuery === c.q ? 'var(--bg-danger)' : 'white'}; color:${currentWorkoutYtQuery === c.q ? 'var(--text-danger)' : 'var(--text-secondary)'}; font-size:12px; font-weight:${currentWorkoutYtQuery === c.q ? '600' : '400'}; cursor:pointer; font-family:inherit;">${c.t}</button>`;
   });
   html += `</div>`;
 
@@ -3977,7 +3982,7 @@ function openWorkoutModal(dateKeyStr) {
 
       <div class="field">
         <div class="field-label">운동 종류 (선택)</div>
-        <input type="text" id="w-note" placeholder="예: 러닝, 헬스, 요가" value="${log.note || ''}" />
+        <input type="text" id="w-note" placeholder="예: 러닝, 헬스, 요가" value="${escapeAttr(log.note || "")}" />
       </div>
 
       <div class="field" style="display:flex; gap:8px;">
@@ -4080,6 +4085,70 @@ function renderMoneyInsightCards(opts) {
             </div>
           `).join('')}
           <div style="margin-top:6px; font-size:10px; color:var(--text-tertiary); line-height:1.5;">자잘하지만 누적되면 큰 돈이 되는 항목이에요</div>
+        </div>`;
+    }
+
+    // ============== 2-b) 전월 대비 카테고리 급증 ==============
+    // 이번 달 카테고리별 합계 vs 지난달 (같은 날짜까지로 공정 비교)
+    const now = new Date();
+    const curMStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+    const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const prevMStr = `${prevDate.getFullYear()}-${String(prevDate.getMonth()+1).padStart(2,'0')}`;
+    const dayCut = now.getDate(); // 오늘 일자까지만 비교 (월초엔 비교 무의미하니 6일 이후만)
+
+    if (isCurrentMonth && dayCut >= 6) {
+      const sumByCat = (mStr) => {
+        const g = {};
+        (budget.expenses || []).filter(e => e.type !== 'income' && e.dateKey?.startsWith(mStr) && Number((e.dateKey.split('-')[2]) || 99) <= dayCut)
+          .forEach(e => { const c = e.cat || '기타'; g[c] = (g[c] || 0) + (Number(e.amt) || 0); });
+        return g;
+      };
+      const curG = sumByCat(curMStr);
+      const prevG = sumByCat(prevMStr);
+      const surges = Object.entries(curG)
+        .map(([cat, cur]) => {
+          const prev = prevG[cat] || 0;
+          if (prev < 30000 || cur < prev * 1.3 || cur - prev < 10000) return null; // 30% 이상 + 최소 1만원 차이
+          return { cat, cur, prev, pct: Math.round((cur / prev - 1) * 100) };
+        })
+        .filter(Boolean)
+        .sort((a, b) => (b.cur - b.prev) - (a.cur - a.prev))
+        .slice(0, 3);
+
+      if (surges.length > 0) {
+        html += `
+          <div style="padding:14px; background:rgba(232,72,61,0.07); border-radius:12px; margin-bottom:10px; border:0.5px solid rgba(232,72,61,0.25);">
+            <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">
+              <span style="font-size:14px;">📈</span>
+              <span style="font-size:11px; font-weight:700; color:#C0392B;">전월 대비 급증 (같은 ${dayCut}일까지)</span>
+            </div>
+            ${surges.map(s => `
+              <div style="display:flex; justify-content:space-between; padding:5px 0; font-size:12px;">
+                <span style="color:var(--text-secondary);">${escapeHTML(s.cat)} <span style="font-size:10px; color:#C0392B; font-weight:700;">▲${s.pct}%</span></span>
+                <span style="font-weight:600;">${s.cur.toLocaleString()}원 <span style="font-size:10px; color:var(--text-tertiary);">(지난달 ${s.prev.toLocaleString()})</span></span>
+              </div>
+            `).join('')}
+          </div>`;
+      }
+    }
+
+    // ============== 2-c) 구독 추정 개수 ==============
+    // 고정지출 중 구독성 키워드 + 매월 반복으로 보이는 항목 카운트
+    const subKeywords = ['넷플릭스','netflix','유튜브','youtube','구독','멤버십','프라임','디즈니','왓챠','스포티파이','spotify','애플','apple','구글','google','ott','요금','정기'];
+    const subs = (budget.fixed || []).filter(f => {
+      const name = (f.name || '').toLowerCase();
+      return subKeywords.some(k => name.includes(k));
+    });
+    if (subs.length >= 3) {
+      const subTotal = subs.reduce((s, f) => s + (Number(f.amt) || 0), 0);
+      html += `
+        <div style="padding:14px; background:rgba(94,92,230,0.07); border-radius:12px; margin-bottom:10px; border:0.5px solid rgba(94,92,230,0.25);">
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+            <span style="font-size:14px;">🔁</span>
+            <span style="font-size:11px; font-weight:700; color:#5E5CE6;">구독 ${subs.length}개 추정</span>
+          </div>
+          <div style="font-size:12px; color:var(--text-secondary);">매달 약 <b style="color:var(--text-primary);">${subTotal.toLocaleString()}원</b>이 구독성 지출로 빠지고 있어요</div>
+          <div style="margin-top:6px; font-size:10px; color:var(--text-tertiary); line-height:1.5;">${subs.map(f => escapeHTML(f.name)).join(', ')}</div>
         </div>`;
     }
   }
@@ -4409,7 +4478,8 @@ function renderMonthlyReview(opts) {
 }
 
 function renderMoney() {
-  runAllAutoBuys(); // 자동매수 점검
+  // 자동매수 점검: 가드 버전으로만 호출 (중복 실행·경합 방지)
+  runAllAutoBuysSafe('money-tab');
   // 가계부에서 보고 있는 월 (기본: 현재 월)
   if (typeof budgetViewYear === 'undefined') budgetViewYear = currentYear;
   if (typeof budgetViewMonth === 'undefined') budgetViewMonth = currentMonth;
@@ -5224,16 +5294,16 @@ function renderMoney() {
           html += `<div onclick="toggleExpenseSelect(${e.id})" style="display:flex; align-items:center; gap:10px; padding:10px 0; ${!isLast ? 'border-bottom:0.5px solid var(--border-tertiary);' : ''} font-size:13px; cursor:pointer;">
             <input type="checkbox" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation(); toggleExpenseSelect(${e.id});" style="width:18px; height:18px; cursor:pointer;" />
             <div style="flex:1; min-width:0;">
-              <div style="font-weight:500;">${icon} ${e.memo || e.cat}</div>
-              <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">${e.cat}</div>
+              <div style="font-weight:500;">${icon} ${escapeHTML(e.memo || e.cat)}</div>
+              <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">${escapeHTML(e.cat)}</div>
             </div>
             <span style="font-weight:600; color:${amtColor};">${sign}${Number(e.amt).toLocaleString()}원</span>
           </div>`;
         } else {
           html += `<div onclick="editExpense(${e.id})" style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; ${!isLast ? 'border-bottom:0.5px solid var(--border-tertiary);' : ''} font-size:13px; cursor:pointer;">
             <div style="flex:1; min-width:0;">
-              <div style="font-weight:500;">${icon} ${e.memo || e.cat}</div>
-              <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">${e.cat}</div>
+              <div style="font-weight:500;">${icon} ${escapeHTML(e.memo || e.cat)}</div>
+              <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">${escapeHTML(e.cat)}</div>
             </div>
             <span style="font-weight:600; color:${amtColor};">${sign}${Number(e.amt).toLocaleString()}원</span>
           </div>`;
@@ -5313,8 +5383,8 @@ function showDayExpenses(dateK) {
           const color = isDep ? 'var(--text-success)' : 'var(--text-primary)';
           return `<div onclick="closeModal(); setTimeout(()=>editExpense(${e.id}),100);" style="display:flex; justify-content:space-between; align-items:center; padding:11px 0; border-bottom:0.5px solid var(--border-tertiary); cursor:pointer;">
             <div style="flex:1; min-width:0;">
-              <div style="font-size:13px; font-weight:500;">${isDep ? '💵 ' : ''}${e.memo || e.cat}</div>
-              <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">${e.cat}</div>
+              <div style="font-size:13px; font-weight:500;">${isDep ? "💵 " : ""}${escapeHTML(e.memo || e.cat)}</div>
+              <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">${escapeHTML(e.cat)}</div>
             </div>
             <span style="font-weight:600; color:${color}; font-size:13px;">${sign}${Number(e.amt).toLocaleString()}원</span>
           </div>`;
@@ -5449,7 +5519,7 @@ function renderFixedRows() {
             <i class="ti ${f.icon}"></i>
           </div>`}
           <div style="flex:1; min-width:0; cursor:pointer;" onclick="${fEditing ? `toggleFixedSelect(${f.id})` : `toggleFixedPaid(${f.id})`}">
-            <div class="nm">${f.name} ${isSkipped ? '<span style="font-size:9px; color:var(--text-tertiary); font-weight:600;">· 이번 달 건너뜀</span>' : ''}</div>
+            <div class="nm">${escapeHTML(f.name)} ${isSkipped ? '<span style="font-size:9px; color:var(--text-tertiary); font-weight:600;">· 이번 달 건너뜀</span>' : ''}</div>
             <div class="meta">${cycleLabel}</div>
           </div>
           <div style="text-align:right; cursor:pointer;" onclick="${fEditing ? `toggleFixedSelect(${f.id})` : `toggleFixedPaid(${f.id})`}">
@@ -5545,7 +5615,7 @@ function editFixed(id) {
 
       <div class="field">
         <div class="field-label">이름</div>
-        <input type="text" id="ef-name" value="${f.name}" />
+        <input type="text" id="ef-name" value="${escapeAttr(f.name)}" />
       </div>
 
       <div class="field">
@@ -5670,18 +5740,18 @@ function editFixed(id) {
       h = `
         <div class="field">
           <div class="field-label">자산명</div>
-          <input type="text" id="ef-asset-name" value="${ai.name || ''}" placeholder="예: 삼성전자, SPY" />
+          <input type="text" id="ef-asset-name" value="${escapeAttr(ai.name || "")}" placeholder="예: 삼성전자, SPY" />
         </div>
         <div class="field">
           <div class="field-label">티커 (선택 - 시세 자동 갱신)</div>
-          <input type="text" id="ef-asset-ticker" value="${ai.ticker || ''}" placeholder="예: 005930.KS, SPY" />
+          <input type="text" id="ef-asset-ticker" value="${escapeAttr(ai.ticker || "")}" placeholder="예: 005930.KS, SPY" />
         </div>
       `;
     } else if (type === '채권') {
       h = `
         <div class="field">
           <div class="field-label">자산명</div>
-          <input type="text" id="ef-asset-name" value="${ai.name || ''}" placeholder="예: 국고채 3년물" />
+          <input type="text" id="ef-asset-name" value="${escapeAttr(ai.name || "")}" placeholder="예: 국고채 3년물" />
         </div>
         <div class="field">
           <div class="field-label">금리 % (선택)</div>
@@ -5689,14 +5759,14 @@ function editFixed(id) {
         </div>
         <div class="field">
           <div class="field-label">만기 (선택)</div>
-          <input type="text" id="ef-asset-maturity" value="${ai.maturity || ''}" placeholder="예: 2027.01" />
+          <input type="text" id="ef-asset-maturity" value="${escapeAttr(ai.maturity || "")}" placeholder="예: 2027.01" />
         </div>
       `;
     } else if (type === '금') {
       h = `
         <div class="field">
           <div class="field-label">자산명</div>
-          <input type="text" id="ef-asset-name" value="${ai.name || ''}" placeholder="예: 한국조폐공사 골드바, 신한 골드뱅킹" />
+          <input type="text" id="ef-asset-name" value="${escapeAttr(ai.name || "")}" placeholder="예: 한국조폐공사 골드바, 신한 골드뱅킹" />
         </div>
         <input type="hidden" id="ef-asset-ticker" value="" />
         <div style="padding:10px; background:var(--bg-warning); border-radius:8px; font-size:10px; color:var(--text-warning); line-height:1.5;">
@@ -5707,7 +5777,7 @@ function editFixed(id) {
       h = `
         <div class="field">
           <div class="field-label">자산명</div>
-          <input type="text" id="ef-asset-name" value="${ai.name || ''}" placeholder="예: 외화예금, 미국 주식 계좌" />
+          <input type="text" id="ef-asset-name" value="${escapeAttr(ai.name || "")}" placeholder="예: 외화예금, 미국 주식 계좌" />
         </div>
         <input type="hidden" id="ef-asset-ticker" value="" />
       `;
@@ -5715,7 +5785,7 @@ function editFixed(id) {
       h = `
         <div class="field">
           <div class="field-label">상품명</div>
-          <input type="text" id="ef-asset-name" value="${ai.name || ''}" placeholder="예: 토스 정기예금, 카카오 적금" />
+          <input type="text" id="ef-asset-name" value="${escapeAttr(ai.name || "")}" placeholder="예: 토스 정기예금, 카카오 적금" />
         </div>
         <div class="field">
           <div class="field-label">금리 % (선택)</div>
@@ -5735,7 +5805,7 @@ function editFixed(id) {
         </div>
         <div class="field">
           <div class="field-label">통장명/은행</div>
-          <input type="text" id="ef-asset-name" value="${ai.name || ''}" placeholder="예: KB 주택청약통장" />
+          <input type="text" id="ef-asset-name" value="${escapeAttr(ai.name || "")}" placeholder="예: KB 주택청약통장" />
         </div>
         <div class="field" style="display:flex; gap:8px;">
           <div style="flex:1;">
@@ -5753,7 +5823,7 @@ function editFixed(id) {
       h = `
         <div class="field">
           <div class="field-label">위치/이름</div>
-          <input type="text" id="ef-asset-name" value="${ai.name || ''}" placeholder="예: 토스 통장, 비상금" />
+          <input type="text" id="ef-asset-name" value="${escapeAttr(ai.name || "")}" placeholder="예: 토스 통장, 비상금" />
         </div>
         <input type="hidden" id="ef-asset-ticker" value="" />
       `;
@@ -5761,7 +5831,7 @@ function editFixed(id) {
       h = `
         <div class="field">
           <div class="field-label">이름</div>
-          <input type="text" id="ef-asset-name" value="${ai.name || ''}" placeholder="예: 서울 강남 아파트" />
+          <input type="text" id="ef-asset-name" value="${escapeAttr(ai.name || "")}" placeholder="예: 서울 강남 아파트" />
         </div>
         <input type="hidden" id="ef-asset-ticker" value="" />
       `;
@@ -7088,7 +7158,8 @@ ${lines}${summary ? `\n- 개요: ${summary}` : ''}
 // Markdown 간단 렌더러 (AI 응답용)
 function markdownToHTML(md) {
   if (!md) return '';
-  let html = md;
+  // AI 응답도 외부 입력으로 간주 — 먼저 HTML escape 후 마크다운 변환
+  let html = escapeHTML(md);
   // 헤더
   html = html.replace(/^###\s+(.+)$/gm, '<h3 style="font-size:13px; font-weight:700; margin:14px 0 6px; color:var(--text-primary);">$1</h3>');
   html = html.replace(/^##\s+(.+)$/gm, '<h2 style="font-size:14px; font-weight:700; margin:16px 0 8px; color:var(--text-primary);">$1</h2>');
@@ -8314,6 +8385,28 @@ async function processAutoBuy(fixed) {
 }
 
 // 앱 시작 시 모든 자동매수 항목 점검
+// 🔒 자동매수 중복 실행 방지 가드
+//   - render 함수 안에서 직접 runAllAutoBuys()를 부르면 탭 전환마다 비동기 매수/저장이
+//     겹쳐서 중복 매수·경합이 생길 수 있음. 이 가드를 통해서만 호출하도록 통일.
+let autoBuyInFlight = false;
+let lastAutoBuyAt = 0;
+async function runAllAutoBuysSafe(reason = '') {
+  if (autoBuyInFlight) return;
+  // 같은 트리거가 짧은 간격으로 중복 호출되는 것도 방지 (3초 디바운스)
+  const now = Date.now();
+  if (now - lastAutoBuyAt < 3000) return;
+  autoBuyInFlight = true;
+  lastAutoBuyAt = now;
+  try {
+    if (reason) console.log(`▶️ 자동매수 점검 (${reason})`);
+    await runAllAutoBuys();
+  } catch (e) {
+    console.error('자동매수 점검 중 오류:', e);
+  } finally {
+    autoBuyInFlight = false;
+  }
+}
+
 async function runAllAutoBuys() {
   // 기존 중복 정리: budget.expenses에서 autoBuy=true인 항목 모두 제거 (이제 고정지출만으로 처리)
   const before = budget.expenses.length;
@@ -10097,7 +10190,7 @@ function openFixedReviewModal(items) {
     return `
       <div style="padding:12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:8px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-          <span style="font-size:13px; font-weight:600;">${it.name}</span>
+          <span style="font-size:13px; font-weight:600;">${escapeHTML(it.name)}</span>
           <span style="font-size:13px; font-weight:700;">${Number(it.amt).toLocaleString()}원</span>
         </div>
         <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:8px;">
@@ -10222,7 +10315,7 @@ function openAssetReviewModal(items) {
         <div style="display:flex; align-items:center; gap:8px;">
           <input type="checkbox" id="ar-${i}" ${it._checked ? 'checked' : ''} onchange="window._assetReviewItems[${i}]._checked = this.checked;" style="width:18px; height:18px; cursor:pointer; flex-shrink:0;" />
           <div style="flex:1; min-width:0;">
-            <div style="font-size:13px; font-weight:600;">${it.name}${isUSD ? ' <span style="font-size:9px; color:var(--text-info); font-weight:500;">💵 달러</span>' : ''}</div>
+            <div style="font-size:13px; font-weight:600;">${escapeHTML(it.name)}${isUSD ? ' <span style="font-size:9px; color:var(--text-info); font-weight:500;">💵 달러</span>' : ''}</div>
             <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">
               ${it.type} · ${qtyStr}주 × ${priceStr}
             </div>
@@ -10256,7 +10349,7 @@ function openAssetReviewModal(items) {
             const tickerMismatch = nt(it.ticker) && nt(existing.ticker) && nt(it.ticker) !== nt(existing.ticker);
             if (tickerMismatch) {
               return `<div style="margin-top:8px; padding:8px; background:#FCEBEB; border:1px solid #E74C3C; border-radius:8px; font-size:10px; color:#C0392B; line-height:1.5;">
-                🚨 <b>티커가 달라요!</b> 캡처=${it.ticker} / 기존=${existing.ticker}<br>
+                🚨 <b>티커가 달라요!</b> 캡처=${escapeHTML(it.ticker)} / 기존=${escapeHTML(existing.ticker)}<br>
                 다른 종목일 수 있어요. 합치지 말고 <b>✨ 신규</b>를 선택하세요.
               </div>`;
             }
@@ -11164,7 +11257,7 @@ function openTodoModal(forDateKey, editTodoObj) {
 
       <div class="field">
         <div class="field-label">할 일</div>
-        <input type="text" id="todo-title" placeholder="무엇을 해야 하나요?" value="${isEdit ? (editTodoObj.title || '').replace(/"/g, '&quot;') : ''}" ${!isEdit ? 'autofocus' : ''} />
+        <input type="text" id="todo-title" placeholder="무엇을 해야 하나요?" value="${isEdit ? escapeAttr(editTodoObj.title || "") : ""}" ${!isEdit ? 'autofocus' : ''} />
       </div>
 
       <div class="field">
@@ -11788,7 +11881,7 @@ function buildAssetDetailCard(a, live) {
       <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
         <button onclick="closeAssetDetail()" style="border:none; background:var(--bg-secondary); width:34px; height:34px; border-radius:8px; font-size:16px; cursor:pointer; font-family:inherit;">←</button>
         <div style="flex:1; min-width:0;">
-          <div style="font-size:16px; font-weight:700;">${a.name}</div>
+          <div style="font-size:16px; font-weight:700;">${escapeHTML(a.name)}</div>
           <div style="font-size:11px; color:var(--text-tertiary);">${a.type}${a.ticker ? ' · ' + a.ticker : ''}</div>
         </div>
       </div>
@@ -11989,7 +12082,8 @@ function renderAssetReliabilitySummary(total) {
 }
 
 function renderAsset() {
-  runAllAutoBuys(); // 자동매수 점검 (시세 알면 정확히 처리)
+  // 자동매수 점검: 가드 버전으로만 호출 (중복 실행·경합 방지, 시세 알면 정확히 처리)
+  runAllAutoBuysSafe('asset-tab');
 
   // 🔧 자산 탭 진입 시 시세 자동 갱신 — LIVE 안 뜨는 자산이 있거나 5분 지났으면
   //    (수동 새로고침 안 눌러도 국내·해외 모두 시세가 걸리게)
@@ -12336,7 +12430,7 @@ function renderAsset() {
           ${editing ? `<div style="width:22px; height:22px; border-radius:6px; border:2px solid ${isSel ? 'var(--text-info)' : 'var(--border-tertiary)'}; background:${isSel ? 'var(--text-info)' : 'transparent'}; display:flex; align-items:center; justify-content:center; flex-shrink:0; color:white; font-size:13px;">${isSel ? '✓' : ''}</div>` : ''}
           <div style="width:38px; height:38px; border-radius:8px; background:var(--bg-secondary); color:var(--text-primary); display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600;">${badge}</div>
           <div style="flex:1; min-width:0;">
-            <div style="font-size:14px; font-weight:500;">${a.name}${liveBadge}</div>
+            <div style="font-size:14px; font-weight:500;">${escapeHTML(a.name)}${liveBadge}</div>
             <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">${a.type}${a.ticker ? ' · ' + a.ticker : ''}${a.note ? ' · ' + a.note : ''}</div>
             ${extraInfo ? `<div style="margin-top:3px;">${extraInfo}</div>` : ''}
           </div>
@@ -12474,7 +12568,7 @@ async function loadMarketIndices() {
   h += `<style>#market-indices div::-webkit-scrollbar{display:none;}</style>`;
   items.forEach(it => {
     const isLink = !!it.link;
-    const clickHandler = isLink ? `onclick="openExt('${it.link}')"` : '';
+    const clickHandler = isLink ? `onclick="openExt(${jsString(it.link)})"` : '';
     const cursor = isLink ? 'cursor:pointer;' : '';
     const highlight = it.highlight ? 'border:1px solid var(--text-warning);' : '';
 
@@ -12735,7 +12829,7 @@ function openGoalModal(goalId) {
               <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">선택한 자산만 카운트됨</div>
               <select id="goal-asset-id" style="width:100%; margin-top:6px; padding:6px; border:0.5px solid var(--border-tertiary); border-radius:6px; font-family:inherit; font-size:11px;">
                 <option value="">자산 선택...</option>
-                ${assets.map(a => `<option value="${a.id}" ${existing?.linkedAssetId === a.id ? 'selected' : ''}>${a.name} (${a.type})</option>`).join('')}
+                ${assets.map(a => `<option value="${a.id}" ${existing?.linkedAssetId === a.id ? 'selected' : ''}>${escapeHTML(a.name)} (${escapeHTML(a.type)})</option>`).join('')}
               </select>
             </div>
           </label>
@@ -15008,10 +15102,10 @@ async function renderWatchlist() {
         <div onclick="toggleWatchExpand(${w.id})" style="padding:11px 12px; display:flex; align-items:center; gap:10px; cursor:pointer;">
           <div style="flex:1; min-width:0;">
             <div style="font-size:13px; font-weight:600; display:flex; align-items:center; gap:6px;">
-              ${w.name}
+              ${escapeHTML(w.name)}
               ${isCrash ? `<span style="font-size:9px; font-weight:700; color:white; background:#E8483D; padding:1px 6px; border-radius:4px;">🔻 급락</span>` : ''}
             </div>
-            <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${w.ticker}${related.length > 0 ? ` · 관련기사 ${related.length} ${isOpen ? '▲' : '▼'}` : ''}</div>
+            <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${escapeHTML(w.ticker)}${related.length > 0 ? ` · 관련기사 ${related.length} ${isOpen ? '▲' : '▼'}` : ''}</div>
           </div>
           <div style="text-align:right;">
             <div style="font-size:13px; font-weight:600;">${priceStr}</div>
@@ -15025,7 +15119,7 @@ async function renderWatchlist() {
               const ago = n.pubDate ? timeAgo(new Date(n.pubDate).toISOString()) : '';
               const safeLink = n.link ? n.link.replace(/'/g, "\\'") : '';
               return `<div ${safeLink ? `onclick="openExt('${safeLink}')"` : ''} style="padding:7px 0; border-top:0.5px solid var(--border-tertiary); cursor:${safeLink ? 'pointer' : 'default'};">
-                <div style="font-size:11px; line-height:1.4; color:var(--text-primary);">${n.title}</div>
+                <div style="font-size:11px; line-height:1.4; color:var(--text-primary);">${escapeHTML(n.title)}</div>
                 ${ago ? `<div style="font-size:9px; color:var(--text-tertiary); margin-top:2px;">${ago}</div>` : ''}
               </div>`;
             }).join('')}
@@ -15074,10 +15168,10 @@ function renderWatchlistFromCache() {
         <div onclick="toggleWatchExpand(${w.id})" style="padding:11px 12px; display:flex; align-items:center; gap:10px; cursor:pointer;">
           <div style="flex:1; min-width:0;">
             <div style="font-size:13px; font-weight:600; display:flex; align-items:center; gap:6px;">
-              ${w.name}
+              ${escapeHTML(w.name)}
               ${isCrash ? `<span style="font-size:9px; font-weight:700; color:white; background:#E8483D; padding:1px 6px; border-radius:4px;">🔻 급락</span>` : ''}
             </div>
-            <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${w.ticker}${related.length > 0 ? ` · 관련기사 ${related.length} ${isOpen ? '▲' : '▼'}` : ''}</div>
+            <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${escapeHTML(w.ticker)}${related.length > 0 ? ` · 관련기사 ${related.length} ${isOpen ? '▲' : '▼'}` : ''}</div>
           </div>
           <div style="text-align:right;">
             <div style="font-size:13px; font-weight:600;">${priceStr}</div>
@@ -15091,7 +15185,7 @@ function renderWatchlistFromCache() {
               const ago = n.pubDate ? timeAgo(new Date(n.pubDate).toISOString()) : '';
               const safeLink = n.link ? n.link.replace(/'/g, "\\'") : '';
               return `<div ${safeLink ? `onclick="openExt('${safeLink}')"` : ''} style="padding:7px 0; border-top:0.5px solid var(--border-tertiary); cursor:${safeLink ? 'pointer' : 'default'};">
-                <div style="font-size:11px; line-height:1.4; color:var(--text-primary);">${n.title}</div>
+                <div style="font-size:11px; line-height:1.4; color:var(--text-primary);">${escapeHTML(n.title)}</div>
                 ${ago ? `<div style="font-size:9px; color:var(--text-tertiary); margin-top:2px;">${ago}</div>` : ''}
               </div>`;
             }).join('')}
@@ -15184,17 +15278,17 @@ function editSite(id) {
 
       <div class="field">
         <div class="field-label">사이트 이름</div>
-        <input type="text" id="e-site-name" value="${s.name}" />
+        <input type="text" id="e-site-name" value="${escapeAttr(s.name)}" />
       </div>
 
       <div class="field">
         <div class="field-label">URL</div>
-        <input type="text" id="e-site-url" value="${s.url}" />
+        <input type="text" id="e-site-url" value="${escapeAttr(s.url)}" />
       </div>
 
       <div class="field">
         <div class="field-label">설명</div>
-        <input type="text" id="e-site-desc" value="${s.desc || ''}" />
+        <input type="text" id="e-site-desc" value="${escapeAttr(s.desc || '')}" />
       </div>
 
       <button onclick="deleteSite(${id})" style="width:100%; padding:12px; border:none; border-radius:var(--radius-md); background:var(--bg-danger); color:var(--text-danger); font-size:13px; font-weight:500; cursor:pointer; font-family:inherit; margin-top:8px;">
@@ -15839,9 +15933,9 @@ function renderAssetMarket(total, byType) {
       html += `
         <div style="display:flex; gap:7px; padding:8px 9px; border:0.5px solid var(--border-tertiary); border-radius:9px; align-items:center; background:white;">
           <button onclick="openExt('${s.url}')" style="flex:1; min-width:0; display:flex; gap:7px; align-items:center; border:none; background:transparent; cursor:pointer; padding:0; text-align:left; font-family:inherit;">
-            <div style="width:26px; height:26px; border-radius:7px; background:var(--bg-info); color:var(--text-info); display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:600; flex-shrink:0;">${s.name[0]}</div>
+            <div style="width:26px; height:26px; border-radius:7px; background:var(--bg-info); color:var(--text-info); display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:600; flex-shrink:0;">${escapeHTML(s.name[0] || "")}</div>
             <div style="flex:1; min-width:0;">
-              <div style="font-size:11px; font-weight:500; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${s.name}</div>
+              <div style="font-size:11px; font-weight:500; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHTML(s.name)}</div>
             </div>
           </button>
           <button onclick="editSite(${s.id})" style="border:none; background:transparent; cursor:pointer; padding:2px; color:var(--text-tertiary); font-family:inherit; flex-shrink:0;" aria-label="수정">
@@ -16746,19 +16840,23 @@ function classifyAssetBucket(a) {
   if (type === '부동산') return 'other';
 
   // 주식 / ETF / 펀드 → 미국 vs 국내 + 채권/금 ETF 구분
-  if (type === '주식' || type === 'ETF' || type === '펀드') {
+  // STOCK_LIKE_TYPES = ['주식','국내주식','미국주식','해외주식','ETF','국내ETF','해외ETF','펀드']
+  if (STOCK_LIKE_TYPES.includes(type)) {
     // 채권형 ETF/펀드
-    if (/채권|국채|회사채|크레딧|bond|treasury|회사채|tips|만기매칭|종합채/.test(name)) return 'bonds';
+    if (/채권|국채|회사채|크레딧|bond|treasury|tips|만기매칭|종합채/.test(name)) return 'bonds';
     // 금 ETF/펀드
     if (/(^|[^가-힣])금([^가-힣]|$)|골드|gold|krx금/.test(name)) return 'gold';
 
-    // 미국/해외 판별
+    // 타입 자체가 지역을 말해주면 그게 최우선 (국내ETF "TIGER 미국S&P500"은 국내 상장이므로 stockKr)
+    if (type === '미국주식' || type === '해외주식' || type === '해외ETF') return 'stockUs';
+    if (type === '국내주식' || type === '국내ETF') return 'stockKr';
+
+    // 구(舊) 타입('주식','ETF','펀드')은 이름/티커/통화로 자동 판별
     const isUsByName = /미국|s&p|sp500|s&p500|나스닥|nasdaq|qqq|spy|voo|vti|vt |다우|dow|미국채|러셀|russell|글로벌|선진국|필라델피아|반도체 ?soxx|미국배당/.test(name);
-    const isUsByTicker = /^(spy|qqq|voo|vti|vt|dia|schd|jepi|jepq|soxx|smh|tlt|ief|gld|iau)$/.test(ticker)
+    const isUsByTicker = /^(spy|qqq|qqqm|spym|voo|vti|vt|dia|schd|jepi|jepq|soxx|smh|tlt|ief|gld|iau)$/.test(ticker)
       || (ticker.length > 0 && /^[a-z]{1,5}$/.test(ticker) && !/\.ks$|\.kq$/.test(ticker));
     const isUsByCur = cur === 'USD';
     const isUsByRegion = a.region === '해외' || a.region === '미국';
-    const isKrByRegion = a.region === '국내';
     const isKrByTicker = /\.ks$|\.kq$/.test(ticker) || /^\d{6}/.test(ticker);
 
     // region이 '해외'로 명시됐거나, 이름/티커/통화가 미국을 가리키면 미국
@@ -16780,11 +16878,13 @@ function classifyAssetBucket7(a) {
   if (base === 'cash') return 'cash';
   if (base === 'dollar') return 'cash';   // 외화현금 → 현금
   if (base === 'other') return 'cash';    // 부동산 등 → 일단 현금성으로(목표엔 미포함 취급)
-  // 주식 계열: ETF면 etf*, 아니면 stock*
-  if (type === 'ETF') return base === 'stockUs' ? 'etfUs' : 'etfKr';
-  // 펀드는 성격상 ETF에 가까우니 etf*로 묶음
-  if (type === '펀드') return base === 'stockUs' ? 'etfUs' : 'etfKr';
+  // 주식 계열: ETF/펀드면 etf*, 아니면 stock*
+  if (type === 'ETF' || type === '국내ETF' || type === '해외ETF' || type === '펀드') {
+    return base === 'stockUs' ? 'etfUs' : 'etfKr';
+  }
   // 개별 주식
+  if (type === '미국주식' || type === '해외주식') return 'stockUs';
+  if (type === '국내주식') return 'stockKr';
   return base === 'stockUs' ? 'stockUs' : 'stockKr';
 }
 
@@ -16798,10 +16898,27 @@ function getAllocationBuckets7() {
 }
 
 // 자산 1개의 원화 평가액
+//  우선순위: 라이브 시세 > OCR 평가금액 > lots 원가 합 > qty*price
 function assetKrwValue(a) {
   const live = liveAssetData[a.id];
-  if (live?.hasLive && live.krwValue) return live.krwValue;
-  return Number(a.qty || 0) * Number(a.price || 0);
+  if (live?.hasLive && Number(live.krwValue) > 0) return Number(live.krwValue);
+
+  // OCR/캡처로 들어온 평가금액이 있으면 반영 (현금/예적금/청약 등 수량·단가 없는 자산 포함)
+  const evalAmount = Number(a.evalAmount || a.currentAmount || a.amount || a.krwValue || 0);
+  if (evalAmount > 0) return evalAmount;
+
+  // 매수 기록(lots)이 있으면 원가 기준으로라도 반영 (exactAmount=증권사 실제 체결금액 우선)
+  if (Array.isArray(a.lots) && a.lots.length > 0) {
+    const lotTotal = a.lots.reduce((s, l) => {
+      const exact = Number(l.exactAmount ?? 0);
+      const qty = Number(l.qty) || 0;
+      const price = Number(l.price) || 0;
+      return s + (exact > 0 ? exact : qty * price);
+    }, 0);
+    if (lotTotal > 0) return lotTotal;
+  }
+
+  return (Number(a.qty) || 0) * (Number(a.price) || 0);
 }
 
 // 전체 자산을 표준 버킷별 합계로 — AI 코치 / 자산플랜 공용
@@ -17107,12 +17224,132 @@ function openSettingsModal() {
         </div>
       </button>
       <input type="file" id="backup-restore-input" accept="application/json,.json" style="display:none;" onchange="importBackup(this)" />
+
+      <!-- ⏪ 복원 지점 되돌리기 -->
+      ${listRestorePoints().length > 0 ? `
+      <button onclick="openRestorePointsModal()" style="width:100%; padding:14px; border:0.5px solid var(--border-tertiary); background:white; border-radius:var(--radius-md); cursor:pointer; font-family:inherit; text-align:left; margin-bottom:10px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-size:20px;">⏪</span>
+          <div style="flex:1;">
+            <div style="font-size:13px; font-weight:600;">이전 상태로 되돌리기</div>
+            <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">복원 직전 자동 저장된 지점 ${listRestorePoints().length}개</div>
+          </div>
+          <i class="ti ti-history" style="color:var(--text-tertiary);"></i>
+        </div>
+      </button>` : ''}
     </div>
   `;
   modal.classList.add('show');
 }
 
+// ⏪ 복원 직전 자동 백업 지점 목록 (최신순)
+function listRestorePoints() {
+  try {
+    return Object.keys(localStorage)
+      .filter(k => k.startsWith(STORAGE_KEY + '-before-restore-'))
+      .map(k => ({ key: k, ts: Number(k.split('-before-restore-')[1]) || 0 }))
+      .sort((a, b) => b.ts - a.ts);
+  } catch (e) { return []; }
+}
+
+// ⏪ 복원 지점 선택 모달
+function openRestorePointsModal() {
+  const points = listRestorePoints();
+  if (points.length === 0) { showToast('되돌릴 지점이 없어요'); return; }
+  const rows = points.map(p => {
+    let info = '';
+    try {
+      const d = JSON.parse(localStorage.getItem(p.key));
+      info = `자산 ${d.assets?.length || 0}개 · 지출 ${d.budget?.expenses?.length || 0}건 · 할일 ${d.todos?.length || 0}개`;
+    } catch (e) { info = '내용 확인 불가'; }
+    const dt = new Date(p.ts);
+    const dateStr = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
+    return `<div style="padding:12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); margin-bottom:8px; cursor:pointer;" onclick="restoreFromPoint('${escapeAttr(p.key)}')">
+      <div style="font-size:13px; font-weight:600;">${dateStr} 복원 직전</div>
+      <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">${escapeHTML(info)}</div>
+    </div>`;
+  }).join('');
+  modal.innerHTML = `
+    <div class="modal">
+      <div style="font-size:16px; font-weight:700; margin-bottom:6px;">⏪ 이전 상태로 되돌리기</div>
+      <div style="font-size:11px; color:var(--text-tertiary); margin-bottom:14px; line-height:1.5;">백업 복원을 실행하기 직전에 자동 저장된 지점이에요. 선택하면 그 시점으로 되돌립니다. (지금 상태는 다시 복원 직전 백업으로 저장돼요)</div>
+      ${rows}
+      <button onclick="closeModal()" style="width:100%; padding:12px; border:0.5px solid var(--border-tertiary); background:white; border-radius:var(--radius-md); cursor:pointer; font-family:inherit; margin-top:6px;">닫기</button>
+    </div>
+  `;
+  modal.classList.add('show');
+}
+
+// ⏪ 특정 지점으로 되돌리기
+function restoreFromPoint(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) { showToast('지점을 찾을 수 없어요'); return; }
+    const data = JSON.parse(raw);
+    const err = validateBackup(data);
+    if (err) throw new Error(err);
+    if (!confirm('이 지점으로 되돌릴까요?\n\n⚠️ 현재 데이터를 덮어씁니다. (지금 상태도 복원 직전 백업으로 저장돼요)')) return;
+    // 되돌리기도 하나의 복원이므로 현재 상태를 다시 자동 백업
+    autoBackupBeforeRestore();
+    if (data.todos) todos = data.todos;
+    if (data.budget) budget = data.budget;
+    if (data.workoutLog) workoutLog = data.workoutLog;
+    if (data.assets) assets = data.assets;
+    if (data.settings) settings = data.settings;
+    if (data.userChannels) userChannels = data.userChannels;
+    if (data.economySites) economySites = data.economySites;
+    if (data.challenges) challenges = data.challenges;
+    if (data.watchlist) watchlist = data.watchlist;
+    saveData();
+    closeModal();
+    showToast('✅ 이전 상태로 되돌렸어요');
+    render();
+  } catch (err) {
+    console.error('되돌리기 실패:', err);
+    showToast('되돌리기 실패: ' + err.message);
+  }
+}
+
 // 💾 전체 데이터를 JSON 파일로 다운로드
+// 백업 데이터 구조 검증 (잘못된/깨진 JSON으로 앱이 망가지는 것 방지)
+function validateBackup(data) {
+  if (!data || typeof data !== 'object') return '형식이 올바르지 않아요 (객체가 아님)';
+  if (data.todos != null && !Array.isArray(data.todos)) return 'todos 형식 오류';
+  if (data.assets != null && !Array.isArray(data.assets)) return 'assets 형식 오류';
+  if (data.challenges != null && !Array.isArray(data.challenges)) return 'challenges 형식 오류';
+  if (data.watchlist != null && !Array.isArray(data.watchlist)) return 'watchlist 형식 오류';
+  // userChannels는 배열이 아니라 { asset:[], workout:[] } 객체 구조
+  if (data.userChannels != null) {
+    if (typeof data.userChannels !== 'object' || Array.isArray(data.userChannels)) return 'userChannels 형식 오류';
+    if (data.userChannels.asset != null && !Array.isArray(data.userChannels.asset)) return 'userChannels.asset 형식 오류';
+    if (data.userChannels.workout != null && !Array.isArray(data.userChannels.workout)) return 'userChannels.workout 형식 오류';
+  }
+  if (data.economySites != null && !Array.isArray(data.economySites)) return 'economySites 형식 오류';
+  if (data.budget != null && typeof data.budget !== 'object') return 'budget 형식 오류';
+  if (data.workoutLog != null && typeof data.workoutLog !== 'object') return 'workoutLog 형식 오류';
+  if (data.settings != null && typeof data.settings !== 'object') return 'settings 형식 오류';
+  // budget이 있으면 expenses/fixed는 배열이어야 함
+  if (data.budget && data.budget.expenses != null && !Array.isArray(data.budget.expenses)) return 'budget.expenses 형식 오류';
+  if (data.budget && data.budget.fixed != null && !Array.isArray(data.budget.fixed)) return 'budget.fixed 형식 오류';
+  return null; // 통과
+}
+
+// 복원 직전 현재 상태를 localStorage에 자동 백업 (실수 복구용)
+function autoBackupBeforeRestore() {
+  try {
+    const snapshot = JSON.stringify({ todos, budget, workoutLog, assets, settings, userChannels, economySites, challenges, watchlist, _backupAt: new Date().toISOString() });
+    const key = STORAGE_KEY + '-before-restore-' + Date.now();
+    localStorage.setItem(key, snapshot);
+    // 복원 전 백업은 최근 3개만 유지 (용량 관리)
+    const keys = Object.keys(localStorage).filter(k => k.startsWith(STORAGE_KEY + '-before-restore-')).sort();
+    while (keys.length > 3) { localStorage.removeItem(keys.shift()); }
+    return key;
+  } catch (e) {
+    console.warn('복원 전 자동 백업 실패(무시하고 진행):', e);
+    return null;
+  }
+}
+
 function exportBackup() {
   try {
     const payload = { todos, budget, workoutLog, assets, settings, userChannels, economySites, challenges, watchlist, _backupAt: new Date().toISOString(), _backupVersion: 'v5' };
@@ -17142,10 +17379,14 @@ function importBackup(input) {
   reader.onload = (e) => {
     try {
       const data = JSON.parse(e.target.result);
-      // 최소 검증
-      if (!data || (typeof data !== 'object')) throw new Error('형식이 올바르지 않아요');
+      // 구조 검증 (잘못된 백업으로 앱 전체가 깨지는 것 방지)
+      const err = validateBackup(data);
+      if (err) throw new Error(err);
       const counts = `가계부 지출 ${data.budget?.expenses?.length || 0}건, 자산 ${data.assets?.length || 0}개, 할일 ${data.todos?.length || 0}개`;
-      if (!confirm(`이 백업으로 복원할까요?\n\n${counts}\n\n⚠️ 현재 데이터를 덮어씁니다.`)) { input.value = ''; return; }
+      if (!confirm(`이 백업으로 복원할까요?\n\n${counts}\n\n⚠️ 현재 데이터를 덮어씁니다. (복원 직전 상태는 자동 백업돼요)`)) { input.value = ''; return; }
+
+      // 복원 직전 현재 상태 자동 백업
+      autoBackupBeforeRestore();
 
       if (data.todos) todos = data.todos;
       if (data.budget) budget = data.budget;
@@ -17155,6 +17396,7 @@ function importBackup(input) {
       if (data.userChannels) userChannels = data.userChannels;
       if (data.economySites) economySites = data.economySites;
       if (data.challenges) challenges = data.challenges;
+      if (data.watchlist) watchlist = data.watchlist;
 
       saveData();
       input.value = '';
@@ -18564,7 +18806,7 @@ function renderMergePreview() {
     h += `<div onclick="window._mergeBaseIdx=${i}; renderMergePreview();" style="display:flex; align-items:center; gap:8px; padding:10px; margin-bottom:6px; border:1.5px solid ${isBase ? 'var(--text-info)' : 'var(--border-tertiary)'}; background:${isBase ? 'var(--bg-info)' : 'white'}; border-radius:8px; cursor:pointer;">
       <div style="width:18px; height:18px; border-radius:50%; border:2px solid ${isBase ? 'var(--text-info)' : 'var(--border-tertiary)'}; background:${isBase ? 'var(--text-info)' : 'transparent'}; flex-shrink:0; display:flex; align-items:center; justify-content:center; color:white; font-size:10px;">${isBase ? '✓' : ''}</div>
       <div style="flex:1; min-width:0;">
-        <div style="font-size:13px; font-weight:${isBase ? '600' : '500'};">${a.name} ${isBase ? '<span style="font-size:9px; color:var(--text-info);">(기준)</span>' : ''}</div>
+        <div style="font-size:13px; font-weight:${isBase ? '600' : '500'};">${escapeHTML(a.name)} ${isBase ? '<span style="font-size:9px; color:var(--text-info);">(기준)</span>' : ''}</div>
         <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${a.type}${a.ticker ? ' · ' + a.ticker : ' · 티커없음'} · ${qStr}주 · 평균 ${(Number(a.price)||0).toLocaleString()}원</div>
       </div>
     </div>`;
@@ -18898,6 +19140,8 @@ function startApp() {
   document.getElementById('auth-screen').classList.add('hidden');
   render();
   setupAppLock(); // 🔒 화면 잠금 (설정돼 있으면)
+  // 앱 시작 시 자동매수 1회 점검 (render와 분리, 시세 로드 여유를 두고 실행)
+  setTimeout(() => runAllAutoBuysSafe('app-start'), 1500);
 }
 
 function showLoginScreen() {
