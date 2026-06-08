@@ -11670,6 +11670,33 @@ function buildAssetDetailCard(a, live) {
           <div style="font-size:13px; font-weight:700;">$1 = ₩${Number(a.avgBuyRate).toLocaleString()}</div>
         </div>` : ''}
       </div>`;
+  } else if (a.type === '금' && live?.hasLive) {
+    // 금 — 주식처럼 수량(g)·매입단가·현재시세·평가금액·수익률 표시
+    const qty = Number(a.qty) || 0;            // 보유 g
+    const gAvg = Number(a.price) || 0;          // 매입 단가 (g당 원)
+    const gNow = live.krwPrice || live.currentPrice || gAvg;  // 현재 시세 (g당 원)
+    const totalBuy = gAvg * qty;
+    const totalEval = live.krwValue || gNow * qty;
+    const profit = totalEval - totalBuy;
+    const profitPct = totalBuy > 0 ? (profit / totalBuy) * 100 : 0;
+    const pColor = profit >= 0 ? 'var(--text-danger)' : 'var(--text-info)';
+    const qtyDisp = Number.isInteger(qty) ? qty : qty.toFixed(4).replace(/\.?0+$/, '');
+    body = `
+      <div style="display:flex; gap:12px; margin-bottom:10px;">
+        ${row('매입가', `${Math.round(gAvg).toLocaleString()}원/g`, `${qtyDisp}g 보유`)}
+        ${row('총 매입금액', `${Math.round(totalBuy).toLocaleString()}원`, '')}
+      </div>
+      <div style="display:flex; gap:12px; margin-bottom:10px;">
+        ${row('현재가', `${Math.round(gNow).toLocaleString()}원/g`, live.changePct != null ? `${live.changePct >= 0 ? '▲' : '▼'}${Math.abs(live.changePct).toFixed(2)}%` : '')}
+        ${row('총 평가금액', `${Math.round(totalEval).toLocaleString()}원`, '')}
+      </div>
+      <div style="display:flex; gap:12px; padding-top:8px; border-top:0.5px solid var(--border-tertiary);">
+        <div style="flex:1;">
+          <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:2px;">평가손익</div>
+          <div style="font-size:14px; font-weight:700; color:${pColor};">${profit >= 0 ? '+' : ''}${Math.round(profit).toLocaleString()}원</div>
+          <div style="font-size:10px; color:${pColor};">${profit >= 0 ? '+' : ''}${profitPct.toFixed(2)}%</div>
+        </div>
+      </div>`;
   } else if (isStock) {
     // 시세 없는 주식 — 입력값만
     const qty = Number(a.qty) || 0;
@@ -11711,15 +11738,27 @@ function buildAssetDetailCard(a, live) {
   }
 
   // 평가금액 / 손익 헤더
-  const v = live?.hasLive && live.krwValue ? live.krwValue : Number(a.qty) * Number(a.price);
+  //  - 주식: 현재 평가금액을 크게 (지금 팔면 얼마 관점)
+  //  - 금: 매입금액을 크게, 현재 평가금액은 작게 (산 값이 기준인 실물 자산 관점)
+  const isGold = a.type === '금';
+  const v = isGold
+    ? Number(a.qty) * Number(a.price)                                   // 금: 매입금액
+    : (live?.hasLive && live.krwValue ? live.krwValue : Number(a.qty) * Number(a.price));
   let headProfit = '';
-  if (isStock && live?.hasLive) {
+  if ((isStock || isGold) && live?.hasLive) {
     const qty = Number(a.qty) || 0;
-    const totalBuy = (live.krwAvgPrice || 0) * qty;
-    const profit = v - totalBuy;
+    const gNow = live.krwPrice || live.currentPrice || Number(a.price);
+    const totalBuy = isGold ? Number(a.price) * qty : (live.krwAvgPrice || Number(a.price) || 0) * qty;
+    const curEval = isGold ? gNow * qty : (live.krwValue || 0);
+    const profit = curEval - totalBuy;
     const pct = totalBuy > 0 ? (profit / totalBuy * 100) : 0;
     const pColor = profit >= 0 ? 'var(--text-danger)' : 'var(--text-info)';
-    headProfit = `<div style="font-size:13px; font-weight:600; color:${pColor}; margin-top:2px;">${profit >= 0 ? '+' : ''}${Math.round(profit).toLocaleString()}원 (${profit >= 0 ? '+' : ''}${pct.toFixed(2)}%)</div>`;
+    if (isGold) {
+      // 금: 현재 평가금액 + 손익을 작게
+      headProfit = `<div style="font-size:12px; color:var(--text-secondary); margin-top:2px;">현재 평가 ${Math.round(curEval).toLocaleString()}원 <span style="color:${pColor};">(${profit >= 0 ? '+' : ''}${pct.toFixed(2)}%)</span></div>`;
+    } else {
+      headProfit = `<div style="font-size:13px; font-weight:600; color:${pColor}; margin-top:2px;">${profit >= 0 ? '+' : ''}${Math.round(profit).toLocaleString()}원 (${profit >= 0 ? '+' : ''}${pct.toFixed(2)}%)</div>`;
+    }
   }
 
   return `
@@ -11733,7 +11772,7 @@ function buildAssetDetailCard(a, live) {
       </div>
 
       <div style="padding:16px; background:var(--bg-secondary); border-radius:12px; margin-bottom:12px;">
-        <div style="font-size:11px; color:var(--text-tertiary);">총 평가금액</div>
+        <div style="font-size:11px; color:var(--text-tertiary);">${isGold ? '총 매입금액' : '총 평가금액'}</div>
         <div style="font-size:24px; font-weight:800; margin-top:2px;">${Math.round(v).toLocaleString()}원</div>
         ${headProfit}
       </div>
