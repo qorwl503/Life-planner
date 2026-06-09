@@ -1871,6 +1871,13 @@ function renderMonthlyReportCard() {
   const totalChCheck = activeChallenges.reduce((sum, c) => {
     return sum + Object.keys(c.checks || {}).filter(k => k.startsWith(targetMStr) && c.checks[k] === true).length;
   }, 0);
+  // 챌린지 표시용: 메인은 개수, 보조에 완료/진행/실천일 (체크 날짜수를 메인으로 쓰면 헷갈림)
+  const completedChCount = activeChallenges.filter(c => c.completed).length;
+  const ongoingChCount = activeChallenges.length - completedChCount;
+  const challengeMainText = `${activeChallenges.length}개`;
+  const challengeSubText = completedChCount > 0
+    ? `완료 ${completedChCount} · 진행 ${ongoingChCount} · ${totalChCheck}일 실천`
+    : `진행 중 · ${totalChCheck}일 실천`;
 
   // 4. 할일
   const monthTodos = (todos || []).filter(t => t.dateKey?.startsWith(targetMStr));
@@ -1965,8 +1972,8 @@ function renderMonthlyReportCard() {
         ${activeChallenges.length > 0 ? `
         <div>
           <div style="font-size:9px; opacity:0.7;">🎯 챌린지</div>
-          <div style="font-size:13px; font-weight:700; margin-top:1px;">${totalChCheck}회</div>
-          <div style="font-size:8px; opacity:0.7;">${activeChallenges.length}개 진행</div>
+          <div style="font-size:13px; font-weight:700; margin-top:1px;">${challengeMainText}</div>
+          <div style="font-size:8px; opacity:0.7;">${challengeSubText}</div>
         </div>` : ''}
       </div>
     </div>
@@ -6819,6 +6826,164 @@ function resetSimSettings() {
 
 // ====== AI 투자 분석 ======
 // 🔧 자산 하위탭 'analysis' 화면 (모달이 아니라 탭 안에 직접 렌더)
+// ============== 주식 자동완성 ==============
+// 로컬 종목 DB (별칭·티커·시장 포함). 보유/관심 종목과 합쳐서 검색.
+const STOCK_SUGGEST_DB = [
+  // 국내주식
+  { name:'삼성전자', ticker:'005930.KS', market:'KR', type:'국내주식', aliases:['삼전','삼성','samsung'] },
+  { name:'SK하이닉스', ticker:'000660.KS', market:'KR', type:'국내주식', aliases:['하이닉스','hynix'] },
+  { name:'NAVER', ticker:'035420.KS', market:'KR', type:'국내주식', aliases:['네이버','naver'] },
+  { name:'카카오', ticker:'035720.KS', market:'KR', type:'국내주식', aliases:['kakao'] },
+  { name:'현대차', ticker:'005380.KS', market:'KR', type:'국내주식', aliases:['현대자동차','hyundai'] },
+  { name:'기아', ticker:'000270.KS', market:'KR', type:'국내주식', aliases:['kia'] },
+  { name:'LG에너지솔루션', ticker:'373220.KS', market:'KR', type:'국내주식', aliases:['엘지엔솔','lg엔솔','배터리'] },
+  { name:'삼성바이오로직스', ticker:'207940.KS', market:'KR', type:'국내주식', aliases:['삼바','바이오로직스'] },
+  { name:'셀트리온', ticker:'068270.KS', market:'KR', type:'국내주식', aliases:['celltrion'] },
+  { name:'POSCO홀딩스', ticker:'005490.KS', market:'KR', type:'국내주식', aliases:['포스코','posco'] },
+  // 국내 ETF
+  { name:'KODEX 200', ticker:'069500.KS', market:'KR', type:'국내ETF', aliases:['코덱스200','코스피200'] },
+  { name:'TIGER 미국S&P500', ticker:'360750.KS', market:'KR', type:'국내ETF', aliases:['타이거 sp500','미국 s&p','sp500','에스앤피'] },
+  { name:'KODEX 미국나스닥100', ticker:'379810.KS', market:'KR', type:'국내ETF', aliases:['코덱스 나스닥','나스닥100','nasdaq100'] },
+  { name:'TIGER 미국나스닥100', ticker:'133690.KS', market:'KR', type:'국내ETF', aliases:['타이거 나스닥','나스닥100'] },
+  { name:'TIGER 미국필라델피아반도체나스닥', ticker:'381180.KS', market:'KR', type:'국내ETF', aliases:['필라델피아반도체','반도체etf','sox'] },
+  { name:'ACE 미국S&P500', ticker:'360200.KS', market:'KR', type:'국내ETF', aliases:['ace sp500','에이스 sp500'] },
+  // 미국주식
+  { name:'Apple', ticker:'AAPL', market:'US', type:'미국주식', aliases:['애플','apple'] },
+  { name:'Microsoft', ticker:'MSFT', market:'US', type:'미국주식', aliases:['마이크로소프트','마소','msft'] },
+  { name:'NVIDIA', ticker:'NVDA', market:'US', type:'미국주식', aliases:['엔비디아','엔비','nvidia'] },
+  { name:'Alphabet (Google)', ticker:'GOOGL', market:'US', type:'미국주식', aliases:['구글','알파벳','google'] },
+  { name:'Amazon', ticker:'AMZN', market:'US', type:'미국주식', aliases:['아마존','amazon'] },
+  { name:'Tesla', ticker:'TSLA', market:'US', type:'미국주식', aliases:['테슬라','tesla'] },
+  { name:'Meta', ticker:'META', market:'US', type:'미국주식', aliases:['메타','페이스북','facebook'] },
+  { name:'Broadcom', ticker:'AVGO', market:'US', type:'미국주식', aliases:['브로드컴'] },
+  { name:'AMD', ticker:'AMD', market:'US', type:'미국주식', aliases:['에이엠디'] },
+  { name:'Netflix', ticker:'NFLX', market:'US', type:'미국주식', aliases:['넷플릭스','넷플'] },
+  { name:'Palantir', ticker:'PLTR', market:'US', type:'미국주식', aliases:['팔란티어'] },
+  // 미국 ETF
+  { name:'SPDR S&P 500 ETF', ticker:'SPY', market:'US', type:'해외ETF', aliases:['스파이','s&p500','sp500'] },
+  { name:'Vanguard S&P 500 ETF', ticker:'VOO', market:'US', type:'해외ETF', aliases:['s&p500','sp500'] },
+  { name:'SPDR Portfolio S&P 500', ticker:'SPLG', market:'US', type:'해외ETF', aliases:['spym','s&p500'] },
+  { name:'Invesco QQQ', ticker:'QQQ', market:'US', type:'해외ETF', aliases:['나스닥','nasdaq'] },
+  { name:'Invesco QQQ M', ticker:'QQQM', market:'US', type:'해외ETF', aliases:['나스닥','nasdaq'] },
+  { name:'Vanguard Total Stock Market', ticker:'VTI', market:'US', type:'해외ETF', aliases:['미국전체'] },
+  { name:'Schwab US Dividend (SCHD)', ticker:'SCHD', market:'US', type:'해외ETF', aliases:['배당','미국배당','슈드'] },
+  { name:'JPMorgan Equity Premium (JEPI)', ticker:'JEPI', market:'US', type:'해외ETF', aliases:['배당','커버드콜'] },
+  { name:'JPMorgan Nasdaq Premium (JEPQ)', ticker:'JEPQ', market:'US', type:'해외ETF', aliases:['배당','커버드콜'] },
+  { name:'iShares Semiconductor (SOXX)', ticker:'SOXX', market:'US', type:'해외ETF', aliases:['반도체','soxx'] },
+  { name:'Direxion Semiconductor 3x (SOXL)', ticker:'SOXL', market:'US', type:'해외ETF', aliases:['반도체레버리지','소셜'] },
+  { name:'ProShares UltraPro QQQ (TQQQ)', ticker:'TQQQ', market:'US', type:'해외ETF', aliases:['나스닥레버리지','삼배'] },
+];
+
+function normTickerSuggest(ticker) {
+  const t = String(ticker || '').trim().toUpperCase();
+  if (/^\d{6}$/.test(t)) return `${t}.KS`;
+  return t;
+}
+function inferMarketSuggest(a) {
+  if (a.type === '미국주식' || a.type === '해외주식' || a.type === '해외ETF' || a.priceCurrency === 'USD') return 'US';
+  return 'KR';
+}
+function getStockSuggestPool() {
+  const owned = (assets || []).filter(a => isStockLikeType(a.type) && (a.name || a.ticker)).map(a => ({
+    name: a.name || a.ticker, ticker: normTickerSuggest(a.ticker || ''), market: inferMarketSuggest(a),
+    type: a.type || '보유자산', source: '보유', aliases: [a.name, a.ticker].filter(Boolean)
+  }));
+  const watched = (watchlist || []).filter(w => w.name || w.ticker).map(w => ({
+    name: w.name || w.ticker, ticker: normTickerSuggest(w.ticker || ''), market: w.isUS ? 'US' : 'KR',
+    type: w.isUS ? '미국주식' : '국내주식', source: '관심', aliases: [w.name, w.ticker].filter(Boolean)
+  }));
+  const base = STOCK_SUGGEST_DB.map(x => ({ ...x, source: '기본' }));
+  const map = new Map();
+  [...owned, ...watched, ...base].forEach(item => {
+    const key = `${item.ticker || ''}|${item.name || ''}`.toLowerCase();
+    if (!map.has(key)) map.set(key, item);
+  });
+  return [...map.values()];
+}
+function normSearchText(s) {
+  return String(s || '').toLowerCase().replace(/\s+/g, '').replace(/[()·_\-.,]/g, '');
+}
+function scoreStockSuggest(item, query) {
+  const q = normSearchText(query);
+  if (!q) return 0;
+  const fields = [item.name, item.ticker, item.type, ...(item.aliases || [])].map(normSearchText).filter(Boolean);
+  let score = 0;
+  for (const f of fields) {
+    if (f === q) score = Math.max(score, 100);
+    else if (f.startsWith(q)) score = Math.max(score, 80);
+    else if (f.includes(q)) score = Math.max(score, 50);
+  }
+  if (item.source === '보유') score += 25;
+  if (item.source === '관심') score += 15;
+  return score;
+}
+function searchStockSuggest(query, limit = 8) {
+  return getStockSuggestPool()
+    .map(item => ({ ...item, _score: scoreStockSuggest(item, query) }))
+    .filter(item => item._score > 0)
+    .sort((a, b) => b._score - a._score)
+    .slice(0, limit);
+}
+
+let stockSuggestActiveIndex = -1;
+let stockSuggestItems = [];
+function updateStockSuggestPanel(query) {
+  window._selectedStockSuggest = null;
+  const panel = document.getElementById('stock-suggest-panel');
+  if (!panel) return;
+  const q = String(query || '').trim();
+  if (!q) { panel.style.display = 'none'; panel.innerHTML = ''; stockSuggestItems = []; stockSuggestActiveIndex = -1; return; }
+  stockSuggestItems = searchStockSuggest(q, 8);
+  stockSuggestActiveIndex = -1;
+  if (stockSuggestItems.length === 0) {
+    panel.style.display = 'block';
+    panel.innerHTML = `<div style="padding:10px 12px; background:var(--bg-secondary); border-radius:10px; font-size:11px; color:var(--text-tertiary);">검색 결과 없음 · 입력한 이름으로 바로 AI 분석 가능</div>`;
+    return;
+  }
+  panel.style.display = 'block';
+  panel.innerHTML = stockSuggestItems.map((item, idx) => renderStockSuggestItem(item, idx)).join('');
+}
+function renderStockSuggestItem(item, idx) {
+  const marketBadge = item.market === 'US' ? '🇺🇸' : '🇰🇷';
+  const sourceBadge = item.source === '보유' ? '보유' : item.source === '관심' ? '관심' : item.type;
+  return `<button type="button" data-idx="${idx}" onmousedown="event.preventDefault()" onclick="selectStockSuggest(${idx})"
+      style="width:100%; display:flex; align-items:center; gap:10px; padding:10px 12px; border:0.5px solid var(--border-tertiary); border-radius:10px; background:white; margin-bottom:5px; text-align:left; font-family:inherit; cursor:pointer;">
+      <div style="width:30px; height:30px; border-radius:9px; background:var(--bg-info); display:flex; align-items:center; justify-content:center; font-size:13px; flex-shrink:0;">${marketBadge}</div>
+      <div style="flex:1; min-width:0;">
+        <div style="font-size:12px; font-weight:700; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHTML(item.name)}</div>
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">${escapeHTML(item.ticker || '-')} · ${escapeHTML(sourceBadge)}</div>
+      </div>
+      <i class="ti ti-chevron-right" style="font-size:14px; color:var(--text-tertiary); flex-shrink:0;"></i>
+    </button>`;
+}
+function selectStockSuggest(idx) {
+  const item = stockSuggestItems[idx];
+  if (!item) return;
+  const input = document.getElementById('ai-stock-name');
+  if (input) input.value = item.name;
+  const panel = document.getElementById('stock-suggest-panel');
+  if (panel) { panel.style.display = 'none'; panel.innerHTML = ''; }
+  window._selectedStockSuggest = item;
+}
+function handleStockSuggestKey(e) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (stockSuggestActiveIndex >= 0 && stockSuggestItems[stockSuggestActiveIndex]) selectStockSuggest(stockSuggestActiveIndex);
+    runAIStockAnalysis();
+    return;
+  }
+  if (!stockSuggestItems.length) return;
+  if (e.key === 'ArrowDown') { e.preventDefault(); stockSuggestActiveIndex = Math.min(stockSuggestActiveIndex + 1, stockSuggestItems.length - 1); highlightStockSuggest(); }
+  if (e.key === 'ArrowUp') { e.preventDefault(); stockSuggestActiveIndex = Math.max(stockSuggestActiveIndex - 1, 0); highlightStockSuggest(); }
+}
+function highlightStockSuggest() {
+  const panel = document.getElementById('stock-suggest-panel');
+  if (!panel) return;
+  panel.querySelectorAll('button[data-idx]').forEach(btn => {
+    btn.style.background = Number(btn.dataset.idx) === stockSuggestActiveIndex ? 'var(--bg-info)' : 'white';
+  });
+}
+
 function renderAssetAnalysis() {
   const investAssets = (assets || []).filter(a =>
     isStockLikeType(a.type) && a.name
@@ -6833,23 +6998,13 @@ function renderAssetAnalysis() {
 
       <div class="field">
         <div class="field-label">종목명 또는 티커</div>
-        <input type="text" id="ai-stock-name" placeholder="예: 삼성전자, AAPL, SPY, KODEX 200"
-          list="ai-stock-suggest" autocomplete="off"
-          onkeydown="if(event.key==='Enter') runAIStockAnalysis()" />
-        <datalist id="ai-stock-suggest">
-          ${(() => {
-            // 보유 종목 + 인기 종목 합쳐서 중복 제거
-            const owned = (assets || []).filter(a => isStockLikeType(a.type) && a.name).map(a => a.name);
-            const popular = [
-              '삼성전자','SK하이닉스','NAVER','카카오','현대차','LG에너지솔루션','기아','셀트리온','삼성바이오로직스','POSCO홀딩스',
-              'KODEX 200','TIGER 미국S&P500','KODEX 미국나스닥100','TIGER 미국나스닥100','TIGER 미국필라델피아반도체나스닥','KODEX 미국나스닥100레버리지','ACE 미국S&P500',
-              'AAPL','MSFT','NVDA','GOOGL','AMZN','TSLA','META','AVGO','AMD','NFLX','PLTR',
-              'SPY','QQQ','QQQM','SCHD','VOO','SOXL','SOXX','TQQQ','SQQQ','SPYM','VTI','JEPI','JEPQ',
-            ];
-            const all = [...new Set([...owned, ...popular])];
-            return all.map(n => `<option value="${escapeAttr(n)}"></option>`).join('');
-          })()}
-        </datalist>
+        <input type="text" id="ai-stock-name" placeholder="예: 삼성전자, 구글, 엔비디아, 나스닥, 배당"
+          autocomplete="off"
+          oninput="updateStockSuggestPanel(this.value)"
+          onfocus="updateStockSuggestPanel(this.value)"
+          onblur="setTimeout(() => { const p = document.getElementById('stock-suggest-panel'); if (p) p.style.display='none'; }, 150)"
+          onkeydown="handleStockSuggestKey(event)" />
+        <div id="stock-suggest-panel" style="display:none; margin-top:6px;"></div>
       </div>
 
       ${investAssets.length > 0 ? `
@@ -6894,11 +7049,14 @@ function goAIAnalysisTab(prefillName) {
 
 async function runAIStockAnalysis() {
   const nameInput = document.getElementById('ai-stock-name');
-  const stockName = nameInput?.value?.trim();
-  if (!stockName) {
+  const raw = nameInput?.value?.trim();
+  if (!raw) {
     showToast('종목명을 입력해주세요');
     return;
   }
+  // 자동완성에서 고른 종목이 입력값과 일치하면 티커까지 함께 분석 (구글→GOOGL 정확도↑)
+  const sel = window._selectedStockSuggest;
+  const stockName = (sel && sel.name === raw && sel.ticker) ? `${sel.name} (${sel.ticker})` : raw;
 
   if (!window.GEMINI_API_KEY) {
     showToast('AI 키 먼저 설정해주세요');
