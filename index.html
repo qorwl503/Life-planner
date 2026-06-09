@@ -894,6 +894,12 @@ const firebaseConfig = {
     animation: spin 0.8s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+  /* 스켈레톤 로딩 — 콘텐츠 들어올 자리를 미리 보여줌 */
+  @keyframes skeletonPulse { 0%,100% { opacity: 0.55; } 50% { opacity: 1; } }
+  .skel { background: var(--bg-tertiary); border-radius: 6px; animation: skeletonPulse 1.2s ease-in-out infinite; }
+  .skel-video { display:flex; gap:10px; padding:10px; margin-bottom:6px; }
+  .skel-video .skel-thumb { width:120px; height:68px; border-radius:6px; flex-shrink:0; }
+  .skel-video .skel-lines { flex:1; display:flex; flex-direction:column; gap:6px; padding-top:4px; }
 </style>
 </head>
 <body>
@@ -1547,6 +1553,18 @@ function escapeHTML(value) {
 }
 function escapeAttr(value) {
   return escapeHTML(value);
+}
+// 미세 햅틱 피드백 — '성공/완료' 동작에만 사용 (지원 안 하는 기기는 무시됨)
+function haptic(ms = 20) {
+  try { navigator.vibrate?.(ms); } catch (e) {}
+}
+// 영상 목록 로딩 스켈레톤 (카드 모양을 미리 보여줘 대기 체감 ↓)
+function videoSkeleton(n = 3) {
+  let s = '';
+  for (let i = 0; i < n; i++) {
+    s += `<div class="skel-video"><div class="skel skel-thumb"></div><div class="skel-lines"><div class="skel" style="height:12px; width:90%;"></div><div class="skel" style="height:10px; width:55%;"></div><div class="skel" style="height:10px; width:35%;"></div></div></div>`;
+  }
+  return s;
 }
 // inline onclick 등에 사용자 문자열을 안전하게 넣기 위한 JS 리터럴 이스케이프
 // 결과는 그 자체로 따옴표를 포함하므로 onclick="fn(${jsString(v)})" 형태로 사용 (바깥 따옴표 불필요)
@@ -2926,6 +2944,7 @@ function toggleTodo(id, e) {
     t.done = !t.done;
     if (t.done) {
       t.completedAt = Date.now();
+      haptic();
     } else {
       delete t.completedAt;
     }
@@ -3174,6 +3193,7 @@ function checkChallenge(id, value) {
     showToast('체크 해제');
   } else {
     c.checks[k] = value;
+    if (value === true) haptic();
     showToast(value === true ? '성공! 💪' : value === 'fail' ? '실패 ㅠ' : '체크됨');
   }
 
@@ -3527,6 +3547,7 @@ function completeChallenge(id) {
   if (c) {
     c.completed = true;
     c.completedAt = Date.now();
+    haptic(40);
     saveData();
     showToast('🎉 챌린지 완료!');
     closeModal();
@@ -3915,10 +3936,7 @@ function renderWorkout() {
       <button onclick="setWorkoutYtOrder('viewCount')" style="padding:6px 12px; border:0.5px solid ${currentWorkoutYtOrder === 'viewCount' ? 'var(--text-danger)' : 'var(--border-tertiary)'}; border-radius:999px; background:${currentWorkoutYtOrder === 'viewCount' ? 'var(--bg-danger)' : 'white'}; color:${currentWorkoutYtOrder === 'viewCount' ? 'var(--text-danger)' : 'var(--text-secondary)'}; font-size:11px; cursor:pointer; font-family:inherit; white-space:nowrap;">🔥 조회수순</button>
     </div>
       <div id="wo-yt-results">
-        <div style="text-align:center; padding:30px 20px; color:var(--text-tertiary); font-size:12px;">
-          <div class="spinner" style="margin:0 auto 10px;"></div>
-          영상 불러오는 중...
-        </div>
+        ${videoSkeleton(3)}
       </div>
     `;
   } else {
@@ -3966,6 +3984,7 @@ function quickToggleToday() {
     workoutLog[k].kcal = 300;
     workoutLog[k].minutes = 30;
   }
+  if (workoutLog[k].done) haptic();
   saveData();
   showToast(workoutLog[k].done ? '오늘 운동 ✓' : '체크 해제됨');
   renderWorkout();
@@ -15121,10 +15140,7 @@ async function loadVideosInto(containerId, query, maxResults = 8, order = 'relev
     return;
   }
 
-  container.innerHTML = `<div style="text-align:center; padding:30px 20px; color:var(--text-tertiary); font-size:12px;">
-    <div class="spinner" style="margin:0 auto 10px;"></div>
-    영상 불러오는 중...
-  </div>`;
+  container.innerHTML = videoSkeleton(4);
 
   console.log(`📺 영상 로드 시작: "${query}" (${containerId}, ${order})`);
   const result = await searchYoutube(query, maxResults, order);
@@ -16284,10 +16300,7 @@ function renderAssetYoutube() {
       <button onclick="setAssetYtOrder('viewCount')" style="padding:6px 12px; border:0.5px solid ${currentAssetYtOrder === 'viewCount' ? 'var(--text-info)' : 'var(--border-tertiary)'}; border-radius:999px; background:${currentAssetYtOrder === 'viewCount' ? 'var(--bg-info)' : 'white'}; color:${currentAssetYtOrder === 'viewCount' ? 'var(--text-info)' : 'var(--text-secondary)'}; font-size:11px; cursor:pointer; font-family:inherit; white-space:nowrap;">🔥 조회수순</button>
     </div>` : ''}
     <div id="yt-results">
-      ${currentAssetYtQuery ? `<div style="text-align:center; padding:30px 20px; color:var(--text-tertiary); font-size:12px;">
-        <div class="spinner" style="margin:0 auto 10px;"></div>
-        영상 불러오는 중...
-      </div>` : ''}
+      ${currentAssetYtQuery ? videoSkeleton(3) : ''}
     </div>
   `;
 
