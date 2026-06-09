@@ -1558,6 +1558,13 @@ function escapeAttr(value) {
 function haptic(ms = 20) {
   try { navigator.vibrate?.(ms); } catch (e) {}
 }
+// 금액 짧게 표시 — 1만원 이상은 'N만', 미만은 정확한 원 단위 ('0만'으로 뭉개지는 것 방지)
+function fmtManShort(amt) {
+  const n = Number(amt) || 0;
+  if (Math.abs(n) >= 10000) return `${(n / 10000).toFixed(0)}만`;
+  if (n === 0) return '0원';
+  return `${Math.round(n).toLocaleString()}원`;
+}
 // 영상 목록 로딩 스켈레톤 (카드 모양을 미리 보여줘 대기 체감 ↓)
 function videoSkeleton(n = 3) {
   let s = '';
@@ -1566,6 +1573,78 @@ function videoSkeleton(n = 3) {
   }
   return s;
 }
+
+// ===== 디버그/진단/점검 도구 =====
+const APP_VERSION = '2026.06.09';
+const DEBUG_MODE = (() => { try { return localStorage.getItem('lp_debug') === '1'; } catch (e) { return false; } })();
+function debugLog(...args) { if (DEBUG_MODE) console.log('[LP]', ...args); }
+function debugWarn(...args) { if (DEBUG_MODE) console.warn('[LP]', ...args); }
+
+// 진단 스냅샷 — 문제 생겼을 때 상태를 한눈에 (민감정보 키 값은 제외, 존재 여부만)
+function getDebugSnapshot() {
+  return {
+    version: APP_VERSION,
+    tab: typeof currentTab !== 'undefined' ? currentTab : null,
+    assetTab: typeof assetTab !== 'undefined' ? assetTab : null,
+    todos: Array.isArray(todos) ? todos.length : 'N/A',
+    expenses: budget?.expenses?.length ?? 'N/A',
+    fixed: budget?.fixed?.length ?? 'N/A',
+    assets: Array.isArray(assets) ? assets.length : 'N/A',
+    challenges: Array.isArray(challenges) ? challenges.length : 'N/A',
+    watchlist: Array.isArray(watchlist) ? watchlist.length : 'N/A',
+    snapshots: Object.keys(settings?.assetSnapshots || {}).length,
+    hasGeminiKey: !!window.GEMINI_API_KEY,
+    hasYoutubeKey: !!window.YOUTUBE_API_KEY,
+    online: navigator.onLine,
+    time: new Date().toISOString(),
+  };
+}
+function copyDebugSnapshot() {
+  const text = JSON.stringify(getDebugSnapshot(), null, 2);
+  try {
+    navigator.clipboard?.writeText(text);
+    showToast('진단 정보 복사됨');
+  } catch (e) {
+    showToast('복사 실패 — 콘솔에 출력했어요');
+    console.log(text);
+  }
+}
+
+// 기본 상태 점검 — 업데이트 후 핵심 데이터/요소가 멀쩡한지 빠르게 확인
+function runSmokeTest() {
+  const checks = [
+    ['todos 배열', Array.isArray(todos)],
+    ['budget 객체', !!budget && typeof budget === 'object'],
+    ['expenses 배열', Array.isArray(budget?.expenses)],
+    ['fixed 배열', Array.isArray(budget?.fixed)],
+    ['assets 배열', Array.isArray(assets)],
+    ['settings 객체', !!settings && typeof settings === 'object'],
+    ['challenges 배열', Array.isArray(challenges)],
+    ['watchlist 배열', Array.isArray(watchlist)],
+    ['screen 요소', !!document.getElementById('screen')],
+    ['header 요소', !!document.getElementById('header')],
+    ['modal 요소', !!document.getElementById('modal')],
+  ];
+  const failed = checks.filter(([, ok]) => !ok);
+  if (failed.length) {
+    console.error('❌ Smoke test 실패:', failed.map(f => f[0]));
+    showToast(`점검 실패 ${failed.length}개 (콘솔 확인)`);
+  } else {
+    console.log('✅ Smoke test 통과 —', getDebugSnapshot());
+    showToast('기본 점검 통과 ✓');
+  }
+  return failed.length === 0;
+}
+
+// 전역 오류 감지 — 콘솔 안 봐도 화면에서 오류 발생을 알 수 있게
+window.addEventListener('error', e => {
+  console.error('전역 오류:', e.error || e.message);
+  if (typeof showToast === 'function') showToast('오류가 발생했어요 (설정 → 진단 정보 복사)');
+});
+window.addEventListener('unhandledrejection', e => {
+  console.error('비동기 오류:', e.reason);
+  if (DEBUG_MODE && typeof showToast === 'function') showToast('비동기 작업 오류');
+});
 // inline onclick 등에 사용자 문자열을 안전하게 넣기 위한 JS 리터럴 이스케이프
 // 결과는 그 자체로 따옴표를 포함하므로 onclick="fn(${jsString(v)})" 형태로 사용 (바깥 따옴표 불필요)
 function jsString(value) {
@@ -5019,7 +5098,7 @@ function renderMoney() {
                 <div style="width:10px; height:10px; border-radius:2px; background:${catColors[i % catColors.length]}; flex-shrink:0;"></div>
                 <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${cat}</span>
                 <span style="font-weight:600;">${pct.toFixed(0)}%</span>
-                <span style="color:var(--text-tertiary); font-size:10px;">${(amt / 10000).toFixed(0)}만</span>
+                <span style="color:var(--text-tertiary); font-size:10px;">${fmtManShort(amt)}</span>
               </div>`;
             }).join('')}
           </div>
@@ -17465,6 +17544,18 @@ function openSettingsModal() {
           <i class="ti ti-history" style="color:var(--text-tertiary);"></i>
         </div>
       </button>` : ''}
+
+      <button onclick="copyDebugSnapshot()" style="width:100%; padding:14px; border:0.5px solid var(--border-tertiary); background:white; border-radius:var(--radius-md); cursor:pointer; font-family:inherit; text-align:left; margin-bottom:10px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-size:20px;">🩺</span>
+          <div style="flex:1;">
+            <div style="font-size:13px; font-weight:600;">진단 정보 복사</div>
+            <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">문제 생겼을 때 현재 상태를 복사 (키 값은 제외)</div>
+          </div>
+          <i class="ti ti-clipboard" style="color:var(--text-tertiary);"></i>
+        </div>
+      </button>
+      <div style="text-align:center; font-size:10px; color:var(--text-tertiary); margin-top:4px;">버전 ${APP_VERSION}</div>
     </div>
   `;
   modal.classList.add('show');
