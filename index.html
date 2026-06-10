@@ -12618,7 +12618,7 @@ function renderAsset() {
               ${GROUP_ICON[gKey] || '📦'} ${gKey} <span style="font-size:10px; color:var(--text-tertiary); font-weight:500;">${groupItems.length}개</span>
             </div>
             <div style="font-size:11px; color:var(--text-tertiary);">
-              ${Math.round(groupTotal).toLocaleString()}원 · ${groupPct.toFixed(0)}%
+              ${Math.round(groupTotal).toLocaleString()}원 · ${fmtPct(groupPct / 100)}%
             </div>
           </div>`;
 
@@ -13400,7 +13400,7 @@ function renderAssetTypeChange(prevByType, currByType) {
             <div style="flex:1; height:5px; background:rgba(0,0,0,0.05); border-radius:3px; overflow:hidden;">
               <div style="height:100%; width:${it.currPct}%; background:${barColor};"></div>
             </div>
-            <span style="width:42px; text-align:right; font-weight:500;">${it.currPct.toFixed(0)}%</span>
+            <span style="width:42px; text-align:right; font-weight:500;">${fmtPct(it.currPct / 100)}%</span>
             <span style="width:48px; text-align:right; color:${diffColor}; font-size:10px;">${diffStr}</span>
           </div>
         `;
