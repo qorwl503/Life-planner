@@ -4930,20 +4930,20 @@ function renderMoney() {
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
         <div style="display:flex; align-items:center; gap:6px;">
           <span style="font-size:14px;">💰</span>
-          <span style="font-size:11px; font-weight:700; color:#6B4FB8;">생활비 ${goalLiving > 0 ? '· 목표 대비' : ''}</span>
+          <span style="font-size:11px; font-weight:700; color:#6B4FB8;">${isCurrentMonth ? '이번 달' : '이 달'} 생활비</span>
         </div>
         <button onclick="editLivingGoal()" style="border:none; background:rgba(107,79,184,0.12); color:#6B4FB8; padding:3px 9px; border-radius:999px; font-size:10px; font-weight:500; cursor:pointer; font-family:inherit;">⚙️ ${goalLiving > 0 ? '목표 수정' : '목표 설정'}</button>
       </div>
 
-      <!-- 메인: 이번 달 쓴 변동 생활비 -->
+      <!-- 메인: 쓴 변동 생활비 -->
       <div style="margin-bottom:8px;">
-        <div style="font-size:20px; font-weight:700; letter-spacing:-0.3px; color:#5B3FB0;">${variableSpent.toLocaleString()}원</div>
-        <div style="font-size:10px; color:#8770C8; margin-top:2px;">이 달 변동 생활비 ${goalLiving > 0 ? `· 목표 ${goalLiving.toLocaleString()}원의 ${goalUsedPct}%` : '사용'}</div>
+        <div style="font-size:20px; font-weight:700; letter-spacing:-0.3px; color:${goalOver ? '#D14343' : '#5B3FB0'};">${variableSpent.toLocaleString()}원</div>
+        <div style="font-size:10px; color:#8770C8; margin-top:2px;">${goalLiving > 0 ? `목표 ${goalLiving.toLocaleString()}원 중 ${goalUsedPct}% 사용` : '변동 생활비 사용액'}</div>
       </div>
 
       ${goalLiving > 0 ? `
         <!-- 목표 대비 남음/초과 -->
-        <div style="font-size:14px; font-weight:700; margin-bottom:6px; color:${goalOver ? '#D14343' : '#3F9F6B'};">
+        <div style="font-size:14px; font-weight:700; margin-bottom:6px; color:${goalOver ? '#D14343' : '#6B4FB8'};">
           ${goalRemaining >= 0 ? `목표까지 ${goalRemaining.toLocaleString()}원 남음` : `목표 ${Math.abs(goalRemaining).toLocaleString()}원 초과`}
         </div>
         <!-- 진행률 바 (목표 기준) -->
@@ -4956,10 +4956,10 @@ function renderMoney() {
         ${isCurrentMonth && variableSpent > 0 ? (() => {
           const willExceed = projectedTotal > goalLiving;
           const diff = Math.abs(projectedTotal - goalLiving);
-          return `<div style="font-size:10px; color:${willExceed ? '#D14343' : '#3F9F6B'}; margin-bottom:8px; line-height:1.5;">
+          return `<div style="font-size:10px; color:${willExceed ? '#D14343' : '#6B4FB8'}; margin-bottom:8px; line-height:1.5;">
             ${willExceed
-              ? `📈 이 페이스면 월말 <b>${projectedTotal.toLocaleString()}원</b> — 목표 <b>${diff.toLocaleString()}원</b> 초과 예상`
-              : `✅ 이 페이스면 월말 <b>${projectedTotal.toLocaleString()}원</b> — 목표 안에 들 듯`}
+              ? `📈 이 페이스면 월말 <b>${projectedTotal.toLocaleString()}원</b> · 목표 <b>${diff.toLocaleString()}원</b> 초과 예상`
+              : `📊 이 페이스면 월말 <b>${projectedTotal.toLocaleString()}원</b> · 목표 안에 들 듯`}
           </div>`;
         })() : ''}
         ${isCurrentMonth ? `
