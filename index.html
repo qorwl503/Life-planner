@@ -4285,26 +4285,6 @@ function renderMoneyInsightCards(opts) {
           </div>`;
       }
     }
-
-    // ============== 2-c) 구독 추정 개수 ==============
-    // 고정지출 중 구독성 키워드 + 매월 반복으로 보이는 항목 카운트
-    const subKeywords = ['넷플릭스','netflix','유튜브','youtube','구독','멤버십','프라임','디즈니','왓챠','스포티파이','spotify','애플','apple','구글','google','ott','요금','정기'];
-    const subs = (budget.fixed || []).filter(f => {
-      const name = (f.name || '').toLowerCase();
-      return subKeywords.some(k => name.includes(k));
-    });
-    if (subs.length >= 3) {
-      const subTotal = subs.reduce((s, f) => s + (Number(f.amt) || 0), 0);
-      html += `
-        <div style="padding:14px; background:rgba(94,92,230,0.07); border-radius:12px; margin-bottom:10px; border:0.5px solid rgba(94,92,230,0.25);">
-          <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
-            <span style="font-size:14px;">🔁</span>
-            <span style="font-size:11px; font-weight:700; color:#5E5CE6;">구독 ${subs.length}개 추정</span>
-          </div>
-          <div style="font-size:12px; color:var(--text-secondary);">매달 약 <b style="color:var(--text-primary);">${subTotal.toLocaleString()}원</b>이 구독성 지출로 빠지고 있어요</div>
-          <div style="margin-top:6px; font-size:10px; color:var(--text-tertiary); line-height:1.5;">${subs.map(f => escapeHTML(f.name)).join(', ')}</div>
-        </div>`;
-    }
   }
 
   return html;
@@ -6306,30 +6286,42 @@ async function loadAIBudgetCoach(spent, projected, byCategory, lastMonth, forceR
     ? `\n## 지난달 비교\n- 지난달 총 지출: ${lastMonth.total?.toLocaleString() || 0}원\n- 지난달 카테고리: ${lastMonth.byCategory ? Object.entries(lastMonth.byCategory).map(([c, v]) => `${c} ${v.toLocaleString()}원`).join(', ') : '데이터 없음'}`
     : '';
 
-  const prompt = `한국 개인 사용자의 가계부 분석 AI 코치입니다. 이번 달 지출 패턴을 분석해 실용적인 조언을 해주세요.
+  // 고정지출 목록 (AI가 구독·통신비·공과금 등을 직접 판단하도록 원본 제공)
+  const fixedList = (budget.fixed || [])
+    .filter(f => f.cat !== '투자' && !f.autoBuy)
+    .map(f => `- ${f.name}: ${(Number(f.amt) || 0).toLocaleString()}원/월`)
+    .join('\n');
+
+  const prompt = `한국 개인 사용자의 가계부 분석 AI 코치입니다. 아래 실제 데이터를 바탕으로 세분화된 분석과 실용적 조언을 해주세요.
 
 ## 이번 달 지출 (${currentMonth+1}월 ${today}일 기준)
-- 총 지출: ${spent.toLocaleString()}원
-- 월말 예상 지출 (현재 페이스): ${projected.toLocaleString()}원
+- 총 변동지출: ${spent.toLocaleString()}원
+- 월말 예상 (현재 페이스): ${projected.toLocaleString()}원
 
-## 카테고리별 지출
+## 카테고리별 변동지출
 ${categoryList || '(데이터 없음)'}
+
+## 매달 나가는 고정지출
+${fixedList || '(등록된 고정지출 없음)'}
 ${lastMonthInfo}
 
 ---
 
-다음 형식으로 한국어로 분석해주세요. 마크다운 사용. 짧고 실용적으로:
+다음 형식으로 한국어 마크다운으로 분석해주세요. 짧고 실용적으로, 본인 실제 데이터 기반으로:
 
 **💡 이번 달 한눈에**
 (전반적 가계 상황 1~2문장)
 
-**📊 패턴 분석**
-(가장 많이 쓴 카테고리, 비중, 비교 1~2문장)
+**📊 카테고리 패턴**
+(가장 많이 쓴 곳, 비중, 지난달 대비 변화 2~3문장)
+
+**🔁 구독·정기결제 점검**
+(위 고정지출 중 실제 '구독성 서비스'(OTT·음악·AI·멤버십 등)만 골라 나열하고 합계. 통신비·공과금·보험·월세는 구독이 아니므로 제외. 안 쓰는 구독으로 의심되는 게 있으면 짚어주기. 구독이 없으면 '뚜렷한 구독 결제 없음'이라고)
 
 **🎯 실행 가능한 조언**
-(구체적 절약 팁 1~2개, 본인 패턴에 맞춘)
+(본인 패턴에 맞춘 구체적 절약 팁 1~2개)
 
-⚠️ 일반론 말고, 본인 *실제 지출 데이터* 기반으로. 친근한 톤. 너무 길지 않게.`;
+⚠️ 일반론 금지, 본인 *실제 데이터* 기반으로. 친근한 톤. 너무 길지 않게.`;
 
   const callPromise = askGemini(prompt, { useCache: true, cacheKey });
   window._aiInFlight[cacheKey] = callPromise;
