@@ -1565,6 +1565,14 @@ function fmtManShort(amt) {
   if (n === 0) return '0원';
   return `${Math.round(n).toLocaleString()}원`;
 }
+// 비중 % 표시 — 1% 미만은 소수점 1자리(금 같은 소액 0%로 뭉개짐 방지), 그 이상은 정수
+function fmtPct(ratio) {
+  const p = (Number(ratio) || 0) * 100;
+  if (p > 0 && p < 1) return p.toFixed(1);
+  if (p >= 10) return Math.round(p).toString();
+  // 1~10% 구간도 0이 아닌데 애매한 소수는 0.5단위 느낌으로 정수 반올림
+  return Math.round(p).toString();
+}
 // 영상 목록 로딩 스켈레톤 (카드 모양을 미리 보여줘 대기 체감 ↓)
 function videoSkeleton(n = 3) {
   let s = '';
@@ -12496,14 +12504,14 @@ function renderAsset() {
         </div>
         <div style="flex:1; min-width:0;">
           ${entries.map(([type, val]) => {
-            const pct = Math.round((val/total)*100);
+            const pctStr = fmtPct(val / total);
             return `<div style="display:flex; align-items:center; gap:8px; padding:4px 0;">
               <span style="width:10px; height:10px; border-radius:2px; background:${typeColors[type] || 'var(--text-tertiary)'}; flex-shrink:0;"></span>
               <div style="flex:1; min-width:0;">
                 <div style="font-size:12px; font-weight:500;">${type}</div>
                 <div style="font-size:10px; color:var(--text-tertiary);">${val.toLocaleString()}원</div>
               </div>
-              <div style="font-size:13px; font-weight:600;">${pct}%</div>
+              <div style="font-size:13px; font-weight:600;">${pctStr}%</div>
             </div>`;
           }).join('')}
         </div>
