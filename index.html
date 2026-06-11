@@ -15277,7 +15277,7 @@ async function fetchNaverStockNews(query, ticker) {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
-    const res = await fetch(`https://life-planner.qorwl503.workers.dev/news?q=${encodeURIComponent(query)}`, { signal: controller.signal });
+    const res = await fetch(`https://life-planner.qorwl503.workers.dev/news?q=${encodeURIComponent(query)}&sort=sim`, { signal: controller.signal });
     clearTimeout(timeoutId);
     if (!res.ok) return [];
     const data = await res.json();
