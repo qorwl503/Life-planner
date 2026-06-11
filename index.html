@@ -15283,29 +15283,25 @@ async function fetchNaverStockNews(query, ticker) {
     const data = await res.json();
     const all = data.items || [];
     // 제목 매칭(점수제): 핵심 종목명·티커가 제목에 들면 확실 통과,
-    //  흔한 일반 단어(AI·반도체 등)는 1개만으론 부족 — 2개 이상 겹쳐야 통과.
-    //  → '한 단어 우연 매칭'(엉뚱한 기사)과 '아무것도 안 뜸'(너무 빡빡) 사이 균형.
+    //  네이버가 sort=sim(정확도순)으로 이미 관련도 정렬해 주므로,
+    //  앱은 '명백히 무관한 기사(매칭 0점)'만 빼고 네이버 순서를 그대로 존중 → 다양성 유지.
     const stop = new Set(['etf','tiger','kodex','plus','korea','us','미국','인덱스','증권','상장','투자','펀드','top','sol','ace','arirang','레버리지','선물','채권','배당']);
-    // 흔한 테마어 — 걸려도 약한 신호 (단독으론 통과 못 함)
-    const weak = new Set(['ai','반도체','전기차','2차전지','바이오','테크','it','에너지','금융','헬스케어','자동차','it','top2','top10','메타','클라우드','데이터']);
+    const weak = new Set(['ai','반도체','전기차','2차전지','바이오','테크','it','에너지','금융','헬스케어','자동차','top2','top10','메타','클라우드','데이터']);
     const raw = String(query || '')
       .split(/[\s·,\-()\[\]]+/)
       .map(s => s.trim().toLowerCase())
       .filter(s => s.length >= 2 && !stop.has(s));
-    // 핵심 토큰(강한 신호): 첫 토큰(보통 회사·브랜드명) + 4자 이상 영문 티커
     const strong = new Set();
     if (raw.length && !weak.has(raw[0])) strong.add(raw[0]);
     if (ticker && ticker.length >= 4 && !/^\d/.test(ticker)) strong.add(ticker.toLowerCase());
-    const scored = all.map(n => {
-      const t = (n.title || '').toLowerCase();
-      let score = 0;
-      strong.forEach(k => { if (t.includes(k)) score += 3; });   // 종목명/티커 = 강
-      raw.forEach(k => { if (!strong.has(k) && t.includes(k)) score += (weak.has(k) ? 0.5 : 1); }); // 일반어
-      return { n, score };
+    // 매칭 토큰이 하나도 없으면(완전 무관) 제외, 하나라도 걸리면 통과 — 순서는 네이버 그대로
+    const filtered = all.filter(n => {
+      const t = (n.title || n.description || '').toLowerCase();
+      return raw.some(k => t.includes(k)) || [...strong].some(k => t.includes(k));
     });
-    // 통과 기준: 점수 2 이상 (강한 신호 1개 OR 일반어 2개 OR 흔한어 다수)
-    const filtered = scored.filter(x => x.score >= 2).sort((a, b) => b.score - a.score).map(x => x.n);
-    return filtered.slice(0, 4);
+    // 매칭이 너무 적으면(0~1개) 네이버 상위 결과라도 일부 노출 (아무것도 안 뜨는 것 방지)
+    const result = filtered.length >= 2 ? filtered : all.slice(0, 4);
+    return result.slice(0, 5);
   } catch (e) { return []; }
 }
 
