@@ -1979,10 +1979,11 @@ function renderMonthlyReportCard() {
   // 챌린지 표시용: 메인은 개수, 보조에 완료/진행/실천일 (체크 날짜수를 메인으로 쓰면 헷갈림)
   const completedChCount = activeChallenges.filter(c => c.completed).length;
   const ongoingChCount = activeChallenges.length - completedChCount;
-  const challengeMainText = `${activeChallenges.length}개`;
+  // 메인은 '진행 중'인 개수 (전체 개수로 하면 완료된 것까지 섞여 헷갈림)
+  const challengeMainText = `진행 ${ongoingChCount}개`;
   const challengeSubText = completedChCount > 0
-    ? `완료 ${completedChCount} · 진행 ${ongoingChCount} · ${totalChCheck}일 실천`
-    : `진행 중 · ${totalChCheck}일 실천`;
+    ? `완료 ${completedChCount} · ${totalChCheck}일 실천`
+    : `${totalChCheck}일 실천`;
 
   // 4. 할일
   const monthTodos = (todos || []).filter(t => t.dateKey?.startsWith(targetMStr));
@@ -2118,10 +2119,12 @@ function renderCalendar() {
     const k = dayKey(d);
     if (workoutLog[k]?.done) dots.push('w');
     const dayExpenses = budget.expenses.filter(e => (e.dateKey === k) || (e.date === d && (!e.dateKey) && isViewingCurrentMonth()));
-    // 🔧 고정지출 결제일도 money 점에 포함
+    // 🔧 고정지출 결제일도 money 점에 포함 (이번 달 건너뛴 항목은 제외)
     const lastDayOfMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+    const _calYm = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}`;
     const hasFixedToday = (budget.fixed || []).some(f => {
       if ((f.cycle || 'monthly') !== 'monthly') return false;
+      if (Array.isArray(f.skipMonths) && f.skipMonths.includes(_calYm)) return false;
       const eff = Math.min(Number(f.day) || 1, lastDayOfMonth);
       return eff === d;
     });
@@ -2383,10 +2386,12 @@ function getEventsForDay(d) {
     });
   });
 
-  // 🔧 고정지출 — 매월 결제일(day)에 표시 (monthly 주기만)
+  // 🔧 고정지출 — 매월 결제일(day)에 표시 (monthly 주기만, 이번 달 건너뛴 항목 제외)
+  const _evYm = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}`;
   (budget.fixed || []).forEach(f => {
     const cycle = f.cycle || 'monthly';
     if (cycle !== 'monthly') return; // 매주/격주는 날짜 특정이 어려워 제외
+    if (Array.isArray(f.skipMonths) && f.skipMonths.includes(_evYm)) return; // 이번 달 건너뜀
     const payDay = Number(f.day) || 1;
     // 그 달에 결제일이 없는 경우(예: 31일인데 2월) 말일로 보정
     const lastDay = new Date(viewYear, viewMonth + 1, 0).getDate();
@@ -15277,20 +15282,30 @@ async function fetchNaverStockNews(query, ticker) {
     if (!res.ok) return [];
     const data = await res.json();
     const all = data.items || [];
-    // 🔧 제목 매칭 완화: 종목명을 토큰으로 쪼개 한 단어라도 제목에 들면 통과
-    //    (ETF·영문·축약명은 풀네임이 제목에 통째로 안 들어가 전부 걸러지던 문제 해결)
-    const stop = new Set(['etf','tiger','kodex','plus','korea','us','미국','인덱스','증권','상장','투자','펀드']);
-    const tokens = String(query || '')
+    // 제목 매칭(점수제): 핵심 종목명·티커가 제목에 들면 확실 통과,
+    //  흔한 일반 단어(AI·반도체 등)는 1개만으론 부족 — 2개 이상 겹쳐야 통과.
+    //  → '한 단어 우연 매칭'(엉뚱한 기사)과 '아무것도 안 뜸'(너무 빡빡) 사이 균형.
+    const stop = new Set(['etf','tiger','kodex','plus','korea','us','미국','인덱스','증권','상장','투자','펀드','top','sol','ace','arirang','레버리지','선물','채권','배당']);
+    // 흔한 테마어 — 걸려도 약한 신호 (단독으론 통과 못 함)
+    const weak = new Set(['ai','반도체','전기차','2차전지','바이오','테크','it','에너지','금융','헬스케어','자동차','it','top2','top10','메타','클라우드','데이터']);
+    const raw = String(query || '')
       .split(/[\s·,\-()\[\]]+/)
       .map(s => s.trim().toLowerCase())
       .filter(s => s.length >= 2 && !stop.has(s));
-    if (ticker) tokens.push(ticker.toLowerCase());
-    const filtered = all.filter(n => {
+    // 핵심 토큰(강한 신호): 첫 토큰(보통 회사·브랜드명) + 4자 이상 영문 티커
+    const strong = new Set();
+    if (raw.length && !weak.has(raw[0])) strong.add(raw[0]);
+    if (ticker && ticker.length >= 4 && !/^\d/.test(ticker)) strong.add(ticker.toLowerCase());
+    const scored = all.map(n => {
       const t = (n.title || '').toLowerCase();
-      return tokens.some(k => t.includes(k));
+      let score = 0;
+      strong.forEach(k => { if (t.includes(k)) score += 3; });   // 종목명/티커 = 강
+      raw.forEach(k => { if (!strong.has(k) && t.includes(k)) score += (weak.has(k) ? 0.5 : 1); }); // 일반어
+      return { n, score };
     });
-    // 매칭된 게 있으면 그것, 하나도 없으면 최신 기사라도 일부 노출
-    return (filtered.length ? filtered : all).slice(0, 4);
+    // 통과 기준: 점수 2 이상 (강한 신호 1개 OR 일반어 2개 OR 흔한어 다수)
+    const filtered = scored.filter(x => x.score >= 2).sort((a, b) => b.score - a.score).map(x => x.n);
+    return filtered.slice(0, 4);
   } catch (e) { return []; }
 }
 
