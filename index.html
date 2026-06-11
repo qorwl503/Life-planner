@@ -16031,7 +16031,7 @@ async function loadFearGreedGauge() {
     const cnn = await fetchCnnFearGreed();
     if (cnn) { score = cnn.score; rating = cnn.rating; prev = cnn.prev; source = 'cnn'; }
 
-    // ===== CNN 연결됨: 실제 0~100 공포탐욕 지수 표시 =====
+    // ===== CNN 연결됨: 실제 0~100 공포탐욕 지수 표시 (+ VIX 보조) =====
     if (source === 'cnn') {
       const { stage, emoji, color, desc } = stageFromScore(score);
       const gaugePct = Math.max(0, Math.min(100, score));
@@ -16040,6 +16040,26 @@ async function loadFearGreedGauge() {
         const d = score - prev;
         chgStr = `<span style="font-size:10px; color:${d >= 0 ? 'var(--text-danger)' : 'var(--text-info)'};">전일 대비 ${d >= 0 ? '▲' : '▼'}${Math.abs(d).toFixed(0)}</span>`;
       }
+      // VIX도 같이 가져와 보조 줄로 표시 (CNN=종합심리, VIX=변동성, 함께 보면 입체적)
+      let vixRow = '';
+      try {
+        const idx = await fetchMarketIndices();
+        const vix = idx.vix?.price;
+        if (vix != null) {
+          const vChg = idx.vix?.changePct;
+          let vLabel, vCol;
+          if (vix < 20) { vLabel = '안정'; vCol = '#3F9F6B'; }
+          else if (vix < 30) { vLabel = '불안'; vCol = '#E89B4A'; }
+          else if (vix < 40) { vLabel = '공포'; vCol = '#5B9BD5'; }
+          else { vLabel = '패닉'; vCol = '#3B7DE0'; }
+          const vChgStr = (vChg != null) ? `<span style="color:${vChg >= 0 ? 'var(--text-danger)' : 'var(--text-info)'};">${vChg >= 0 ? '▲' : '▼'}${Math.abs(vChg).toFixed(1)}%</span>` : '';
+          vixRow = `
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px; padding-top:10px; border-top:0.5px solid var(--border-tertiary);">
+              <span style="font-size:11px; color:var(--text-secondary);">📉 변동성 지수 (VIX)</span>
+              <span style="font-size:11px;"><b style="color:${vCol};">${vix.toFixed(1)} · ${vLabel}</b> ${vChgStr}</span>
+            </div>`;
+        }
+      } catch (e) { /* VIX 실패해도 CNN은 표시 */ }
       container.innerHTML = `
         <div style="padding:16px; background:var(--bg-secondary); border-radius:14px;">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
@@ -16060,7 +16080,8 @@ async function loadFearGreedGauge() {
             <span>극공포</span><span>공포</span><span>중립</span><span>탐욕</span><span>극탐욕</span>
           </div>
           <div style="font-size:10px; color:var(--text-secondary); margin-top:8px; line-height:1.5;">${desc}</div>
-          <div style="font-size:8px; color:var(--text-tertiary); margin-top:6px;">※ CNN Fear &amp; Greed Index 기준. 미국 시장 심리이며 참고용이에요.</div>
+          ${vixRow}
+          <div style="font-size:8px; color:var(--text-tertiary); margin-top:6px;">※ CNN Fear &amp; Greed(종합 심리) + VIX(변동성). 미국 시장 기준, 참고용이에요.</div>
         </div>`;
       return;
     }
