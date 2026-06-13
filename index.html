@@ -12730,6 +12730,7 @@ function renderAsset() {
     setTimeout(() => loadFearGreedGauge(), 30);
     setTimeout(() => loadNewsRSS(), 50);
     setTimeout(() => loadAINewsSummary(), 100);
+    setTimeout(() => loadStockNewsSummary(), 120);
     setTimeout(async () => { await loadAIBriefing(false); }, 150);
     if (watchlist.length > 0) setTimeout(() => renderWatchlist(), 60);
   }
@@ -14073,8 +14074,85 @@ async function loadAIActionAdvice(forceRefresh = false) {
   </div>`;
 }
 
-// ====== AI 뉴스 3줄 요약 ======
-// 뉴스 요약 생성 (UI 없이 호출 가능)
+// ====== AI 종목별 뉴스 요약 (관심종목 + 보유 주식) ======
+// 한 번의 Gemini 호출로 여러 종목을 요약 (무료 한도 절약). 하루 캐싱.
+async function generateStockNewsSummary(forceRefresh = false) {
+  const cacheKey = 'stock-news-summary-' + new Date().toDateString();
+  if (forceRefresh) delete aiCache[cacheKey];
+  if (aiCache[cacheKey] && Date.now() - aiCache[cacheKey].time < AI_CACHE_TIME) {
+    return { text: aiCache[cacheKey].text, cached: true };
+  }
+
+  // 대상 종목: 관심종목 + 보유 주식/ETF (중복 제거, 최대 6개로 제한 — 호출/토큰 절약)
+  const targets = [];
+  (watchlist || []).forEach(w => { if (w.name || w.ticker) targets.push({ name: w.name || w.ticker, ticker: w.ticker || '' }); });
+  (assets || []).filter(a => isStockLikeType(a.type) && (a.name || a.ticker)).forEach(a => targets.push({ name: a.name || a.ticker, ticker: a.ticker || '' }));
+  const seen = new Set();
+  const uniq = targets.filter(t => { const k = (t.name + t.ticker).toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 6);
+  if (uniq.length === 0) return { error: '관심종목·보유종목 없음' };
+
+  // 종목별 뉴스 수집 (각 종목 제목 5개씩)
+  const blocks = [];
+  for (const t of uniq) {
+    const news = await fetchNaverStockNews(t.name, t.ticker);
+    if (news && news.length > 0) {
+      const lines = news.slice(0, 5).map((n, i) => `  ${i+1}. ${n.title}`).join('\n');
+      blocks.push(`### ${t.name}${t.ticker ? ` (${t.ticker})` : ''}\n${lines}`);
+    }
+  }
+  if (blocks.length === 0) return { error: '종목 관련 뉴스 없음' };
+
+  const prompt = `한국 투자자의 관심·보유 종목별 뉴스 요약입니다. 아래는 종목별 최근 뉴스 제목입니다.
+
+${blocks.join('\n\n')}
+
+---
+
+각 종목마다 아래 형식으로 한국어로 요약하세요. 마크다운 사용. 뉴스 제목에 근거한 내용만 쓰고, 없는 내용은 지어내지 마세요. 뉴스가 종목과 무관하면 솔직히 "직접 관련 뉴스 적음"이라고 하세요.
+
+**종목명** [호재 🟢 / 악재 🔴 / 중립 ⚪ 중 하나]
+- 핵심 흐름을 2~3줄로 요약 (무슨 일이고 왜 중요한지)
+
+⚠️ 호재/악재 판단은 뉴스 내용 기반으로 신중히. 단순 언급은 중립. 짧고 명확하게, 과장 없이.`;
+
+  return await askGemini(prompt, { useCache: !forceRefresh, cacheKey });
+}
+
+async function loadStockNewsSummary(forceRefresh = false) {
+  const container = document.getElementById('ai-stock-news-summary');
+  if (!container) return;
+  const cacheKey = 'stock-news-summary-' + new Date().toDateString();
+
+  if (!forceRefresh && aiCache[cacheKey] && Date.now() - aiCache[cacheKey].time < AI_CACHE_TIME) {
+    renderStockNewsSummaryCard(container, aiCache[cacheKey].text);
+    return;
+  }
+  if (!window.GEMINI_API_KEY) {
+    container.innerHTML = `<div style="padding:14px; background:var(--bg-secondary); border-radius:var(--radius-md); font-size:11px; color:var(--text-tertiary); line-height:1.6;">📊 종목별 AI 뉴스 요약을 쓰려면 Gemini API 키가 필요해요. (AI 시장 브리핑과 동일)</div>`;
+    return;
+  }
+  container.innerHTML = `<div style="padding:14px; background:var(--bg-secondary); border-radius:var(--radius-md); display:flex; align-items:center; gap:10px;"><div class="spinner" style="width:18px; height:18px;"></div><span style="font-size:11px; color:var(--text-secondary);">관심종목 뉴스 분석 중...</span></div>`;
+  const result = await generateStockNewsSummary(forceRefresh);
+  if (result.error) {
+    container.innerHTML = `<div style="padding:14px; background:var(--bg-secondary); border-radius:var(--radius-md); font-size:11px; color:var(--text-tertiary);">${result.error.includes('429') ? 'AI 호출 한도 초과 (잠시 후 재시도)' : '📊 ' + result.error}</div>`;
+    return;
+  }
+  renderStockNewsSummaryCard(container, result.text);
+}
+
+function renderStockNewsSummaryCard(container, text) {
+  container.innerHTML = `
+    <div style="padding:16px; background:linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 100%); border-radius:var(--radius-md); border:0.5px solid #A5B4FC;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <span style="font-size:11px; font-weight:700; color:#4F46E5;">📊 내 종목 AI 뉴스 요약</span>
+        <button onclick="loadStockNewsSummary(true)" style="border:none; background:rgba(79,70,229,0.12); color:#4F46E5; padding:4px 10px; border-radius:999px; font-size:10px; font-weight:600; cursor:pointer; font-family:inherit;">🔄 새로고침</button>
+      </div>
+      <div style="font-size:12px; color:var(--text-primary); line-height:1.7;">${markdownToHTML(text)}</div>
+      <div style="font-size:8px; color:var(--text-tertiary); margin-top:8px;">※ 관심·보유 종목 뉴스 기반 AI 요약. 투자 판단은 본인 책임이에요.</div>
+    </div>`;
+}
+
+// ====== AI 뉴스 3줄 요약 (시장 전체) ======
 async function generateNewsSummary(forceRefresh = false) {
   const cacheKey = 'news-summary-' + new Date().toDateString();
 
@@ -16182,6 +16260,7 @@ function renderAssetMarket(total, byType) {
     </div>`;
 
   // 2) AI 뉴스 요약
+  html += `<div id="ai-stock-news-summary" style="margin-bottom:14px;"></div>`;
   html += `<div id="ai-news-summary" style="margin-bottom:14px;"></div>`;
 
   // 3) 오늘의 경제 뉴스 (RSS)
