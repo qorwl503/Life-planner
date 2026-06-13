@@ -14083,39 +14083,69 @@ async function generateStockNewsSummary(forceRefresh = false) {
     return { text: aiCache[cacheKey].text, cached: true };
   }
 
-  // 대상 종목: 관심종목 + 보유 주식/ETF (중복 제거, 최대 6개로 제한 — 호출/토큰 절약)
+  // 대상 종목: 관심종목 + 보유 주식/ETF (중복 제거, 최대 12개 — AI 호출은 1번이라 한도 안전)
   const targets = [];
   (watchlist || []).forEach(w => { if (w.name || w.ticker) targets.push({ name: w.name || w.ticker, ticker: w.ticker || '' }); });
   (assets || []).filter(a => isStockLikeType(a.type) && (a.name || a.ticker)).forEach(a => targets.push({ name: a.name || a.ticker, ticker: a.ticker || '' }));
   const seen = new Set();
-  const uniq = targets.filter(t => { const k = (t.name + t.ticker).toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 6);
-  if (uniq.length === 0) return { error: '관심종목·보유종목 없음' };
+  const uniq = targets.filter(t => { const k = (t.name + t.ticker).toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 12);
+  if (uniq.length === 0) return { error: '관심·보유 종목 없음' };
 
-  // 종목별 뉴스 수집 (각 종목 제목 5개씩)
+  // 1) 종목별 뉴스 (제목 + 설명까지 — 더 풍부한 맥락)
   const blocks = [];
+  let hasAnyNews = false;
   for (const t of uniq) {
     const news = await fetchNaverStockNews(t.name, t.ticker);
+    const label = `### ${t.name}${t.ticker ? ` (${t.ticker})` : ''}`;
     if (news && news.length > 0) {
-      const lines = news.slice(0, 5).map((n, i) => `  ${i+1}. ${n.title}`).join('\n');
-      blocks.push(`### ${t.name}${t.ticker ? ` (${t.ticker})` : ''}\n${lines}`);
+      hasAnyNews = true;
+      const lines = news.slice(0, 5).map((n, i) => `  ${i+1}. ${n.title}${n.description ? ' — ' + n.description.slice(0, 80) : ''}`).join('\n');
+      blocks.push(`${label}\n${lines}`);
+    } else {
+      blocks.push(`${label}\n  (직접 검색된 최근 기사 적음)`);
     }
   }
-  if (blocks.length === 0) return { error: '종목 관련 뉴스 없음' };
+  if (blocks.length === 0) return { error: '관심·보유 종목 없음' };
 
-  const prompt = `한국 투자자의 관심·보유 종목별 뉴스 요약입니다. 아래는 종목별 최근 뉴스 제목입니다.
+  // 2) 시장 전반 맥락 — 경제 뉴스 + 주요 지수 (종목을 둘러싼 큰 그림용)
+  let marketContext = '';
+  try {
+    const econNews = await fetchNewsRSS().catch(() => []);
+    if (econNews && econNews.length) {
+      marketContext += '\n## 오늘 경제 전반 뉴스\n' + econNews.slice(0, 12).map((n, i) => `${i+1}. ${n.title}`).join('\n');
+    }
+    const idx = await fetchMarketIndices();
+    const parts = [];
+    if (idx.nasdaq) parts.push(`나스닥 ${idx.nasdaq.changePct >= 0 ? '+' : ''}${idx.nasdaq.changePct.toFixed(2)}%`);
+    if (idx.sp500) parts.push(`S&P500 ${idx.sp500.changePct >= 0 ? '+' : ''}${idx.sp500.changePct.toFixed(2)}%`);
+    if (idx.kospi) parts.push(`코스피 ${idx.kospi.changePct >= 0 ? '+' : ''}${idx.kospi.changePct.toFixed(2)}%`);
+    if (idx.usdkrw) parts.push(`환율 ${idx.usdkrw.price.toFixed(0)}원`);
+    if (idx.gold) parts.push(`국제금 ${idx.gold.changePct >= 0 ? '+' : ''}${idx.gold.changePct.toFixed(2)}%`);
+    if (idx.vix) parts.push(`VIX ${idx.vix.price.toFixed(1)}`);
+    if (parts.length) marketContext += '\n\n## 주요 시장 지수 (실시간)\n' + parts.join(' · ');
+  } catch (e) { /* 시장 맥락 없어도 종목 분석은 진행 */ }
 
+  const dateStr = new Date().toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' });
+  const prompt = `당신은 한국 투자자를 위한 투자 정보 분석가입니다. 아래는 ${dateStr} 기준, 사용자의 관심·보유 종목 관련 뉴스와 시장 전반 데이터입니다. 이 데이터를 **종합 분석**해 종목별 인사이트를 정리하세요.
+
+## 종목별 관련 뉴스
 ${blocks.join('\n\n')}
+${marketContext}
 
 ---
 
-각 종목마다 아래 형식으로 한국어로 요약하세요. 마크다운 사용. 뉴스 제목에 근거한 내용만 쓰고, 없는 내용은 지어내지 마세요. 뉴스가 종목과 무관하면 솔직히 "직접 관련 뉴스 적음"이라고 하세요.
+각 종목마다 아래 형식으로 한국어 분석을 작성하세요. 마크다운 사용.
 
-**종목명** [호재 🟢 / 악재 🔴 / 중립 ⚪ 중 하나]
-- 핵심 흐름을 2~3줄로 요약 (무슨 일이고 왜 중요한지)
+**종목명** [호재 🟢 / 악재 🔴 / 중립 ⚪]
+- 관련 뉴스와 시장 흐름을 엮어 2~3줄로 분석 (무슨 일이고, 시장 맥락에서 어떤 의미인지)
 
-⚠️ 호재/악재 판단은 뉴스 내용 기반으로 신중히. 단순 언급은 중립. 짧고 명확하게, 과장 없이.`;
+📌 분석 규칙:
+- 제공된 뉴스·지수 데이터에 **근거**해서 분석하세요. 데이터에 없는 사실(실적 수치, 주가 등)을 **지어내지 마세요.**
+- 단, 제공된 정보를 바탕으로 한 합리적 해석·연결·전망은 좋습니다 (예: "금리 인하 뉴스 + 나스닥 상승 → 기술주에 우호적").
+- 종목 관련 직접 뉴스가 적으면, 시장 전반 맥락에서 그 종목이 받을 영향을 짚어주세요.
+- 호재/악재는 신중히. 과장·단정 금지. 끝에 작은 글씨로 "참고용, 투자 판단은 본인 책임".`;
 
-  return await askGemini(prompt, { useCache: !forceRefresh, cacheKey });
+  return await askGemini(prompt, { useCache: !forceRefresh, cacheKey, maxRetries: 2 });
 }
 
 async function loadStockNewsSummary(forceRefresh = false) {
@@ -15352,12 +15382,16 @@ function removeWatchItem(id) {
 
 // 네이버 검색 API로 종목 뉴스 가져오기 (Worker의 /news 라우트)
 async function fetchNaverStockNews(query, ticker) {
+  if (!window._stockNewsCache) window._stockNewsCache = {};
+  const _ck = (query || '') + '|' + (ticker || '');
+  const _cached = window._stockNewsCache[_ck];
+  if (_cached && Date.now() - _cached.time < 5 * 60 * 1000) return _cached.data;
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
     const res = await fetch(`https://life-planner.qorwl503.workers.dev/news?q=${encodeURIComponent(query)}&sort=sim`, { signal: controller.signal });
     clearTimeout(timeoutId);
-    if (!res.ok) return [];
+    if (!res.ok) return (_cached ? _cached.data : []);
     const data = await res.json();
     const all = data.items || [];
     // 제목 매칭(점수제): 핵심 종목명·티커가 제목에 들면 확실 통과,
@@ -15378,9 +15412,10 @@ async function fetchNaverStockNews(query, ticker) {
       return raw.some(k => t.includes(k)) || [...strong].some(k => t.includes(k));
     });
     // 매칭이 너무 적으면(0~1개) 네이버 상위 결과라도 일부 노출 (아무것도 안 뜨는 것 방지)
-    const result = filtered.length >= 2 ? filtered : all.slice(0, 4);
-    return result.slice(0, 5);
-  } catch (e) { return []; }
+    const result = (filtered.length >= 2 ? filtered : all.slice(0, 4)).slice(0, 5);
+    window._stockNewsCache[_ck] = { data: result, time: Date.now() };
+    return result;
+  } catch (e) { return (window._stockNewsCache[_ck] ? window._stockNewsCache[_ck].data : []); }
 }
 
 // 네이버 국내 종목 시세 (야후가 못 가져오는 신생/특이 ETF용 폴백)
