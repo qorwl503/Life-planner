@@ -9165,6 +9165,10 @@ function openExpenseModal(forDateKey) {
           📋 텍스트 붙여넣기
         </button>
       </div>
+      <button onclick="pasteImageForOCR()" style="width:100%; margin-bottom:8px; padding:11px; border:1.5px dashed var(--text-info); background:rgba(70,140,255,0.04); color:var(--text-info); border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px;">
+        <i class="ti ti-clipboard" style="font-size:14px;"></i>
+        📋 캡처 이미지 붙여넣기 (저장 없이)
+      </button>
       <div id="card-capture-status" style="margin-top:-8px; margin-bottom:10px; font-size:10px; color:var(--text-tertiary); text-align:center; line-height:1.4; display:none;"></div>
 
       <!-- 지출/입금 토글 -->
@@ -9559,8 +9563,34 @@ function openAssetCaptureForCorrection() {
   input.click();
 }
 
+// 📋 클립보드 이미지를 증권사 자산 OCR로 (저장 없이 복붙)
+async function pasteImageForAssetOCR() {
+  if (!window.GEMINI_API_KEY) { showToast('AI 키 먼저 설정해주세요'); return; }
+  if (!navigator.clipboard || !navigator.clipboard.read) {
+    showToast('이 브라우저는 붙여넣기 미지원 — 캡처 입력을 쓰세요');
+    return;
+  }
+  try {
+    const clipItems = await navigator.clipboard.read();
+    const imgFiles = [];
+    for (const item of clipItems) {
+      const imgType = item.types.find(t => t.startsWith('image/'));
+      if (imgType) {
+        const blob = await item.getType(imgType);
+        imgFiles.push(new File([blob], 'pasted.png', { type: blob.type }));
+      }
+    }
+    if (imgFiles.length === 0) { showToast('클립보드에 이미지가 없어요'); return; }
+    await processAssetCapture(imgFiles);
+  } catch (e) {
+    showToast('붙여넣기 실패 — 권한을 허용하거나 캡처 입력을 쓰세요');
+    console.warn('asset paste OCR 실패:', e);
+  }
+}
+
 async function processAssetCapture(input) {
-  const files = Array.from(input.files || []);
+  // input이 <input> 요소면 .files, 파일 배열이 직접 오면 그대로 (클립보드 붙여넣기 재사용)
+  const files = Array.isArray(input) ? input : Array.from(input?.files || []);
   if (files.length === 0) return;
 
   if (!window.GEMINI_API_KEY) {
@@ -9777,7 +9807,7 @@ async function processAssetCapture(input) {
     const reason = lastFailReason || '자산을 인식하지 못했어요';
     setStatus(`<span style="color:var(--text-warning); font-size:11px; line-height:1.5;">⚠️ ${reason}</span>`);
     showToast(`OCR 실패: ${reason}`);
-    input.value = '';
+    if (!Array.isArray(input) && input) input.value = '';
     return;
   }
 
@@ -9844,7 +9874,7 @@ async function processAssetCapture(input) {
   showToast(`✅ ${files.length}장에서 ${mergedItems.length}개 자산 추출됨`);
   openAssetReviewModal(mergedItems);
 
-  input.value = '';
+  if (!Array.isArray(input) && input) input.value = '';
 }
 
 // 🔧 가계부 고정지출 OCR — 자동이체/구독 명세 캡처에서 항목 추출
@@ -10600,10 +10630,14 @@ function openAssetReviewModal(items) {
           <input type="checkbox" id="ar-${i}" ${it._checked ? 'checked' : ''} onchange="window._assetReviewItems[${i}]._checked = this.checked;" style="width:18px; height:18px; cursor:pointer; flex-shrink:0;" />
           <div style="flex:1; min-width:0;">
             <div style="font-size:13px; font-weight:600;">${escapeHTML(it.name)}${isUSD ? ' <span style="font-size:9px; color:var(--text-info); font-weight:500;">💵 달러</span>' : ''}</div>
-            <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">
-              ${it.type} · ${qtyStr}주 × ${priceStr}
+            <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">${it.type}</div>
+            <div style="display:flex; gap:5px; margin-top:5px; align-items:center;">
+              <input type="number" step="any" value="${q}" onchange="window._assetReviewItems[${i}].qty = Number(this.value) || 0; window._renderAssetReview();" style="width:72px; padding:5px 6px; border:0.5px solid var(--border-tertiary); border-radius:6px; font-size:11px; font-family:inherit; text-align:right;" />
+              <span style="font-size:10px; color:var(--text-tertiary);">주 ×</span>
+              <input type="number" step="any" value="${Number(it.price) || 0}" onchange="window._assetReviewItems[${i}].price = Number(this.value) || 0; window._renderAssetReview();" style="width:90px; padding:5px 6px; border:0.5px solid var(--border-tertiary); border-radius:6px; font-size:11px; font-family:inherit; text-align:right;" />
+              <span style="font-size:10px; color:var(--text-tertiary);">${isUSD ? '$' : '원'}</span>
             </div>
-            <div style="font-size:10px; color:var(--text-secondary); margin-top:1px;">
+            <div style="font-size:10px; color:var(--text-secondary); margin-top:4px;">
               = <b>${totalStr}</b>
             </div>
           </div>
@@ -11173,8 +11207,34 @@ function applyClipboardExpense() {
   render();
 }
 
+// 📋 클립보드의 이미지를 바로 OCR (저장 없이 복붙). 모달이 열린 상태에서 호출.
+async function pasteImageForOCR() {
+  if (!window.GEMINI_API_KEY) { showToast('AI 키 먼저 설정해주세요'); openAIKeyModal(); return; }
+  if (!navigator.clipboard || !navigator.clipboard.read) {
+    showToast('이 브라우저는 붙여넣기 미지원 — Ctrl+V로 시도하거나 캡처 입력을 쓰세요');
+    return;
+  }
+  try {
+    const clipItems = await navigator.clipboard.read();
+    const imgFiles = [];
+    for (const item of clipItems) {
+      const imgType = item.types.find(t => t.startsWith('image/'));
+      if (imgType) {
+        const blob = await item.getType(imgType);
+        imgFiles.push(new File([blob], 'pasted.png', { type: blob.type }));
+      }
+    }
+    if (imgFiles.length === 0) { showToast('클립보드에 이미지가 없어요'); return; }
+    await processCardCapture(imgFiles);
+  } catch (e) {
+    showToast('붙여넣기 실패 — 권한을 허용하거나 캡처 입력을 쓰세요');
+    console.warn('paste OCR 실패:', e);
+  }
+}
+
 async function processCardCapture(input) {
-  const files = Array.from(input.files || []);
+  // input이 <input> 요소면 .files, 파일 배열이 직접 오면 그대로 (클립보드 붙여넣기 재사용)
+  const files = Array.isArray(input) ? input : Array.from(input?.files || []);
   if (files.length === 0) return;
 
   if (!window.GEMINI_API_KEY) {
@@ -11203,19 +11263,27 @@ async function processCardCapture(input) {
 
       const mimeType = file.type || 'image/jpeg';
 
+      const _today = todayKey(); // YYYY-MM-DD
+      const _todayObj = new Date();
+      const _yesterday = new Date(_todayObj.getTime() - 86400000).toISOString().slice(0, 10);
       const prompt = `이 이미지는 카드 사용 내역 (또는 영수증, 결제 알림 등)이야.
 거래 항목들을 모두 추출해서 JSON 배열로 반환해줘.
 
+📅 오늘은 ${_today} 이야. (어제는 ${_yesterday})
+
 규칙:
 1. 각 항목: {date, store, amount, category}
-   - date: "YYYY-MM-DD" 형식 (연도 없으면 ${new Date().getFullYear()})
+   - date: "YYYY-MM-DD" 형식
+   - ⚠️ "오늘"이라 적혀 있으면 → ${_today}, "어제"면 → ${_yesterday} 로 변환
+   - 날짜에 연도가 없으면 ${new Date().getFullYear()}년으로. 월/일은 화면에 보이는 그대로 (절대 추측·변경 금지)
+   - 화면에 날짜가 전혀 없으면 → ${_today} (오늘)
    - store: 가맹점/사용처 (예: "스타벅스", "이마트")
    - amount: 금액 (숫자만, 콤마 제거, 원화)
    - category: 다음 중 가장 가까운 것 - 식비, 카페, 교통, 쇼핑, 도서, 의료, 문화, 통신, 학습, 기타
 2. 입금/입금취소는 건너뛰고 지출만 추출
 3. 환불/취소 항목 제외
 4. 결과는 반드시 다음 JSON 형식으로만 (다른 설명 없이):
-{"items":[{"date":"2026-05-17","store":"스타벅스","amount":4500,"category":"카페"}]}
+{"items":[{"date":"${_today}","store":"스타벅스","amount":4500,"category":"카페"}]}
 
 만약 분석 불가하면: {"items":[],"error":"이유"}`;
 
@@ -11279,7 +11347,7 @@ async function processCardCapture(input) {
   showToast(`✅ ${files.length}장에서 ${allItems.length}개 거래 추출됨`);
   openCardReviewModal(allItems);
 
-  input.value = '';
+  if (!Array.isArray(input) && input) input.value = '';
 }
 
 // 카드 캡처 검토 모달 - 추출된 항목 확인 + 일괄 추가
@@ -11298,17 +11366,30 @@ function openCardReviewModal(items) {
 
   const dupCount = window._cardReviewItems.filter(it => it._dup).length;
 
+  const CARD_CATS = ['식비','카페','편의점','마트','교통','쇼핑','문화','의료','미용','생활','통신','경조사','교육','도서','여행','운동','자녀','선물','학회','구독','투자','기타'];
   const renderList = () => {
-    return window._cardReviewItems.map((it, i) => `
-      <div style="display:flex; align-items:center; gap:8px; padding:10px 0; border-bottom:0.5px solid var(--border-tertiary);">
-        <input type="checkbox" id="cr-${i}" ${it._checked ? 'checked' : ''} onchange="window._cardReviewItems[${i}]._checked = this.checked;" style="width:18px; height:18px; cursor:pointer;" />
+    return window._cardReviewItems.map((it, i) => {
+      const catOpts = CARD_CATS.concat(CARD_CATS.includes(it.category) ? [] : [it.category].filter(Boolean))
+        .map(c => `<option value="${escapeAttr(c)}" ${c === it.category ? 'selected' : ''}>${escapeHTML(c)}</option>`).join('');
+      return `
+      <div style="display:flex; align-items:flex-start; gap:8px; padding:10px 0; border-bottom:0.5px solid var(--border-tertiary);">
+        <input type="checkbox" id="cr-${i}" ${it._checked ? 'checked' : ''} onchange="window._cardReviewItems[${i}]._checked = this.checked;" style="width:18px; height:18px; cursor:pointer; margin-top:3px;" />
         <div style="flex:1; min-width:0;">
-          <div style="font-size:13px; font-weight:500;">${it.store}${it._dup ? ' <span style="font-size:9px; color:var(--text-warning); font-weight:600;">⚠️ 이미 있을 수 있음</span>' : ''}</div>
-          <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">${it.date} · ${it.category}</div>
+          <input type="text" value="${escapeAttr(it.store || '')}" onchange="window._cardReviewItems[${i}].store = this.value;" placeholder="가맹점" style="width:100%; font-size:13px; font-weight:500; border:none; border-bottom:0.5px solid var(--border-tertiary); padding:2px 0; background:transparent; color:var(--text-primary); font-family:inherit;" />
+          ${it._dup ? '<div style="font-size:9px; color:var(--text-warning); font-weight:600; margin-top:2px;">⚠️ 이미 있을 수 있음</div>' : ''}
+          <div style="display:flex; gap:5px; margin-top:6px;">
+            <input type="date" value="${it.date || ''}" onchange="window._cardReviewItems[${i}].date = this.value;" style="flex:1; min-width:0; font-size:10px; padding:5px 6px; border:0.5px solid var(--border-tertiary); border-radius:6px; background:white; color:var(--text-primary); font-family:inherit;" />
+            <select onchange="window._cardReviewItems[${i}].category = this.value;" style="font-size:10px; padding:5px 6px; border:0.5px solid var(--border-tertiary); border-radius:6px; background:white; color:var(--text-primary); font-family:inherit;">${catOpts}</select>
+          </div>
         </div>
-        <span style="font-weight:600; color:var(--text-primary); font-size:13px;">-${Number(it.amount).toLocaleString()}원</span>
+        <div style="display:flex; align-items:center; gap:2px; flex-shrink:0;">
+          <span style="font-size:12px; color:var(--text-tertiary);">-</span>
+          <input type="number" value="${Number(it.amount) || 0}" onchange="window._cardReviewItems[${i}].amount = Number(this.value) || 0;" style="width:70px; font-size:13px; font-weight:600; text-align:right; border:none; border-bottom:0.5px solid var(--border-tertiary); padding:2px 0; background:transparent; color:var(--text-primary); font-family:inherit;" />
+          <span style="font-size:11px; color:var(--text-tertiary);">원</span>
+        </div>
       </div>
-    `).join('');
+    `;
+    }).join('');
   };
 
   modal.innerHTML = `
@@ -11321,7 +11402,7 @@ function openCardReviewModal(items) {
       </div>
 
       <div style="padding:10px 12px; background:var(--bg-info); border-radius:8px; margin-bottom:12px; font-size:11px; color:var(--text-info); line-height:1.5;">
-        💡 ${items.length}개 항목 추출. 체크된 것만 가계부에 추가됩니다.
+        💡 ${items.length}개 항목 추출. <b>날짜·카테고리·금액·가맹점을 직접 고칠 수 있어요.</b> 체크된 것만 저장됩니다.
         ${dupCount > 0 ? `<br>⚠️ ${dupCount}개는 이미 가계부에 있는 것 같아 체크를 꺼뒀어요. 확인 후 필요하면 체크하세요.` : ''}
       </div>
 
@@ -17953,6 +18034,10 @@ function openAssetAddModal() {
         <button onclick="document.getElementById('asset-capture-input').click()" style="width:100%; padding:12px; border:1.5px dashed var(--text-info); background:rgba(70,140,255,0.06); color:var(--text-info); border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:8px;">
           <i class="ti ti-camera" style="font-size:16px;"></i>
           📸 증권/은행 앱 캡처 자동 입력
+        </button>
+        <button onclick="pasteImageForAssetOCR()" style="width:100%; margin-top:6px; padding:11px; border:1.5px dashed var(--accent-primary, #5E5CE6); background:rgba(94,92,230,0.05); color:var(--accent-primary, #5E5CE6); border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px;">
+          <i class="ti ti-clipboard" style="font-size:14px;"></i>
+          📋 캡처 이미지 붙여넣기 (저장 없이)
         </button>
         <div id="asset-capture-status" style="margin-top:6px; font-size:10px; color:var(--text-tertiary); text-align:center; line-height:1.4; display:none;"></div>
       </div>
