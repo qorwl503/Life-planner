@@ -47,6 +47,7 @@ const firebaseConfig = {
 
   // Gemini AI API 키 — 사용자가 직접 입력 (localStorage)
   window.GEMINI_API_KEY = localStorage.getItem('gemini_api_key') || null;
+  window.FINNHUB_API_KEY = localStorage.getItem('finnhub_api_key') || null;
 
   // 오프라인 지원
   enableIndexedDbPersistence(db).catch(() => {});
@@ -12163,6 +12164,7 @@ function buildAssetDetailCard(a, live) {
         ${row('현재가', (isUSD && a.priceCurrency !== 'KRW') ? `$${(live.currentPrice||0).toFixed(2)}` : `${Math.round(krwNow).toLocaleString()}원`, (isUSD && a.priceCurrency !== 'KRW') ? `₩${Math.round(krwNow).toLocaleString()}` : (isUSD ? `$${(live.currentPrice||0).toFixed(2)}` : ''))}
         ${row('총 평가금액', `${Math.round(totalEval).toLocaleString()}원`, '')}
       </div>
+      ${live.fiftyTwoWeekHigh ? `<div style="margin:-2px 0 10px;">${drawdownBadge(live.currentPrice, live.fiftyTwoWeekHigh, {fontSize:11})} <span style="font-size:9px; color:var(--text-tertiary);">(52주 최고 ${isUSD && a.priceCurrency !== 'KRW' ? '$'+live.fiftyTwoWeekHigh.toFixed(2) : Math.round(live.fiftyTwoWeekHigh).toLocaleString()})</span></div>` : ''}
       <div style="display:flex; gap:12px; padding-top:8px; border-top:0.5px solid var(--border-tertiary);">
         <div style="flex:1;">
           <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:2px;">평가손익</div>
@@ -14504,6 +14506,24 @@ async function fetchStockFundamentals(symbol) {
   const c = window._fundCache[sym];
   if (c && Date.now() - c.time < 24 * 60 * 60 * 1000) return c.data;
 
+  // 1순위: Worker 경유 Finnhub (키는 Worker에만 있어 안전). Worker /fundamentals 라우트 필요.
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 8000);
+    const res = await fetch(`https://life-planner.qorwl503.workers.dev/fundamentals?symbol=${encodeURIComponent(sym)}`, { signal: ctrl.signal });
+    clearTimeout(t);
+    if (res.ok) {
+      const data = await res.json();
+      // Worker가 {symbol, eps, pe, roe, ...} 형태로 가공해서 반환
+      if (data && !data.error && (data.eps != null || data.pe != null || data.roe != null)) {
+        data.symbol = data.symbol || sym;
+        data.updatedAt = data.updatedAt || new Date().toISOString();
+        window._fundCache[sym] = { data, time: Date.now() };
+        return data;
+      }
+    }
+  } catch (e) { /* Worker/Finnhub 실패 → Yahoo 폴백 */ }
+
   const modules = 'summaryDetail,defaultKeyStatistics,financialData,price';
   const yahooUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(sym)}?modules=${modules}`;
   // fetchYahooPrice와 동일한 프록시 체계 재사용 (Worker 1순위 → 공용 프록시)
@@ -14595,6 +14615,21 @@ async function loadStockDiagnosis(symbol) {
   box.innerHTML = renderStockDiagnosisCard(data);
 }
 
+// 고점(52주 최고가) 대비 낙폭 배지. high 없으면 빈 문자열.
+function drawdownBadge(currentPrice, high, opts = {}) {
+  const cur = Number(currentPrice), hi = Number(high);
+  if (!Number.isFinite(cur) || !Number.isFinite(hi) || hi <= 0 || cur <= 0) return '';
+  const dd = (cur - hi) / hi * 100; // 보통 음수 (고점보다 낮음)
+  if (dd >= -0.5) {
+    // 고점 근처(또는 신고가)
+    return `<span style="font-size:${opts.fontSize||10}px; color:#3F9F6B; font-weight:600;">고점 부근</span>`;
+  }
+  // 낙폭 클수록 진한 빨강
+  const abs = Math.abs(dd);
+  const col = abs >= 30 ? '#C0392B' : abs >= 15 ? '#E07B39' : 'var(--text-secondary)';
+  return `<span style="font-size:${opts.fontSize||10}px; color:${col}; font-weight:600;">고점 대비 ${dd.toFixed(1)}%</span>`;
+}
+
 async function fetchYahooPrice(ticker) {
   if (!ticker) return null;
 
@@ -14680,6 +14715,7 @@ async function fetchYahooPrice(ticker) {
         previousClose,
         changePct,
         currency,
+        fiftyTwoWeekHigh: (meta.fiftyTwoWeekHigh != null ? Number(meta.fiftyTwoWeekHigh) : null),
         time: Date.now()
       };
 
@@ -14991,6 +15027,7 @@ async function fetchAssetLive(asset) {
     profitPct,
     currency: priceData.currency,
     fxRateMissing,
+    fiftyTwoWeekHigh: priceData.fiftyTwoWeekHigh != null ? Number(priceData.fiftyTwoWeekHigh) : null,
     hasLive: true,
   };
 }
@@ -15735,7 +15772,7 @@ async function renderWatchlist() {
       if (data?.price) {
         // 🔧 국내 종목(.KS/.KQ)은 야후가 currency를 비워도 KRW로 강제 — USD 오표기 방지
         const cur = isUS ? (data.currency || 'USD') : 'KRW';
-        priceInfo = { price: data.price, changePct: data.changePct ?? 0, currency: cur };
+        priceInfo = { price: data.price, changePct: data.changePct ?? 0, currency: cur, fiftyTwoWeekHigh: data.fiftyTwoWeekHigh ?? null };
       } else if (!isUS) {
         // 야후 실패 + 국내 종목 → 네이버 시세 폴백 (신생/특이 ETF)
         const nv = await fetchNaverPrice(w.ticker);
@@ -15753,7 +15790,7 @@ async function renderWatchlist() {
     html += `<div style="padding:8px 12px; margin-bottom:8px; background:#E8483D; color:white; border-radius:8px; font-size:11px; font-weight:600;">🔻 관심종목 ${crashCount}개가 5% 이상 급락했어요</div>`;
   }
 
-  results.forEach(({ w, price, changePct, currency, news }) => {
+  results.forEach(({ w, price, changePct, currency, news, fiftyTwoWeekHigh }) => {
     const isCrash = price != null && changePct <= -5;
     const chgColor = changePct >= 0 ? 'var(--text-danger)' : 'var(--text-info)';
     const priceStr = price == null ? '시세 없음'
@@ -15775,6 +15812,7 @@ async function renderWatchlist() {
           <div style="text-align:right;">
             <div style="font-size:13px; font-weight:600;">${priceStr}</div>
             ${price != null ? `<div style="font-size:10px; color:${chgColor};">${changePct >= 0 ? '▲' : '▼'}${Math.abs(changePct).toFixed(2)}%</div>` : ''}
+            ${(price != null && fiftyTwoWeekHigh) ? `<div style="font-size:9px; margin-top:1px;">${drawdownBadge(price, fiftyTwoWeekHigh, {fontSize:9})}</div>` : ''}
           </div>
           <button onclick="event.stopPropagation(); removeWatchItem(${w.id})" style="border:none; background:transparent; cursor:pointer; padding:4px; color:var(--text-tertiary); font-family:inherit; flex-shrink:0;"><i class="ti ti-x" style="font-size:14px;"></i></button>
         </div>
@@ -15819,7 +15857,7 @@ function renderWatchlistFromCache() {
   if (crashCount > 0) {
     html += `<div style="padding:8px 12px; margin-bottom:8px; background:#E8483D; color:white; border-radius:8px; font-size:11px; font-weight:600;">🔻 관심종목 ${crashCount}개가 5% 이상 급락했어요</div>`;
   }
-  results.forEach(({ w, price, changePct, currency, news }) => {
+  results.forEach(({ w, price, changePct, currency, news, fiftyTwoWeekHigh }) => {
     const isCrash = price != null && changePct <= -5;
     const chgColor = changePct >= 0 ? 'var(--text-danger)' : 'var(--text-info)';
     const priceStr = price == null ? '시세 없음'
@@ -15841,6 +15879,7 @@ function renderWatchlistFromCache() {
           <div style="text-align:right;">
             <div style="font-size:13px; font-weight:600;">${priceStr}</div>
             ${price != null ? `<div style="font-size:10px; color:${chgColor};">${changePct >= 0 ? '▲' : '▼'}${Math.abs(changePct).toFixed(2)}%</div>` : ''}
+            ${(price != null && fiftyTwoWeekHigh) ? `<div style="font-size:9px; margin-top:1px;">${drawdownBadge(price, fiftyTwoWeekHigh, {fontSize:9})}</div>` : ''}
           </div>
           <button onclick="event.stopPropagation(); removeWatchItem(${w.id})" style="border:none; background:transparent; cursor:pointer; padding:4px; color:var(--text-tertiary); font-family:inherit; flex-shrink:0;"><i class="ti ti-x" style="font-size:14px;"></i></button>
         </div>
