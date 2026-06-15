@@ -3174,6 +3174,8 @@ function renderChallengeCard(c) {
         const d = new Date(k + 'T00:00:00');
         return d >= weekStart && d <= weekEnd;
       }).length;
+      c._thisWeekCount = thisWeekCount;
+      c._weekDone = thisWeekCount >= c.perWeek; // 이번 주 목표 달성 여부
       progressText = `이번 주 ${thisWeekCount}/${c.perWeek}회 · 누적 ${checkedDays}/${c.targetCount}`;
     } else {
       progressText = `${checkedDays} / ${c.targetCount}회`;
@@ -3194,7 +3196,7 @@ function renderChallengeCard(c) {
       ? `🛡 ${streak}일 지킴`
       : streak > 0 ? `🔥 ${streak}일 연속` : '🎯 도전 중';
   const daysLeft = Math.max(0, totalDays - daysPassed);
-  const todayStatusText = todayChecked === true ? '오늘 성공 ✓' : todayChecked === 'fail' ? '오늘 실패 기록' : '오늘 아직 미체크';
+  const todayStatusText = c._weekDone ? '이번 주 목표 달성 🎉' : todayChecked === true ? '오늘 성공 ✓' : todayChecked === 'fail' ? '오늘 실패 기록' : '오늘 아직 미체크';
   const miniWeek = renderChallengeMiniWeek(c, accent);
 
   return `<div style="position:relative; overflow:hidden; margin-bottom:12px; padding:14px; border-radius:16px; background:${softBg}; border:0.5px solid ${softBorder};">
@@ -3223,6 +3225,8 @@ function renderChallengeCard(c) {
         : c.type === 'forbidden'
           ? `<button onclick="checkChallenge(${c.id}, true)" style="flex:1; border:none; border-radius:12px; padding:11px; background:${todayChecked===true?'#3B6D11':'white'}; color:${todayChecked===true?'white':'var(--text-success)'}; font-size:12px; font-weight:800; font-family:inherit; cursor:pointer;">${todayChecked===true?'지켰어요 ✓':'오늘도 지켰어요'}</button>
              <button onclick="checkChallenge(${c.id}, 'fail')" style="flex:1; border:none; border-radius:12px; padding:11px; background:${todayChecked==='fail'?'#A32D2D':'white'}; color:${todayChecked==='fail'?'white':'var(--text-danger)'}; font-size:12px; font-weight:800; font-family:inherit; cursor:pointer;">${todayChecked==='fail'?'실패 기록됨':'실패했어요'}</button>`
+          : c._weekDone
+            ? `<div style="flex:1; text-align:center; padding:12px; border-radius:12px; background:rgba(255,255,255,0.6); font-size:12px; font-weight:800; color:#3B6D11;">🎉 이번 주 목표 달성! (${c._thisWeekCount}/${c.perWeek}회)</div>`
           : `<button onclick="checkChallenge(${c.id}, ${todayChecked===true ? 'false' : 'true'})" style="flex:1; border:none; border-radius:12px; padding:12px; background:${todayChecked===true?'#3B6D11':'#1A1A1A'}; color:white; font-size:13px; font-weight:800; font-family:inherit; cursor:pointer;">${todayChecked===true?'오늘 완료됨 ✓':'오늘 완료했어요'}</button>`
       }
     </div>
