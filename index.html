@@ -12288,6 +12288,7 @@ function buildAssetDetailCard(a, live) {
       ${isStock ? `
       <button onclick="openSellSimulator(${a.id})" style="width:100%; margin-top:8px; border:none; background:var(--bg-secondary); color:var(--text-secondary); padding:12px; border-radius:10px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit;">💰 매도 시 실수령액 계산하기</button>
       ` : ''}
+      ${isStock && a.ticker && /^[A-Za-z.]+$/.test(a.ticker) ? `<div id="stock-diagnosis-box"></div>` : ''}
     </div>`;
 }
 
@@ -12479,6 +12480,9 @@ function renderAsset() {
       screen.innerHTML = buildAssetDetailCard(detailAsset, liveAssetData[detailAsset.id]);
       if (isStockLikeType(detailAsset.type) && detailAsset.ticker) {
         setTimeout(() => loadAssetChart(detailAsset.id, window._chartPeriod || 180), 60);
+        if (/^[A-Za-z.]+$/.test(detailAsset.ticker)) {
+          setTimeout(() => loadStockDiagnosis(detailAsset.ticker), 80);
+        }
       }
       return;
     }
@@ -14180,12 +14184,28 @@ async function generateStockNewsSummary(forceRefresh = false) {
   for (const t of uniq) {
     const news = await fetchNaverStockNews(t.name, t.ticker);
     const label = `### ${t.name}${t.ticker ? ` (${t.ticker})` : ''}`;
+    let fundLine = '';
+    if (t.ticker && /^[A-Za-z.]+$/.test(t.ticker)) {
+      try {
+        const f = await fetchStockFundamentals(t.ticker);
+        if (f) {
+          t._fund = f;
+          const pe = f.pe ?? f.forwardPE;
+          const roePct = Number.isFinite(Number(f.roe)) ? (Number(f.roe) > 1 ? Number(f.roe) : Number(f.roe) * 100) : null;
+          const fp = [];
+          if (f.eps != null) fp.push(`EPS ${f.eps.toFixed(2)}`);
+          if (pe != null) fp.push(`PER ${pe.toFixed(1)}배`);
+          if (roePct != null) fp.push(`ROE ${roePct.toFixed(1)}%`);
+          if (fp.length) fundLine = `\n  [펀더멘털] ${fp.join(' · ')}`;
+        }
+      } catch (e) {}
+    }
     if (news && news.length > 0) {
       hasAnyNews = true;
       const lines = news.slice(0, 5).map((n, i) => `  ${i+1}. ${n.title}${n.description ? ' — ' + n.description.slice(0, 80) : ''}`).join('\n');
-      blocks.push(`${label}\n${lines}`);
+      blocks.push(`${label}\n${lines}${fundLine}`);
     } else {
-      blocks.push(`${label}\n  (직접 검색된 최근 기사 적음)`);
+      blocks.push(`${label}\n  (직접 검색된 최근 기사 적음)${fundLine}`);
     }
   }
   if (blocks.length === 0) return { error: '관심·보유 종목 없음' };
@@ -14221,6 +14241,7 @@ ${marketContext}
 
 **종목명** [호재 🟢 / 악재 🔴 / 중립 ⚪]
 - 관련 뉴스와 시장 흐름을 엮어 2~3줄로 분석 (무슨 일이고, 시장 맥락에서 어떤 의미인지)
+- 종목에 [펀더멘털] EPS/PER/ROE가 주어졌으면, 그 숫자를 그대로 인용해 밸류에이션 한 줄 덧붙이기 (예: "PER 28배로 다소 높음"). 숫자는 절대 바꾸지 말 것.
 
 📌 분석 규칙:
 - 제공된 뉴스·지수 데이터에 **근거**해서 분석하세요. 데이터에 없는 사실(실적 수치, 주가 등)을 **지어내지 마세요.**
@@ -14443,6 +14464,112 @@ async function loadAINewsSummary(forceRefresh = false) {
 
 // ====== Yahoo Finance 시세 ======
 const PRICE_CACHE_TIME = 60 * 1000; // 1분 (실시간 가깝게)
+
+// ===== 종목 진단: Yahoo Finance 펀더멘털 (EPS/PER/ROE) — 키 불필요, 1일 캐시 =====
+function _yRaw(v) {
+  if (v == null) return null;
+  if (typeof v === 'object' && 'raw' in v) return Number(v.raw);
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function fetchStockFundamentals(symbol) {
+  if (!symbol) return null;
+  const sym = String(symbol).trim().toUpperCase();
+  if (!window._fundCache) window._fundCache = {};
+  const c = window._fundCache[sym];
+  if (c && Date.now() - c.time < 24 * 60 * 60 * 1000) return c.data;
+
+  const modules = 'summaryDetail,defaultKeyStatistics,financialData,price';
+  const yahooUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(sym)}?modules=${modules}`;
+  // fetchYahooPrice와 동일한 프록시 체계 재사용 (Worker 1순위 → 공용 프록시)
+  const proxies = [
+    { url: `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(yahooUrl)}`, parse: async r => { const w = await r.json(); return JSON.parse(w.contents); } },
+    { url: `https://api.allorigins.win/get?url=${encodeURIComponent(yahooUrl)}`, parse: async r => { const w = await r.json(); return JSON.parse(w.contents); } },
+    { url: `https://corsproxy.io/?${encodeURIComponent(yahooUrl)}`, parse: async r => await r.json() },
+  ];
+  for (const p of proxies) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 8000);
+      const res = await fetch(p.url, { signal: ctrl.signal });
+      clearTimeout(t);
+      if (!res.ok) continue;
+      const raw = await p.parse(res);
+      const r0 = raw?.quoteSummary?.result?.[0];
+      if (!r0) continue;
+      const price = r0.price || {}, sum = r0.summaryDetail || {}, stats = r0.defaultKeyStatistics || {}, fin = r0.financialData || {};
+      const data = {
+        symbol: sym,
+        name: price.shortName || price.longName || sym,
+        price: _yRaw(price.regularMarketPrice),
+        currency: price.currency || 'USD',
+        eps: _yRaw(stats.trailingEps),
+        forwardEps: _yRaw(stats.forwardEps),
+        pe: _yRaw(sum.trailingPE),
+        forwardPE: _yRaw(sum.forwardPE),
+        roe: _yRaw(fin.returnOnEquity),
+        updatedAt: new Date().toISOString(),
+      };
+      window._fundCache[sym] = { data, time: Date.now() };
+      return data;
+    } catch (e) { continue; }
+  }
+  return (c ? c.data : null); // 다 실패하면 오래된 캐시라도
+}
+
+function fundamentalComment(d) {
+  if (!d) return '';
+  const parts = [];
+  const eps = Number(d.eps), pe = Number(d.pe ?? d.forwardPE);
+  const roeRaw = Number(d.roe), roePct = roeRaw > 1 ? roeRaw : roeRaw * 100;
+  if (Number.isFinite(eps)) parts.push(eps > 0 ? '이익을 내는 기업이에요.' : 'EPS가 마이너스라 이익 체력은 약한 편이에요.');
+  if (Number.isFinite(pe) && pe > 0) {
+    if (pe < 15) parts.push('PER은 낮은 편이라 가격 부담이 상대적으로 작아 보여요.');
+    else if (pe < 30) parts.push('PER은 중간 정도로, 성장성과 함께 봐야 해요.');
+    else parts.push('PER이 높은 편이라 기대가 이미 반영됐을 수 있어요.');
+  }
+  if (Number.isFinite(roePct)) {
+    if (roePct >= 20) parts.push('ROE가 높아 자본 효율이 좋아요.');
+    else if (roePct >= 10) parts.push('ROE는 양호한 편이에요.');
+    else if (roePct >= 5) parts.push('ROE는 보통 수준이에요.');
+    else parts.push('ROE가 낮아 수익성은 아쉬운 편이에요.');
+  }
+  return parts.join(' ');
+}
+
+function renderStockDiagnosisCard(d) {
+  if (!d) {
+    return `<div style="padding:14px; background:var(--bg-secondary); border-radius:12px; font-size:11px; color:var(--text-tertiary); line-height:1.6;">📊 종목 진단 데이터를 불러오지 못했어요. (해외 종목만 지원 · 잠시 후 다시 시도)</div>`;
+  }
+  const pe = d.pe ?? d.forwardPE;
+  const roeRaw = Number(d.roe);
+  const roePct = Number.isFinite(roeRaw) ? (roeRaw > 1 ? roeRaw : roeRaw * 100) : null;
+  const cell = (label, val) => `<div style="flex:1; text-align:center; padding:8px 4px; background:var(--bg-secondary); border-radius:8px;"><div style="font-size:9px; color:var(--text-tertiary);">${label}</div><div style="font-size:15px; font-weight:800; margin-top:2px;">${val}</div></div>`;
+  return `
+    <div style="padding:14px; background:var(--bg-secondary); border-radius:12px; margin-top:12px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <span style="font-size:12px; font-weight:700;">📊 종목 진단</span>
+        <span style="font-size:10px; color:var(--text-tertiary);">${escapeHTML(d.symbol)}</span>
+      </div>
+      <div style="display:flex; gap:6px;">
+        ${cell('EPS', d.eps != null ? d.eps.toFixed(2) : '-')}
+        ${cell('PER', pe != null ? pe.toFixed(1) + '배' : '-')}
+        ${cell('ROE', roePct != null ? roePct.toFixed(1) + '%' : '-')}
+      </div>
+      ${d.forwardPE != null ? `<div style="font-size:10px; color:var(--text-tertiary); margin-top:6px;">예상 PER ${d.forwardPE.toFixed(1)}배${d.forwardEps != null ? ` · 예상 EPS ${d.forwardEps.toFixed(2)}` : ''}</div>` : ''}
+      <div style="font-size:11px; color:var(--text-secondary); line-height:1.55; margin-top:8px;">${escapeHTML(fundamentalComment(d))}</div>
+      <div style="font-size:8px; color:var(--text-tertiary); margin-top:8px;">출처: Yahoo Finance (비공식) · 참고용, 투자 전 확인 필요</div>
+    </div>`;
+}
+
+async function loadStockDiagnosis(symbol) {
+  const box = document.getElementById('stock-diagnosis-box');
+  if (!box || !symbol) return;
+  box.innerHTML = `<div style="padding:14px; background:var(--bg-secondary); border-radius:12px; display:flex; align-items:center; gap:10px;"><div class="spinner" style="width:16px; height:16px;"></div><span style="font-size:11px; color:var(--text-secondary);">EPS · PER · ROE 불러오는 중...</span></div>`;
+  const data = await fetchStockFundamentals(symbol);
+  box.innerHTML = renderStockDiagnosisCard(data);
+}
 
 async function fetchYahooPrice(ticker) {
   if (!ticker) return null;
@@ -16205,6 +16332,8 @@ async function fetchCnnFearGreed() {
   if (_fngCache.data && Date.now() - _fngCache.time < 4 * 60 * 60 * 1000) return _fngCache.data;
   const target = 'https://production.dataviz.cnn.io/index/fearandgreed/graphdata';
   const proxies = [
+    // 1순위: Worker 전용 경로 (시세 /?url= 와 분리돼 충돌 없음). Worker에 /fear-greed 라우트 추가 필요.
+    { url: `https://life-planner.qorwl503.workers.dev/fear-greed`, parse: async (r) => r.json() },
     { url: `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(target)}`, parse: async (r) => { const w = await r.json(); return w.contents ? JSON.parse(w.contents) : w; } },
     { url: `https://api.allorigins.win/get?url=${encodeURIComponent(target)}`, parse: async (r) => JSON.parse((await r.json()).contents) },
     { url: `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(target)}`, parse: async (r) => r.json() },
@@ -16217,7 +16346,8 @@ async function fetchCnnFearGreed() {
       clearTimeout(t);
       if (!res.ok) continue;
       const json = await p.parse(res);
-      const fg = json.fear_and_greed;
+      // Worker /fear-greed 는 {score,rating,...} 직접 반환 / CNN 원본은 {fear_and_greed:{...}}
+      const fg = json.fear_and_greed || (json.score != null ? json : null);
       if (fg && fg.score != null) {
         const out = { score: Number(fg.score), rating: fg.rating, prev: fg.previous_close != null ? Number(fg.previous_close) : null };
         _fngCache.data = out; _fngCache.time = Date.now();
@@ -16276,24 +16406,45 @@ async function loadFearGreedGauge() {
             </div>`;
         }
       } catch (e) { /* VIX 실패해도 CNN은 표시 */ }
+      // 반원 게이지: 점수(0~100)를 180도(왼쪽=0, 오른쪽=100)로 매핑
+      const angle = -90 + (gaugePct / 100) * 180; // -90° ~ +90°
+      const rad = (angle - 90) * Math.PI / 180;   // SVG 좌표용 (위쪽이 -90)
+      const cx = 110, cy = 105, needleLen = 78;
+      const nx = cx + needleLen * Math.cos(rad);
+      const ny = cy + needleLen * Math.sin(rad);
+      // 5색 구간 호 (극공포~극탐욕)
+      const arc = (startPct, endPct, col) => {
+        const a1 = (-90 + startPct / 100 * 180 - 90) * Math.PI / 180;
+        const a2 = (-90 + endPct / 100 * 180 - 90) * Math.PI / 180;
+        const r = 90;
+        const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
+        const x2 = cx + r * Math.cos(a2), y2 = cy + r * Math.sin(a2);
+        return `<path d="M ${x1.toFixed(1)} ${y1.toFixed(1)} A ${r} ${r} 0 0 1 ${x2.toFixed(1)} ${y2.toFixed(1)}" fill="none" stroke="${col}" stroke-width="18" stroke-linecap="butt"/>`;
+      };
+      const gaugeSvg = `
+        <svg viewBox="0 0 220 130" style="width:100%; max-width:240px; display:block; margin:6px auto 2px;">
+          ${arc(0, 25, '#3B7DE0')}
+          ${arc(25, 45, '#5B9BD5')}
+          ${arc(45, 55, '#C9C04A')}
+          ${arc(55, 75, '#E89B4A')}
+          ${arc(75, 100, '#E2483D')}
+          <text x="18" y="122" font-size="9" fill="var(--text-tertiary)">0</text>
+          <text x="103" y="22" font-size="9" fill="var(--text-tertiary)">50</text>
+          <text x="196" y="122" font-size="9" fill="var(--text-tertiary)">100</text>
+          <line x1="${cx}" y1="${cy}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" stroke="var(--text-primary)" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="${cx}" cy="${cy}" r="7" fill="var(--text-primary)"/>
+          <text x="${cx}" y="${cy + 26}" font-size="22" font-weight="800" text-anchor="middle" fill="${color}">${score}</text>
+        </svg>`;
       container.innerHTML = `
         <div style="padding:16px; background:var(--bg-secondary); border-radius:14px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
             <span style="font-size:12px; font-weight:600;">🌡️ 시장 공포·탐욕 지수</span>
             ${chgStr}
           </div>
-          <div style="display:flex; align-items:center; gap:14px;">
-            <div style="font-size:38px;">${emoji}</div>
-            <div style="flex:1; min-width:0;">
-              <div style="font-size:16px; font-weight:800; color:${color};">${stage}</div>
-              <div style="font-size:10px; color:var(--text-tertiary);">CNN 공포·탐욕 지수 ${score}/100</div>
-            </div>
-          </div>
-          <div style="position:relative; height:8px; border-radius:4px; margin:12px 0 4px; background:linear-gradient(90deg,#3B7DE0 0%,#5B9BD5 25%,#C9C04A 50%,#E89B4A 75%,#E2483D 100%);">
-            <div style="position:absolute; top:-3px; left:${gaugePct}%; transform:translateX(-50%); width:14px; height:14px; border-radius:50%; background:white; border:2px solid ${color}; box-shadow:0 1px 3px rgba(0,0,0,0.3);"></div>
-          </div>
-          <div style="display:flex; justify-content:space-between; font-size:8px; color:var(--text-tertiary);">
-            <span>극공포</span><span>공포</span><span>중립</span><span>탐욕</span><span>극탐욕</span>
+          ${gaugeSvg}
+          <div style="text-align:center; margin-top:2px;">
+            <span style="font-size:16px; font-weight:800; color:${color};">${emoji} ${stage}</span>
+            <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">CNN Fear &amp; Greed · ${score}/100</div>
           </div>
           <div style="font-size:10px; color:var(--text-secondary); margin-top:8px; line-height:1.5;">${desc}</div>
           ${vixRow}
