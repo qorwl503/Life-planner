@@ -7602,6 +7602,9 @@ function recalcAssetFromLots(asset) {
   if (isDepositType) {
     // 납입형: 기존 잔액(initialBalance) + lot 누적
     const initialBalance = Number(asset.initialBalance) || 0;
+    if (asset.type === '청약') {
+      console.log(`🔍[청약진단] ${asset.name}: initialBalance=${initialBalance.toLocaleString()}, lot수=${asset.lots.length}, totalCost=${totalCost.toLocaleString()}, 기존price=${(Number(asset.price)||0).toLocaleString()} → 새price=${Math.round(initialBalance+totalCost).toLocaleString()}`);
+    }
     const initialRounds = Number(asset.initialRounds) || 0;
     asset.qty = 1;
     asset.price = Math.round(initialBalance + totalCost); // 기존 + 자동 누적
