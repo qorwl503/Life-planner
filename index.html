@@ -12314,7 +12314,6 @@ function buildAssetDetailCard(a, live) {
       ${isStock ? `
       <button onclick="openSellSimulator(${a.id})" style="width:100%; margin-top:8px; border:none; background:var(--bg-secondary); color:var(--text-secondary); padding:12px; border-radius:10px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit;">💰 매도 시 실수령액 계산하기</button>
       ` : ''}
-      ${isStock && a.ticker && /^[A-Za-z.]+$/.test(a.ticker) ? `<div id="stock-diagnosis-box"></div>` : ''}
     </div>`;
 }
 
@@ -12506,9 +12505,6 @@ function renderAsset() {
       screen.innerHTML = buildAssetDetailCard(detailAsset, liveAssetData[detailAsset.id]);
       if (isStockLikeType(detailAsset.type) && detailAsset.ticker) {
         setTimeout(() => loadAssetChart(detailAsset.id, window._chartPeriod || 180), 60);
-        if (/^[A-Za-z.]+$/.test(detailAsset.ticker)) {
-          setTimeout(() => loadStockDiagnosis(detailAsset.ticker), 80);
-        }
       }
       return;
     }
@@ -12742,15 +12738,14 @@ function renderAsset() {
           const qtyStr = Number.isInteger(Number(a.qty))
             ? Number(a.qty).toLocaleString()
             : Number(a.qty).toFixed(4).replace(/\.?0+$/, '');
-          // 🔧 구입가·현재가 표시 — 원화 기준 통일 (달러 역산 안 함: 역산하면 구입가가 현재가처럼 보임)
+          // 🔧 구입·현재가는 자산 상세에서 보이므로, 목록엔 '고점(52주) 대비 낙폭'을 표시
           const _isGoldCard = a.type === '금';
-          const _unit = _isGoldCard ? '/g' : '';
-          const _nowKrw = live.krwPrice || live.currentPrice || 0;
-          const _avgKrw = live.krwAvgPrice || Number(a.price) || 0;
-          const priceLine = `<div style="font-size:10px; display:flex; gap:8px; justify-content:flex-end; margin-top:2px; flex-wrap:wrap; color:var(--text-tertiary);">
-            <span>구입 ${Math.round(_avgKrw).toLocaleString()}원${_unit}</span>
-            <span style="color:var(--text-secondary);">현재 ${Math.round(_nowKrw).toLocaleString()}원${_unit}</span>
-          </div>`;
+          const _ddBadge = (live.fiftyTwoWeekHigh && live.currentPrice)
+            ? drawdownBadge(live.currentPrice, live.fiftyTwoWeekHigh, { fontSize: 10 })
+            : '';
+          const priceLine = _ddBadge
+            ? `<div style="font-size:10px; display:flex; gap:8px; justify-content:flex-end; margin-top:2px; flex-wrap:wrap;">${_ddBadge}</div>`
+            : '';
           priceInfo = `<div style="font-size:10px; display:flex; gap:8px; justify-content:flex-end; margin-top:2px; flex-wrap:wrap;">
             <span style="color:var(--text-secondary);">${qtyStr}${_isGoldCard ? 'g' : '주'}</span>
             <span style="color:${changeColor};">오늘 ${changePct >= 0 ? '▲' : '▼'}${Math.abs(changePct).toFixed(2)}%</span>
@@ -16412,7 +16407,7 @@ async function fetchCnnFearGreed() {
       // Worker /fear-greed 는 {score,rating,...} 직접 반환 / CNN 원본은 {fear_and_greed:{...}}
       const fg = json.fear_and_greed || (json.score != null ? json : null);
       if (fg && fg.score != null) {
-        const out = { score: Number(fg.score), rating: fg.rating, prev: fg.previous_close != null ? Number(fg.previous_close) : null };
+        const out = { score: Math.round(Number(fg.score)), rating: fg.rating, prev: fg.previous_close != null ? Math.round(Number(fg.previous_close)) : null };
         _fngCache.data = out; _fngCache.time = Date.now();
         return out;
       }
