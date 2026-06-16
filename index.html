@@ -7118,6 +7118,7 @@ function renderAssetAnalysis() {
 
   return `
     <div style="padding-bottom:20px;">
+      <div id="macro-scenario-box" style="margin-bottom:18px;"></div>
       <div style="padding:14px; background:linear-gradient(135deg, #FEE7DC 0%, #FFF4E5 100%); border-radius:12px; margin-bottom:14px; font-size:12px; color:#8B4513; line-height:1.6;">
         🔍 <b>AI 투자 분석</b><br>
         종목명이나 티커를 입력하면 Gemini AI가 비즈니스 모델·최근 실적·성장 모멘텀·투자 매력도를 분석해줘요.
@@ -12622,7 +12623,7 @@ function renderAsset() {
   const tabs = [
     { id:'holdings', label:'보유' },
     { id:'plan',     label:'플랜' },
-    { id:'analysis', label:'🔍 AI분석' },
+    { id:'analysis', label:'🔍 분석' },
     { id:'market',   label:'시장·뉴스' },
     { id:'youtube',  label:'유튜브' },
   ];
@@ -12822,6 +12823,7 @@ function renderAsset() {
     html += renderAssetPlan(total, byType);
   } else if (assetTab === 'analysis') {
     html += renderAssetAnalysis();
+    setTimeout(() => renderMacroScenario(), 40);
   } else if (assetTab === 'market') {
     html += renderAssetMarket(total, byType);
   } else if (assetTab === 'youtube') {
@@ -14610,7 +14612,166 @@ async function loadStockDiagnosis(symbol) {
   box.innerHTML = renderStockDiagnosisCard(data);
 }
 
-// 고점(52주 최고가) 대비 낙폭 배지. high 없으면 빈 문자열.
+// ====== 📊 시장 국면 분석기 (FRED 기반, Worker 경유) ======
+// 4분면: 성장(고/저) × 물가(고/저). 참고용 — 투자 조언 아님.
+const MACRO_SCENARIOS = {
+  'high_high': {
+    title: '고성장 · 고물가', emoji: '🔥',
+    desc: '경기는 양호하지만 물가와 금리 부담이 있는 구간이에요.',
+    assets: '에너지 · 산업재 · 원자재 · 금',
+    etfs: ['XLE', 'XLI', 'DBC', 'GLD'],
+    color: '#E07B39',
+  },
+  'low_high': {
+    title: '저성장 · 고물가', emoji: '⚠️',
+    desc: '스태그플레이션 위험이 거론되는 구간이에요. 방어적 접근이 자주 언급돼요.',
+    assets: '금 · 원자재 · 방어주 · 현금성 자산',
+    etfs: ['GLD', 'DBC', 'XLP', 'SGOV'],
+    color: '#C0392B',
+  },
+  'high_low': {
+    title: '고성장 · 저물가', emoji: '🚀',
+    desc: '성장주와 위험자산에 우호적이었던 구간이에요.',
+    assets: '기술주 · AI · 반도체 · 성장주',
+    etfs: ['QQQ', 'SOXX', 'SMH', 'VGT'],
+    color: '#3F9F6B',
+  },
+  'low_low': {
+    title: '저성장 · 저물가', emoji: '🌙',
+    desc: '경기 둔화와 금리 인하 기대가 커지는 구간이에요.',
+    assets: '장기채 · 우량 성장주 · 금',
+    etfs: ['TLT', 'IEF', 'GLD', 'QQQ'],
+    color: '#5B9BD5',
+  },
+};
+
+// Worker 경유로 매크로 지표 한 번에 받기 (하루 캐시)
+async function getMacroData(forceRefresh = false) {
+  if (!window._macroCache) window._macroCache = {};
+  const c = window._macroCache.data;
+  if (!forceRefresh && c && Date.now() - window._macroCache.time < 24 * 60 * 60 * 1000) return c;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 12000);
+  const res = await fetch(`https://life-planner.qorwl503.workers.dev/macro`, { signal: ctrl.signal });
+  clearTimeout(t);
+  if (!res.ok) throw new Error('FRED 데이터 로드 실패 (' + res.status + ')');
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  window._macroCache = { data, time: Date.now() };
+  return data;
+}
+
+// 4분면 분석 (점수 계산)
+function analyzeMacroScenario(d) {
+  // 성장 점수
+  let growth = 0;
+  const gReasons = [];
+  if (d.gdpYoY != null && d.gdpYoY > 2) { growth += 2; gReasons.push(`실질GDP +${d.gdpYoY.toFixed(1)}% (>2%)`); }
+  if (d.unrate != null && d.unrate < 4.5) { growth += 1; gReasons.push(`실업률 ${d.unrate.toFixed(1)}% (<4.5%)`); }
+  if (d.t10y2y != null && d.t10y2y > 0) { growth += 1; gReasons.push(`장단기금리차 +${d.t10y2y.toFixed(2)} (정상)`); }
+  if (d.dgs10Falling) { growth += 1; gReasons.push('10년물 금리 3개월 하락'); }
+
+  // 물가 점수
+  let inflation = 0;
+  const iReasons = [];
+  if (d.cpiYoY != null && d.cpiYoY > 3) { inflation += 2; iReasons.push(`CPI +${d.cpiYoY.toFixed(1)}% (>3%)`); }
+  if (d.coreCpiYoY != null && d.coreCpiYoY > 3) { inflation += 2; iReasons.push(`근원CPI +${d.coreCpiYoY.toFixed(1)}% (>3%)`); }
+  if (d.fedfunds != null && d.fedfunds > 4) { inflation += 1; iReasons.push(`기준금리 ${d.fedfunds.toFixed(2)}% (>4%)`); }
+  if (d.cpiRising) { inflation += 1; iReasons.push('CPI 3개월 상승세'); }
+
+  const isHighGrowth = growth >= 3;
+  const isHighInflation = inflation >= 3;
+  const key = `${isHighGrowth ? 'high' : 'low'}_${isHighInflation ? 'high' : 'low'}`;
+  return { growth, inflation, isHighGrowth, isHighInflation, key, scenario: MACRO_SCENARIOS[key], gReasons, iReasons };
+}
+
+async function renderMacroScenario(forceRefresh = false) {
+  const box = document.getElementById('macro-scenario-box');
+  if (!box) return;
+  box.innerHTML = `<div style="padding:20px; text-align:center; color:var(--text-secondary); font-size:12px;"><div class="spinner" style="width:20px; height:20px; margin:0 auto 10px;"></div>미국 경제지표 분석 중...</div>`;
+  let d;
+  try {
+    d = await getMacroData(forceRefresh);
+  } catch (e) {
+    box.innerHTML = `
+      <div style="padding:16px; background:var(--bg-secondary); border-radius:14px;">
+        <div style="font-size:13px; font-weight:700; margin-bottom:8px;">📊 시장 국면 분석</div>
+        <div style="font-size:11px; color:var(--text-tertiary); line-height:1.6;">
+          경제지표를 불러오지 못했어요.<br>${escapeHTML(String(e.message || e))}<br><br>
+          FRED 데이터 연결(Worker /macro)이 설정되면 자동으로 표시돼요.
+        </div>
+        <button onclick="renderMacroScenario(true)" style="margin-top:12px; padding:9px 16px; border:none; border-radius:8px; background:var(--bg-info); color:var(--text-info); font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">다시 시도</button>
+      </div>`;
+    return;
+  }
+
+  const a = analyzeMacroScenario(d);
+  const s = a.scenario;
+  const metric = (label, val, unit = '') => `
+    <div style="flex:1; min-width:90px; padding:10px; background:var(--bg-tertiary); border-radius:10px;">
+      <div style="font-size:9px; color:var(--text-tertiary);">${label}</div>
+      <div style="font-size:14px; font-weight:700; margin-top:2px;">${val != null ? val.toFixed(val < 10 && val > -10 ? 2 : 1) + unit : '-'}</div>
+    </div>`;
+  const fmtYoY = v => v != null ? (v >= 0 ? '+' : '') + v.toFixed(1) + '%' : '-';
+
+  box.innerHTML = `
+    <div style="padding:18px; background:linear-gradient(135deg, ${s.color}18 0%, ${s.color}08 100%); border:1px solid ${s.color}55; border-radius:16px; margin-bottom:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:4px;">
+        <span style="font-size:11px; font-weight:600; color:var(--text-secondary);">현재 시장 국면</span>
+        <button onclick="renderMacroScenario(true)" style="border:none; background:rgba(128,128,128,0.12); color:var(--text-secondary); padding:4px 10px; border-radius:999px; font-size:10px; cursor:pointer; font-family:inherit;">🔄 갱신</button>
+      </div>
+      <div style="font-size:26px; font-weight:800; color:${s.color}; margin:4px 0;">${s.emoji} ${s.title}</div>
+      <div style="font-size:12px; color:var(--text-secondary); line-height:1.6;">${s.desc}</div>
+      <div style="display:flex; gap:10px; margin-top:14px;">
+        <div style="flex:1; padding:10px; background:var(--bg-secondary); border-radius:10px; text-align:center;">
+          <div style="font-size:9px; color:var(--text-tertiary);">성장 점수</div>
+          <div style="font-size:18px; font-weight:800; color:${a.isHighGrowth ? '#3F9F6B' : '#5B9BD5'};">${a.growth}<span style="font-size:11px; color:var(--text-tertiary);">/5</span></div>
+          <div style="font-size:9px; color:${a.isHighGrowth ? '#3F9F6B' : '#5B9BD5'};">${a.isHighGrowth ? '고성장' : '저성장'}</div>
+        </div>
+        <div style="flex:1; padding:10px; background:var(--bg-secondary); border-radius:10px; text-align:center;">
+          <div style="font-size:9px; color:var(--text-tertiary);">물가 점수</div>
+          <div style="font-size:18px; font-weight:800; color:${a.isHighInflation ? '#C0392B' : '#3F9F6B'};">${a.inflation}<span style="font-size:11px; color:var(--text-tertiary);">/6</span></div>
+          <div style="font-size:9px; color:${a.isHighInflation ? '#C0392B' : '#3F9F6B'};">${a.isHighInflation ? '고물가' : '저물가'}</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="padding:16px; background:var(--bg-secondary); border-radius:14px; margin-bottom:14px;">
+      <div style="font-size:12px; font-weight:700; margin-bottom:12px;">📈 주요 경제지표</div>
+      <div style="display:flex; flex-wrap:wrap; gap:8px;">
+        ${metric('CPI (YoY)', d.cpiYoY, '%')}
+        ${metric('근원CPI', d.coreCpiYoY, '%')}
+        ${metric('실업률', d.unrate, '%')}
+        ${metric('실질GDP', d.gdpYoY, '%')}
+        ${metric('기준금리', d.fedfunds, '%')}
+        ${metric('10년물', d.dgs10, '%')}
+      </div>
+    </div>
+
+    <div style="padding:16px; background:var(--bg-secondary); border-radius:14px; margin-bottom:14px;">
+      <div style="font-size:12px; font-weight:700; margin-bottom:6px;">💡 이 국면에서 상대적으로 유리했던 자산군</div>
+      <div style="font-size:12px; color:var(--text-secondary); margin-bottom:10px;">${s.assets}</div>
+      <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:6px;">관심 ETF (참고용)</div>
+      <div style="display:flex; flex-wrap:wrap; gap:6px;">
+        ${s.etfs.map(e => `<span style="padding:5px 12px; background:${s.color}22; color:${s.color}; border-radius:999px; font-size:12px; font-weight:700;">${e}</span>`).join('')}
+      </div>
+    </div>
+
+    <div style="padding:14px; background:var(--bg-secondary); border-radius:14px; margin-bottom:14px;">
+      <div style="font-size:11px; font-weight:600; margin-bottom:8px; color:var(--text-secondary);">🔍 판단 근거</div>
+      <div style="font-size:10px; color:var(--text-tertiary); line-height:1.7;">
+        <b>성장:</b> ${a.gReasons.length ? a.gReasons.join(' · ') : '뚜렷한 성장 신호 적음'}<br>
+        <b>물가:</b> ${a.iReasons.length ? a.iReasons.join(' · ') : '뚜렷한 물가 압력 적음'}
+      </div>
+    </div>
+
+    <div style="font-size:9px; color:var(--text-tertiary); text-align:center; line-height:1.6; padding:0 8px;">
+      ${d.updatedAt ? '데이터 기준: ' + new Date(d.updatedAt).toLocaleDateString('ko-KR') + ' · ' : ''}출처: FRED (미국 연준 경제데이터)<br>
+      ※ 참고용 시장 분석이며 투자 조언이 아니에요. 자산군 경향은 과거 사례 기반이라 미래를 보장하지 않아요.
+    </div>`;
+}
+
+
 function drawdownBadge(currentPrice, high, opts = {}) {
   const cur = Number(currentPrice), hi = Number(high);
   if (!Number.isFinite(cur) || !Number.isFinite(hi) || hi <= 0 || cur <= 0) return '';
