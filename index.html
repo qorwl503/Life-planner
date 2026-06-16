@@ -14614,6 +14614,67 @@ async function loadStockDiagnosis(symbol) {
 
 // ====== 📊 시장 국면 분석기 (FRED 기반, Worker 경유) ======
 // 4분면: 성장(고/저) × 물가(고/저). 참고용 — 투자 조언 아님.
+// 변화 방향 카드 — 관측된 최근 추세(예측 아님)
+function renderMacroTrend(d) {
+  const arrow = (state) => state === 'up' ? '<span style="color:#C0392B;">↑</span>'
+    : state === 'down' ? '<span style="color:#5B9BD5;">↓</span>'
+    : '<span style="color:var(--text-tertiary);">→</span>';
+  const cpiState = d.cpiRising === true ? 'up' : d.cpiFalling === true ? 'down' : 'flat';
+  const unrateState = d.unrateRising === true ? 'up' : d.unrateFalling === true ? 'down' : 'flat';
+  const gdpState = d.gdpRising === true ? 'up' : d.gdpFalling === true ? 'down' : 'flat';
+  const rateState = d.dgs10Falling === true ? 'down' : d.dgs10Rising === true ? 'up' : 'flat';
+
+  const signals = [];
+  if (cpiState === 'up') signals.push('물가가 오르는 흐름이라 인플레이션 압력이 커지는 방향이에요.');
+  else if (cpiState === 'down') signals.push('물가가 내리는 흐름이라 인플레이션 압력이 누그러지는 방향이에요.');
+  if (gdpState === 'down' || unrateState === 'up') signals.push('성장 둔화 신호가 일부 보여요.');
+  else if (gdpState === 'up' && unrateState !== 'up') signals.push('성장세가 유지되는 흐름이에요.');
+  if (rateState === 'down') signals.push('장기금리 하락은 금리 인하 기대가 반영되는 경우가 많아요.');
+
+  const hasAnyTrend = [cpiState, unrateState, gdpState, rateState].some(s => s !== 'flat');
+
+  return `
+    <div style="padding:16px; background:var(--bg-secondary); border-radius:14px; margin-bottom:14px;">
+      <div style="font-size:12px; font-weight:700; margin-bottom:4px;">🧭 변화 방향 <span style="font-size:9px; color:var(--text-tertiary); font-weight:400;">(최근 추세)</span></div>
+      ${hasAnyTrend ? `
+      <div style="display:flex; gap:14px; margin:12px 0; flex-wrap:wrap;">
+        <div style="font-size:13px;">물가 ${arrow(cpiState)}</div>
+        <div style="font-size:13px;">실업률 ${arrow(unrateState)}</div>
+        <div style="font-size:13px;">성장 ${arrow(gdpState)}</div>
+        <div style="font-size:13px;">장기금리 ${arrow(rateState)}</div>
+      </div>
+      <div style="font-size:11px; color:var(--text-secondary); line-height:1.7;">
+        ${signals.length ? signals.map(s => '→ ' + s).join('<br>') : '뚜렷한 방향 신호는 적은 편이에요.'}
+      </div>
+      ` : `
+      <div style="font-size:11px; color:var(--text-tertiary); line-height:1.6; margin-top:6px;">
+        추세 데이터가 아직 충분하지 않아요. (Worker /macro에 추세 필드가 추가되면 표시돼요)
+      </div>`}
+      <div style="font-size:8px; color:var(--text-tertiary); margin-top:10px;">※ 관측된 최근 흐름이며, 미래를 예측하거나 단정하지 않아요. 추세는 언제든 바뀔 수 있어요.</div>
+    </div>`;
+}
+
+// 내 보유 자산을 거시 국면 관점의 유형으로 분류
+function classifyPortfolioForMacro() {
+  const groups = { growth: 0, defensive: 0, realasset: 0, bond: 0, cash: 0, other: 0 };
+  const labels = { growth: '성장·기술주', defensive: '방어·배당', realasset: '금·원자재', bond: '채권', cash: '현금성', other: '기타' };
+  (assets || []).forEach(a => {
+    const v = assetKrwValue(a);
+    if (v <= 0) return;
+    const type = a.type || '';
+    const key = ((a.name || '') + (a.ticker || '')).toLowerCase();
+    if (type === '금' || /gld|원자재|dbc|silver/.test(key)) groups.realasset += v;
+    else if (type === '현금' || type === '예적금' || type === '청약') groups.cash += v;
+    else if (/채권|bond|tlt|ief|국채|sgov|회사채/.test(key)) groups.bond += v;
+    else if (/배당|schd|리츠|reit|vym|xlp|xlu/.test(key)) groups.defensive += v;
+    else if (isStockLikeType(type)) groups.growth += v;
+    else groups.other += v;
+  });
+  const total = Object.values(groups).reduce((s, v) => s + v, 0);
+  if (total <= 0) return null;
+  return { groups, labels, total };
+}
+
 const MACRO_SCENARIOS = {
   'high_high': {
     title: '고성장 · 고물가', emoji: '🔥',
@@ -14621,6 +14682,7 @@ const MACRO_SCENARIOS = {
     assets: '에너지 · 산업재 · 원자재 · 금',
     etfs: ['XLE', 'XLI', 'DBC', 'GLD'],
     color: '#E07B39',
+    fav: ['realasset', 'defensive'], unfav: ['bond'],
   },
   'low_high': {
     title: '저성장 · 고물가', emoji: '⚠️',
@@ -14628,6 +14690,7 @@ const MACRO_SCENARIOS = {
     assets: '금 · 원자재 · 방어주 · 현금성 자산',
     etfs: ['GLD', 'DBC', 'XLP', 'SGOV'],
     color: '#C0392B',
+    fav: ['realasset', 'cash', 'defensive'], unfav: ['growth', 'bond'],
   },
   'high_low': {
     title: '고성장 · 저물가', emoji: '🚀',
@@ -14635,6 +14698,7 @@ const MACRO_SCENARIOS = {
     assets: '기술주 · AI · 반도체 · 성장주',
     etfs: ['QQQ', 'SOXX', 'SMH', 'VGT'],
     color: '#3F9F6B',
+    fav: ['growth'], unfav: ['realasset', 'cash'],
   },
   'low_low': {
     title: '저성장 · 저물가', emoji: '🌙',
@@ -14642,6 +14706,7 @@ const MACRO_SCENARIOS = {
     assets: '장기채 · 우량 성장주 · 금',
     etfs: ['TLT', 'IEF', 'GLD', 'QQQ'],
     color: '#5B9BD5',
+    fav: ['bond', 'growth', 'realasset'], unfav: ['cash'],
   },
 };
 
@@ -14748,6 +14813,8 @@ async function renderMacroScenario(forceRefresh = false) {
       </div>
     </div>
 
+    ${renderMacroTrend(d)}
+
     <div style="padding:16px; background:var(--bg-secondary); border-radius:14px; margin-bottom:14px;">
       <div style="font-size:12px; font-weight:700; margin-bottom:6px;">💡 이 국면에서 상대적으로 유리했던 자산군</div>
       <div style="font-size:12px; color:var(--text-secondary); margin-bottom:10px;">${s.assets}</div>
@@ -14765,11 +14832,95 @@ async function renderMacroScenario(forceRefresh = false) {
       </div>
     </div>
 
+    ${renderPortfolioVsMacro(a)}
+
+    <div id="macro-ai-comment" style="margin-bottom:14px;"></div>
+
     <div style="font-size:9px; color:var(--text-tertiary); text-align:center; line-height:1.6; padding:0 8px;">
       ${d.updatedAt ? '데이터 기준: ' + new Date(d.updatedAt).toLocaleDateString('ko-KR') + ' · ' : ''}출처: FRED (미국 연준 경제데이터)<br>
       ※ 참고용 시장 분석이며 투자 조언이 아니에요. 자산군 경향은 과거 사례 기반이라 미래를 보장하지 않아요.
     </div>`;
+
+  // AI 국면 해석 (있으면) — 미래 단정 없이 현재 국면 + 내 자산 관점 점검
+  loadMacroAIComment(d, a);
 }
+
+// 내 포트폴리오 vs 현재 국면 비교 섹션
+function renderPortfolioVsMacro(a) {
+  const pf = classifyPortfolioForMacro();
+  if (!pf) return '';
+  const s = a.scenario;
+  const fav = s.fav || [], unfav = s.unfav || [];
+  // 큰 비중 순으로
+  const rows = Object.entries(pf.groups)
+    .filter(([k, v]) => v > 0)
+    .sort((x, y) => y[1] - x[1])
+    .map(([k, v]) => {
+      const pct = (v / pf.total) * 100;
+      const isFav = fav.includes(k), isUnfav = unfav.includes(k);
+      const tag = isFav ? `<span style="color:#3F9F6B; font-weight:700;">이 국면에 우호적</span>`
+        : isUnfav ? `<span style="color:#C0392B; font-weight:700;">이 국면에 약했던 유형</span>`
+        : `<span style="color:var(--text-tertiary);">중립</span>`;
+      const barCol = isFav ? '#3F9F6B' : isUnfav ? '#C0392B' : 'var(--text-tertiary)';
+      return `
+        <div style="margin-bottom:9px;">
+          <div style="display:flex; justify-content:space-between; font-size:11px; margin-bottom:3px;">
+            <span>${pf.labels[k]} <span style="color:var(--text-tertiary);">${pct.toFixed(0)}%</span></span>
+            ${tag}
+          </div>
+          <div style="height:6px; background:var(--bg-tertiary); border-radius:999px; overflow:hidden;">
+            <div style="height:100%; width:${pct}%; background:${barCol}; border-radius:999px;"></div>
+          </div>
+        </div>`;
+    }).join('');
+
+  // 쏠림 경고: 불리 유형 비중 합
+  const unfavPct = unfav.reduce((sum, k) => sum + (pf.groups[k] || 0), 0) / pf.total * 100;
+  const favPct = fav.reduce((sum, k) => sum + (pf.groups[k] || 0), 0) / pf.total * 100;
+  let summary = '';
+  if (unfavPct >= 50) summary = `<div style="font-size:11px; color:#C0392B; line-height:1.6; margin-top:4px;">⚠️ 자산의 ${unfavPct.toFixed(0)}%가 이 국면에서 역사적으로 약했던 유형에 몰려 있어요. 한 국면에 치우친 건 아닌지 점검해볼 만해요.</div>`;
+  else if (favPct >= 50) summary = `<div style="font-size:11px; color:#3F9F6B; line-height:1.6; margin-top:4px;">✅ 자산의 ${favPct.toFixed(0)}%가 이 국면에 상대적으로 우호적이었던 유형이에요. 다만 국면은 바뀔 수 있으니 분산도 함께 보세요.</div>`;
+  else summary = `<div style="font-size:11px; color:var(--text-secondary); line-height:1.6; margin-top:4px;">자산이 여러 유형에 분산돼 있어요. 특정 국면 쏠림은 크지 않은 편이에요.</div>`;
+
+  return `
+    <div style="padding:16px; background:var(--bg-secondary); border-radius:14px; margin-bottom:14px;">
+      <div style="font-size:12px; font-weight:700; margin-bottom:12px;">📂 내 자산 vs 현재 국면</div>
+      ${rows}
+      ${summary}
+    </div>`;
+}
+
+async function loadMacroAIComment(d, a) {
+  const box = document.getElementById('macro-ai-comment');
+  if (!box || !window.GEMINI_API_KEY) return;
+  const pf = classifyPortfolioForMacro();
+  const cacheKey = 'macro-comment-' + a.key + '-' + new Date().toDateString();
+  box.innerHTML = `<div style="padding:12px; background:var(--bg-secondary); border-radius:12px; font-size:11px; color:var(--text-tertiary); display:flex; align-items:center; gap:8px;"><div class="spinner" style="width:14px;height:14px;"></div>AI가 국면을 해석하는 중...</div>`;
+  const pfText = pf ? Object.entries(pf.groups).filter(([k,v])=>v>0).map(([k,v])=>`${pf.labels[k]} ${((v/pf.total)*100).toFixed(0)}%`).join(', ') : '자산 정보 없음';
+  const prompt = `당신은 신중한 거시경제 해설가입니다. 아래는 현재 미국 경제 국면과 한 투자자의 자산 구성입니다.
+
+[현재 국면] ${a.scenario.title}
+[지표] CPI ${d.cpiYoY?.toFixed(1)}%, 근원CPI ${d.coreCpiYoY?.toFixed(1)}%, 실업률 ${d.unrate?.toFixed(1)}%, 실질GDP ${d.gdpYoY?.toFixed(1)}%, 기준금리 ${d.fedfunds?.toFixed(2)}%, 10년물 ${d.dgs10?.toFixed(2)}%
+[내 자산 구성] ${pfText}
+
+아래를 한국어로, 3~4문장으로 설명하세요. 마크다운 없이 평문.
+1. 왜 지금이 이 국면인지 (지표 근거로)
+2. 이 국면에서 내 자산 구성이 어떤 점을 점검하면 좋을지
+
+⚠️ 규칙: 미래 예측("오를 것이다", "사라") 절대 금지. "역사적으로 ~한 경향", "~를 점검해볼 만하다" 같은 표현만. 단정·권유 없이 차분하게. 투자 조언이 아닌 참고임을 전제로.`;
+
+  try {
+    const result = await askGemini(prompt, { useCache: true, cacheKey });
+    if (result.error || !result.text) { box.innerHTML = ''; return; }
+    box.innerHTML = `
+      <div style="padding:16px; background:linear-gradient(135deg,#EEF2FF 0%,#E0E7FF 100%); border-radius:14px; border:0.5px solid #A5B4FC;">
+        <div style="font-size:11px; font-weight:700; color:#4F46E5; margin-bottom:8px;">🤖 AI 국면 해석</div>
+        <div style="font-size:12px; color:var(--text-primary); line-height:1.7;">${escapeHTML(result.text)}</div>
+        <div style="font-size:8px; color:var(--text-tertiary); margin-top:8px;">※ 참고용 해석이며 투자 권유가 아니에요.</div>
+      </div>`;
+  } catch (e) { box.innerHTML = ''; }
+}
+
 
 
 function drawdownBadge(currentPrice, high, opts = {}) {
