@@ -14699,6 +14699,9 @@ function renderMacroTrend(d) {
   else if (gdpState === 'down' || unrateState === 'up') signals.push('🟡 성장 둔화·고용 약화 신호가 일부 보여 <b>경기 모멘텀이 약해지는</b> 방향일 수 있어요.');
   if (rateState === 'down') signals.push('🔵 장기금리가 내리는 흐름은 <b>금리 인하 기대</b>가 반영되는 경우가 많아요.');
   else if (rateState === 'up') signals.push('🔴 장기금리가 오르는 흐름은 <b>긴축·물가 우려</b>가 반영되는 경우가 많아요.');
+  // 부동산은 금리 민감 — 금리 방향에 따른 의미 한 줄
+  if (rateState === 'up') signals.push('🏠 금리가 오르는 흐름은 대출 부담이 커져 <b>부동산·리츠엔 보통 역풍</b>이에요.');
+  else if (rateState === 'down') signals.push('🏠 금리가 내리는 흐름은 대출 부담이 줄어 <b>부동산·리츠엔 보통 순풍</b>이에요.');
 
   // 이동 방향 (예측 아님 — "이 흐름이 이어지면" 전제)
   let moveHint = '';
@@ -14738,17 +14741,18 @@ function renderMacroTrend(d) {
 
 // 내 보유 자산을 거시 국면 관점의 유형으로 분류
 function classifyPortfolioForMacro() {
-  const groups = { growth: 0, defensive: 0, realasset: 0, bond: 0, cash: 0, other: 0 };
-  const labels = { growth: '성장·기술주', defensive: '방어·배당', realasset: '금·원자재', bond: '채권', cash: '현금성', other: '기타' };
+  const groups = { growth: 0, defensive: 0, realasset: 0, realestate: 0, bond: 0, cash: 0, other: 0 };
+  const labels = { growth: '성장·기술주', defensive: '방어·배당', realasset: '금·원자재', realestate: '부동산·리츠', bond: '채권', cash: '현금성', other: '기타' };
   (assets || []).forEach(a => {
     const v = assetKrwValue(a);
     if (v <= 0) return;
     const type = a.type || '';
     const key = ((a.name || '') + (a.ticker || '')).toLowerCase();
-    if (type === '금' || /gld|원자재|dbc|silver/.test(key)) groups.realasset += v;
+    if (type === '부동산' || /리츠|reit|vnq|schh|부동산/.test(key)) groups.realestate += v;
+    else if (type === '금' || /gld|원자재|dbc|silver/.test(key)) groups.realasset += v;
     else if (type === '현금' || type === '예적금' || type === '청약') groups.cash += v;
     else if (/채권|bond|tlt|ief|국채|sgov|회사채/.test(key)) groups.bond += v;
-    else if (/배당|schd|리츠|reit|vym|xlp|xlu/.test(key)) groups.defensive += v;
+    else if (/배당|schd|vym|xlp|xlu/.test(key)) groups.defensive += v;
     else if (isStockLikeType(type)) groups.growth += v;
     else groups.other += v;
   });
@@ -14765,7 +14769,7 @@ const MACRO_SCENARIOS = {
     etfs: ['XLE', 'XLI', 'DBC', 'GLD'],
     color: '#E07B39',
     fav: ['realasset', 'defensive'], unfav: ['bond'],
-    goods: ['주식', '원자재/금'], bads: ['채권'],
+    goods: ['주식', '원자재/금'], bads: ['채권'], realestate: '중립',
   },
   'low_high': {
     title: '저성장 · 고물가', emoji: '⚠️',
@@ -14773,8 +14777,8 @@ const MACRO_SCENARIOS = {
     assets: '금 · 원자재 · 방어주 · 현금성 자산',
     etfs: ['GLD', 'DBC', 'XLP', 'SGOV'],
     color: '#C0392B',
-    fav: ['realasset', 'cash', 'defensive'], unfav: ['growth', 'bond'],
-    goods: ['원자재/금', '방어주'], bads: ['주식', '채권'],
+    fav: ['realasset', 'cash', 'defensive'], unfav: ['growth', 'bond', 'realestate'],
+    goods: ['원자재/금', '방어주'], bads: ['주식', '채권', '부동산'], realestate: '약세',
   },
   'high_low': {
     title: '고성장 · 저물가', emoji: '🚀',
@@ -14782,8 +14786,8 @@ const MACRO_SCENARIOS = {
     assets: '기술주 · AI · 반도체 · 성장주',
     etfs: ['QQQ', 'SOXX', 'SMH', 'VGT'],
     color: '#3F9F6B',
-    fav: ['growth'], unfav: ['realasset', 'cash'],
-    goods: ['주식', '채권'], bads: ['원자재/금'],
+    fav: ['growth', 'realestate'], unfav: ['realasset', 'cash'],
+    goods: ['주식', '채권', '부동산'], bads: ['원자재/금'], realestate: '우호',
   },
   'low_low': {
     title: '저성장 · 저물가', emoji: '🌙',
@@ -14792,7 +14796,7 @@ const MACRO_SCENARIOS = {
     etfs: ['TLT', 'IEF', 'GLD', 'QQQ'],
     color: '#5B9BD5',
     fav: ['bond', 'growth', 'realasset'], unfav: ['cash'],
-    goods: ['성장주', '채권', '금'], bads: ['주식'],
+    goods: ['성장주', '채권', '금'], bads: ['주식'], realestate: '중립(금리인하 기대 시 개선)',
   },
 };
 
@@ -14920,6 +14924,7 @@ async function renderMacroScenario(forceRefresh = false) {
       <div style="display:flex; flex-wrap:wrap; gap:6px;">
         ${s.etfs.map(e => `<span style="padding:5px 12px; background:${s.color}22; color:${s.color}; border-radius:999px; font-size:12px; font-weight:700;">${e}</span>`).join('')}
       </div>
+      ${s.realestate ? `<div style="font-size:10px; color:var(--text-secondary); margin-top:10px; padding-top:9px; border-top:0.5px solid var(--border-tertiary); line-height:1.6;">🏠 <b>부동산</b>: 이 국면에선 보통 <b style="color:${s.realestate.includes('우호')?'#3F9F6B':s.realestate.includes('약세')?'#C0392B':'var(--text-secondary)'};">${s.realestate}</b> 경향이에요. (부동산은 금리에 특히 민감해요)</div>` : ''}
     </div>
 
     <div style="padding:14px; background:var(--bg-secondary); border-radius:14px; margin-bottom:14px;">
