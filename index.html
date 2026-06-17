@@ -14670,20 +14670,47 @@ function renderMacroGrid(currentKey) {
 
 // 변화 방향 카드 — 관측된 최근 추세(예측 아님)
 function renderMacroTrend(d) {
-  const arrow = (state) => state === 'up' ? '<span style="color:#C0392B;">↑</span>'
-    : state === 'down' ? '<span style="color:#5B9BD5;">↓</span>'
-    : '<span style="color:var(--text-tertiary);">→</span>';
   const cpiState = d.cpiRising === true ? 'up' : d.cpiFalling === true ? 'down' : 'flat';
   const unrateState = d.unrateRising === true ? 'up' : d.unrateFalling === true ? 'down' : 'flat';
   const gdpState = d.gdpRising === true ? 'up' : d.gdpFalling === true ? 'down' : 'flat';
   const rateState = d.dgs10Falling === true ? 'down' : d.dgs10Rising === true ? 'up' : 'flat';
 
+  // 지표별 행: 이름 · 현재값 · 화살표 · 상태라벨
+  const trendRow = (label, state, value, upLabel, downLabel) => {
+    const arrow = state === 'up' ? '↑' : state === 'down' ? '↓' : '→';
+    const col = state === 'up' ? '#C0392B' : state === 'down' ? '#5B9BD5' : 'var(--text-tertiary)';
+    const stLabel = state === 'up' ? upLabel : state === 'down' ? downLabel : '보합';
+    return `
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:9px 0; border-bottom:0.5px solid var(--border-tertiary);">
+        <span style="font-size:12px; color:var(--text-secondary);">${label}</span>
+        <span style="display:flex; align-items:center; gap:8px;">
+          ${value != null ? `<span style="font-size:12px; font-weight:600;">${value}</span>` : ''}
+          <span style="font-size:15px; font-weight:800; color:${col};">${arrow}</span>
+          <span style="font-size:10px; font-weight:600; color:${col}; min-width:42px; text-align:right;">${stLabel}</span>
+        </span>
+      </div>`;
+  };
+
+  // 종합 해석 (관측 사실 → 의미)
   const signals = [];
-  if (cpiState === 'up') signals.push('물가가 오르는 흐름이라 인플레이션 압력이 커지는 방향이에요.');
-  else if (cpiState === 'down') signals.push('물가가 내리는 흐름이라 인플레이션 압력이 누그러지는 방향이에요.');
-  if (gdpState === 'down' || unrateState === 'up') signals.push('성장 둔화 신호가 일부 보여요.');
-  else if (gdpState === 'up' && unrateState !== 'up') signals.push('성장세가 유지되는 흐름이에요.');
-  if (rateState === 'down') signals.push('장기금리 하락은 금리 인하 기대가 반영되는 경우가 많아요.');
+  if (cpiState === 'up') signals.push('🔴 물가가 오르는 흐름이라 <b>인플레이션 압력이 커지는</b> 방향이에요.');
+  else if (cpiState === 'down') signals.push('🔵 물가가 내리는 흐름이라 <b>인플레이션 압력이 누그러지는</b> 방향이에요.');
+  if (gdpState === 'up' && unrateState !== 'up') signals.push('🟢 성장세가 유지되고 실업률도 안정적이라 <b>경기 모멘텀이 살아있는</b> 흐름이에요.');
+  else if (gdpState === 'down' || unrateState === 'up') signals.push('🟡 성장 둔화·고용 약화 신호가 일부 보여 <b>경기 모멘텀이 약해지는</b> 방향일 수 있어요.');
+  if (rateState === 'down') signals.push('🔵 장기금리가 내리는 흐름은 <b>금리 인하 기대</b>가 반영되는 경우가 많아요.');
+  else if (rateState === 'up') signals.push('🔴 장기금리가 오르는 흐름은 <b>긴축·물가 우려</b>가 반영되는 경우가 많아요.');
+
+  // 이동 방향 (예측 아님 — "이 흐름이 이어지면" 전제)
+  let moveHint = '';
+  if (cpiState === 'up' && (gdpState === 'up' && unrateState !== 'up')) {
+    moveHint = '이 흐름이 이어지면 <b>성장은 유지되며 물가 부담이 커지는</b> 쪽(고성장·고물가 심화)으로 기울 수 있어요.';
+  } else if (cpiState === 'up' && (gdpState === 'down' || unrateState === 'up')) {
+    moveHint = '이 흐름이 이어지면 <b>물가는 높은데 성장이 식는</b> 쪽(스태그플레이션 우려)으로 기울 수 있어요.';
+  } else if (cpiState === 'down' && (gdpState === 'down' || unrateState === 'up')) {
+    moveHint = '이 흐름이 이어지면 <b>물가·성장이 함께 식는</b> 쪽(저성장·저물가, 금리 인하 기대)으로 기울 수 있어요.';
+  } else if (cpiState === 'down' && gdpState === 'up') {
+    moveHint = '이 흐름이 이어지면 <b>물가는 안정되며 성장이 살아나는</b> 쪽(성장주에 우호적)으로 기울 수 있어요.';
+  }
 
   const hasAnyTrend = [cpiState, unrateState, gdpState, rateState].some(s => s !== 'flat');
 
@@ -14691,15 +14718,16 @@ function renderMacroTrend(d) {
     <div style="padding:16px; background:var(--bg-secondary); border-radius:14px; margin-bottom:14px;">
       <div style="font-size:12px; font-weight:700; margin-bottom:4px;">🧭 변화 방향 <span style="font-size:9px; color:var(--text-tertiary); font-weight:400;">(최근 추세)</span></div>
       ${hasAnyTrend ? `
-      <div style="display:flex; gap:14px; margin:12px 0; flex-wrap:wrap;">
-        <div style="font-size:13px;">물가 ${arrow(cpiState)}</div>
-        <div style="font-size:13px;">실업률 ${arrow(unrateState)}</div>
-        <div style="font-size:13px;">성장 ${arrow(gdpState)}</div>
-        <div style="font-size:13px;">장기금리 ${arrow(rateState)}</div>
+      <div style="margin:8px 0 12px;">
+        ${trendRow('물가 (CPI)', cpiState, d.cpiYoY != null ? d.cpiYoY.toFixed(1) + '%' : null, '상승세', '하락세')}
+        ${trendRow('실업률', unrateState, d.unrate != null ? d.unrate.toFixed(1) + '%' : null, '상승세', '하락세')}
+        ${trendRow('성장 (GDP)', gdpState, d.gdpYoY != null ? d.gdpYoY.toFixed(1) + '%' : null, '상승세', '둔화')}
+        ${trendRow('장기금리 (10년)', rateState, d.dgs10 != null ? d.dgs10.toFixed(2) + '%' : null, '상승세', '하락세')}
       </div>
-      <div style="font-size:11px; color:var(--text-secondary); line-height:1.7;">
-        ${signals.length ? signals.map(s => '→ ' + s).join('<br>') : '뚜렷한 방향 신호는 적은 편이에요.'}
+      <div style="font-size:11px; color:var(--text-secondary); line-height:1.8; padding:10px 12px; background:var(--bg-tertiary); border-radius:10px;">
+        ${signals.length ? signals.join('<br>') : '뚜렷한 방향 신호는 적은 편이에요.'}
       </div>
+      ${moveHint ? `<div style="font-size:11px; color:var(--text-primary); line-height:1.7; margin-top:10px; padding:10px 12px; background:#EEF2FF; border-radius:10px; border-left:3px solid #6366F1;">🧭 <b>흐름 방향</b><br>${moveHint}</div>` : ''}
       ` : `
       <div style="font-size:11px; color:var(--text-tertiary); line-height:1.6; margin-top:6px;">
         추세 데이터가 아직 충분하지 않아요. (Worker /macro에 추세 필드가 추가되면 표시돼요)
