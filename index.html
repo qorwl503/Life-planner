@@ -7116,9 +7116,21 @@ function renderAssetAnalysis() {
     isStockLikeType(a.type) && a.name
   ).slice(0, 10);
 
+  if (!window._analysisSubview) window._analysisSubview = 'stock'; // 'stock' | 'macro'
+  const sv = window._analysisSubview;
+  const segBtn = (id, label) => `
+    <button onclick="window._analysisSubview='${id}'; renderAsset();"
+      style="flex:1; padding:11px; border:none; border-radius:10px; font-size:13px; font-weight:700; font-family:inherit; cursor:pointer;
+      background:${sv===id?'var(--text-primary)':'transparent'}; color:${sv===id?'var(--bg-primary)':'var(--text-secondary)'};">${label}</button>`;
+
   return `
     <div style="padding-bottom:20px;">
-      <div id="macro-scenario-box" style="margin-bottom:18px;"></div>
+      <div style="display:flex; gap:4px; padding:4px; background:var(--bg-secondary); border-radius:13px; margin-bottom:16px;">
+        ${segBtn('stock', '🔍 종목 분석')}
+        ${segBtn('macro', '📊 시장 국면')}
+      </div>
+
+      ${sv === 'macro' ? `<div id="macro-scenario-box"></div>` : `
       <div style="padding:14px; background:linear-gradient(135deg, #FEE7DC 0%, #FFF4E5 100%); border-radius:12px; margin-bottom:14px; font-size:12px; color:#8B4513; line-height:1.6;">
         🔍 <b>AI 투자 분석</b><br>
         종목명이나 티커를 입력하면 Gemini AI가 비즈니스 모델·최근 실적·성장 모멘텀·투자 매력도를 분석해줘요.
@@ -7155,6 +7167,7 @@ function renderAssetAnalysis() {
 
       <div id="ai-analysis-status" style="display:none; padding:14px; background:var(--bg-secondary); border-radius:12px; text-align:center; font-size:12px; color:var(--text-secondary);"></div>
       <div id="ai-analysis-result" style="display:none; margin-top:6px; padding:14px; background:var(--bg-secondary); border-radius:12px; line-height:1.7; font-size:12px;"></div>
+      `}
     </div>`;
 }
 
@@ -12823,7 +12836,7 @@ function renderAsset() {
     html += renderAssetPlan(total, byType);
   } else if (assetTab === 'analysis') {
     html += renderAssetAnalysis();
-    setTimeout(() => renderMacroScenario(), 40);
+    if (window._analysisSubview === 'macro') setTimeout(() => renderMacroScenario(), 40);
   } else if (assetTab === 'market') {
     html += renderAssetMarket(total, byType);
   } else if (assetTab === 'youtube') {
