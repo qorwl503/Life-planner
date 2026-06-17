@@ -14648,16 +14648,21 @@ function renderMacroGrid(currentKey) {
   return `
     <div style="position:relative; padding:6px 0;">
       <div style="text-align:center; font-size:9px; color:var(--text-tertiary); margin-bottom:3px;">↑ 고물가</div>
-      <div style="display:flex; gap:8px; margin-bottom:8px;">
-        ${cell('high_high')}
-        ${cell('low_high')}
+      <div style="position:relative;">
+        <!-- 십자 축선 -->
+        <div style="position:absolute; left:50%; top:0; bottom:0; width:2px; background:var(--border-secondary); transform:translateX(-50%); z-index:0;"></div>
+        <div style="position:absolute; top:50%; left:0; right:0; height:2px; background:var(--border-secondary); transform:translateY(-50%); z-index:0;"></div>
+        <div style="display:flex; gap:10px; margin-bottom:10px; position:relative; z-index:1;">
+          ${cell('high_high')}
+          ${cell('low_high')}
+        </div>
+        <div style="display:flex; gap:10px; position:relative; z-index:1;">
+          ${cell('high_low')}
+          ${cell('low_low')}
+        </div>
       </div>
-      <div style="display:flex; justify-content:space-between; font-size:9px; color:var(--text-tertiary); padding:0 4px; margin-bottom:8px;">
+      <div style="display:flex; justify-content:space-between; font-size:9px; color:var(--text-tertiary); padding:0 4px; margin-top:4px;">
         <span>← 고성장</span><span>저성장 →</span>
-      </div>
-      <div style="display:flex; gap:8px;">
-        ${cell('high_low')}
-        ${cell('low_low')}
       </div>
       <div style="text-align:center; font-size:9px; color:var(--text-tertiary); margin-top:3px;">↓ 저물가</div>
     </div>`;
@@ -14846,20 +14851,22 @@ async function renderMacroScenario(forceRefresh = false) {
 
     ${renderMacroGrid(a.key)}
 
-    <div style="padding:16px; background:linear-gradient(135deg, ${s.color}18 0%, ${s.color}08 100%); border:1px solid ${s.color}55; border-radius:14px; margin:14px 0;">
-      <div style="font-size:11px; color:var(--text-secondary); margin-bottom:2px;">📍 현재 위치</div>
-      <div style="font-size:20px; font-weight:800; color:${s.color};">${s.emoji} ${s.title}</div>
-      <div style="font-size:11px; color:var(--text-secondary); line-height:1.6; margin-top:4px;">${s.desc}</div>
-      <div style="display:flex; gap:10px; margin-top:12px;">
-        <div style="flex:1; padding:9px; background:var(--bg-secondary); border-radius:10px; text-align:center;">
-          <div style="font-size:9px; color:var(--text-tertiary);">성장 점수</div>
-          <div style="font-size:17px; font-weight:800; color:${a.isHighGrowth ? '#3F9F6B' : '#5B9BD5'};">${a.growth}<span style="font-size:10px; color:var(--text-tertiary);">/5</span></div>
-          <div style="font-size:9px; color:${a.isHighGrowth ? '#3F9F6B' : '#5B9BD5'};">${a.isHighGrowth ? '고성장' : '저성장'}</div>
+    <div style="padding:12px 14px; background:linear-gradient(135deg, ${s.color}18 0%, ${s.color}08 100%); border:1px solid ${s.color}55; border-radius:12px; margin:12px 0;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+        <div style="min-width:0;">
+          <div style="font-size:10px; color:var(--text-secondary);">📍 현재 위치</div>
+          <div style="font-size:16px; font-weight:800; color:${s.color};">${s.emoji} ${s.title}</div>
+          <div style="font-size:9px; color:var(--text-tertiary); line-height:1.5; margin-top:2px;">${s.desc}</div>
         </div>
-        <div style="flex:1; padding:9px; background:var(--bg-secondary); border-radius:10px; text-align:center;">
-          <div style="font-size:9px; color:var(--text-tertiary);">물가 점수</div>
-          <div style="font-size:17px; font-weight:800; color:${a.isHighInflation ? '#C0392B' : '#3F9F6B'};">${a.inflation}<span style="font-size:10px; color:var(--text-tertiary);">/6</span></div>
-          <div style="font-size:9px; color:${a.isHighInflation ? '#C0392B' : '#3F9F6B'};">${a.isHighInflation ? '고물가' : '저물가'}</div>
+        <div style="display:flex; gap:6px; flex-shrink:0;">
+          <div style="padding:6px 10px; background:var(--bg-secondary); border-radius:9px; text-align:center;">
+            <div style="font-size:8px; color:var(--text-tertiary);">성장</div>
+            <div style="font-size:14px; font-weight:800; color:${a.isHighGrowth ? '#3F9F6B' : '#5B9BD5'};">${a.growth}<span style="font-size:9px; color:var(--text-tertiary);">/5</span></div>
+          </div>
+          <div style="padding:6px 10px; background:var(--bg-secondary); border-radius:9px; text-align:center;">
+            <div style="font-size:8px; color:var(--text-tertiary);">물가</div>
+            <div style="font-size:14px; font-weight:800; color:${a.isHighInflation ? '#C0392B' : '#3F9F6B'};">${a.inflation}<span style="font-size:9px; color:var(--text-tertiary);">/6</span></div>
+          </div>
         </div>
       </div>
     </div>
