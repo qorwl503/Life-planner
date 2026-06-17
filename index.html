@@ -1235,9 +1235,16 @@ function showSyncStatus() {
 
 // Firebase에서 로드
 async function loadFromFirebase(uid) {
-  const { doc, getDoc, db } = window._fb;
-  const snap = await getDoc(doc(db, 'users', uid));
-  return snap.exists() ? snap.data() : { __empty: true };
+  try {
+    const { doc, getDoc, db } = window._fb;
+    const snap = await getDoc(doc(db, 'users', uid));
+    if (snap.exists()) {
+      return snap.data();
+    }
+  } catch (e) {
+    console.error('로드 실패:', e);
+  }
+  return null;
 }
 
 // ====== 초기 데이터 ======
@@ -1577,7 +1584,7 @@ function videoSkeleton(n = 3) {
 }
 
 // ===== 디버그/진단/점검 도구 =====
-const APP_VERSION = '2026.06.17';
+const APP_VERSION = '2026.06.09';
 const DEBUG_MODE = (() => { try { return localStorage.getItem('lp_debug') === '1'; } catch (e) { return false; } })();
 function debugLog(...args) { if (DEBUG_MODE) console.log('[LP]', ...args); }
 function debugWarn(...args) { if (DEBUG_MODE) console.warn('[LP]', ...args); }
@@ -2100,7 +2107,7 @@ function renderCalendar() {
   }
 
   header.innerHTML = `
-    <h1>캘린더</h1>
+    <h1>홈</h1>
     <div class="header-actions">
       <button onclick="openSettingsModal()" aria-label="설정" style="position:relative;"><i class="ti ti-settings"></i>${!window.GEMINI_API_KEY ? '<span style="position:absolute; top:6px; right:6px; width:6px; height:6px; border-radius:50%; background:#FF3B30;"></span>' : ''}</button>
       <button onclick="openAddModal()" aria-label="추가"><i class="ti ti-plus"></i></button>
@@ -3687,7 +3694,7 @@ function showCompletedChallenges() {
           <div style="font-size:9px; opacity:0.85;">100% 완주</div>
         </div>
       </div>
-      ${longestCh ? `<div style="font-size:10px; opacity:0.9; margin-top:10px; text-align:center;">가장 긴 도전: <b>${escapeHTML(longestCh.title)}</b> (${longestCh.totalDays}일)</div>` : ''}
+      ${longestCh ? `<div style="font-size:10px; opacity:0.9; margin-top:10px; text-align:center;">가장 긴 도전: <b>${longestCh.title}</b> (${longestCh.totalDays}일)</div>` : ''}
     </div>` : '';
 
   const cards = completed.length > 0
@@ -5829,7 +5836,7 @@ function editFixed(id) {
           📸 증권사 체결·자동적립 캡처로 다시 정리
         </button>
         <input type="file" id="ef-autobuy-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processAutobuyCapture(this)" />
-        <div class="autobuy-capture-status" style="display:none; margin-top:6px; padding:8px; background:rgba(94,92,230,0.06); border-radius:6px; font-size:10px; color:#5E5CE6; text-align:center;"></div>
+        <div id="autobuy-capture-status" style="display:none; margin-top:6px; padding:8px; background:rgba(94,92,230,0.06); border-radius:6px; font-size:10px; color:#5E5CE6; text-align:center;"></div>
         <div style="font-size:9px; color:var(--text-tertiary); margin-top:5px; line-height:1.5;">
           캡처가 이상하게 들어갔으면, 증권사 체결내역을 다시 찍어 올리면 회차가 교체돼요 (2배 안 됨).
         </div>
@@ -6423,7 +6430,7 @@ function openFixedAddModal() {
           🤖 증권사 자동적립(더모으기) 캡처로 가져오기
         </button>
         <input type="file" id="autobuy-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processAutobuyCapture(this)" />
-        <div class="autobuy-capture-status" style="display:none; margin-top:8px; padding:10px; background:rgba(94,92,230,0.06); border-radius:8px; font-size:11px; color:#5E5CE6; text-align:center;"></div>
+        <div id="autobuy-capture-status" style="display:none; margin-top:8px; padding:10px; background:rgba(94,92,230,0.06); border-radius:8px; font-size:11px; color:#5E5CE6; text-align:center;"></div>
         <div style="font-size:9px; color:var(--text-tertiary); margin-top:5px; line-height:1.5;">
           증권사 "정기매수·더모으기·자동적립" 설정 화면을 캡처하면 종목·금액·주기를 읽어 투자 자동매수를 만들어요.
         </div>
@@ -8009,7 +8016,7 @@ async function fixAutoLotsToInteger(assetId) {
     if (histClose != null) {
       if (histIsUSD) {
         const histFx = lot.date ? getHistPriceOn(fxHistMap, lot.date) : null;
-        const rate = histFx != null ? histFx * fxSpreadMul : (lot.buyRate || getLastFxRate() || 1380);
+        const rate = histFx != null ? histFx * fxSpreadMul : (lot.buyRate || 1380);
         realPrice = histClose * rate;
         lot.buyRate = Math.round(rate);
       } else {
@@ -8236,7 +8243,7 @@ async function runRecalcAutoBuy(assetId, fixedId) {
     if (basePrice != null) {
       if (histIsUSD) {
         const histFx = getHistPriceOn(fxHistMap, dStr);
-        lotBuyRate = histFx != null ? histFx * fxSpreadMul : (live?.krwPrice && live?.currentPrice ? live.krwPrice / live.currentPrice : (getLastFxRate() || 1380));
+        lotBuyRate = histFx != null ? histFx * fxSpreadMul : (live?.krwPrice && live?.currentPrice ? live.krwPrice / live.currentPrice : 1380);
         lotPrice = basePrice * lotBuyRate;
       } else {
         lotPrice = basePrice;
@@ -9920,7 +9927,7 @@ async function processAutobuyCapture(input) {
   }
 
   // 🔧 로딩 표시 (스피너) — 고정지출 모달 안의 상태 div
-  const statusEl = (input && (input.closest('div')?.parentElement?.querySelector('.autobuy-capture-status') || input.parentElement?.querySelector('.autobuy-capture-status'))) || document.querySelector('.autobuy-capture-status');
+  const statusEl = document.getElementById('autobuy-capture-status');
   const setStatus = (htmlStr) => {
     if (statusEl) { statusEl.style.display = 'block'; statusEl.innerHTML = htmlStr; }
   };
@@ -11829,7 +11836,7 @@ function openSellSimulator(assetId) {
       </div>
 
       <div style="padding:10px 12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:12px; font-size:11px; color:var(--text-secondary); line-height:1.6;">
-        <b>${escapeHTML(a.name)}</b> · 보유 ${qty}주<br>
+        <b>${a.name}</b> · 보유 ${qty}주<br>
         ${isUS ? '🇺🇸 미국주식 — 양도소득세(22%) 적용' : '🇰🇷 국내주식 — 증권거래세 적용'}
       </div>
 
@@ -14533,7 +14540,7 @@ async function fetchStockFundamentals(symbol) {
   const proxies = [
     { url: `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(yahooUrl)}`, parse: async r => { const w = await r.json(); return JSON.parse(w.contents); } },
     { url: `https://api.allorigins.win/get?url=${encodeURIComponent(yahooUrl)}`, parse: async r => { const w = await r.json(); return JSON.parse(w.contents); } },
-    { url: `https://corsproxy.io/?${encodeURIComponent(yahooUrl)}`, parse: async r => await r.json() },
+    { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`, parse: async r => await r.json() },
   ];
   for (const p of proxies) {
     try {
@@ -15057,7 +15064,7 @@ async function fetchYahooPrice(ticker) {
       }
     },
     {
-      url: `https://corsproxy.io/?${encodeURIComponent(yahooUrl)}`,
+      url: `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`,
       parse: async (res) => res.json()
     },
     {
@@ -15143,7 +15150,7 @@ async function fetchYahooHistorical(ticker) {
   const proxies = [
     { url: `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(yahooUrl)}`, parse: async (r) => JSON.parse((await r.json()).contents) },
     { url: `https://api.allorigins.win/get?url=${encodeURIComponent(yahooUrl)}`, parse: async (r) => JSON.parse((await r.json()).contents) },
-    { url: `https://corsproxy.io/?${encodeURIComponent(yahooUrl)}`, parse: async (r) => r.json() },
+    { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`, parse: async (r) => r.json() },
   ];
 
   for (const proxy of proxies) {
@@ -15536,7 +15543,7 @@ async function fetchNaverDomesticStock(code) {
   const proxies = [
     url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
-    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
   ];
 
   for (const proxyFn of proxies) {
@@ -15583,7 +15590,7 @@ async function fetchNaverIndex(code) {
   const proxies = [
     url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
-    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
   ];
 
   for (const proxyFn of proxies) {
@@ -15640,22 +15647,11 @@ async function fetchNaverIndex(code) {
 }
 
 // 네이버 환율 (USD/KRW) - 네이버 모바일/PC 페이지가 실제 사용하는 엔드포인트 사용
-
-// 마지막으로 성공한 USD/KRW 환율 (없으면 null). 1380 하드코딩 대신 사용.
-function getLastFxRate() {
-  if (window._lastFxRate && window._lastFxRate > 1000 && window._lastFxRate < 2000) return window._lastFxRate;
-  try {
-    const s = JSON.parse(localStorage.getItem('last_fx_rate') || 'null');
-    if (s && s.price > 1000 && s.price < 2000) { window._lastFxRate = s.price; return s.price; }
-  } catch(e){}
-  return null;
-}
-
 async function fetchNaverExchange() {
   const proxies = [
+    url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
+    url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
-    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-    url => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`,
   ];
 
   // 🔧 우선순위 1: polling/quotes API (네이버가 실시간 표시에 사용하는 엔드포인트)
@@ -15691,10 +15687,7 @@ async function fetchNaverExchange() {
           const signedChange = rf === '2' || rf === '5' && change < 0 ? -Math.abs(change) : (rf === '1' ? Math.abs(change) : change);
           const signedPct = rf === '2' ? -Math.abs(changePct) : (rf === '1' ? Math.abs(changePct) : changePct);
           console.log(`✅ 네이버 환율 realtime: ${price}원, ${signedPct}%`);
-          const _r = { price, previousClose: price - signedChange, change: signedChange, changePct: signedPct, currency: 'KRW', time: Date.now() };
-          try { localStorage.setItem('last_fx_rate', JSON.stringify({ price, time: Date.now() })); } catch(e){}
-          window._lastFxRate = price;
-          return _r;
+          return { price, previousClose: price - signedChange, change: signedChange, changePct: signedPct, currency: 'KRW', time: Date.now() };
         }
       }
     } catch (e) {
@@ -15727,8 +15720,6 @@ async function fetchNaverExchange() {
       const changePct = (change / prevPrice) * 100;
 
       console.log(`✅ 네이버 환율: ${price}원, ${changePct.toFixed(2)}%`);
-      try { localStorage.setItem('last_fx_rate', JSON.stringify({ price, time: Date.now() })); } catch(e){}
-      window._lastFxRate = price;
       return { price, previousClose: prevPrice, change, changePct, currency: 'KRW', time: Date.now() };
     } catch (e) {
       continue;
@@ -15780,7 +15771,7 @@ async function fetchNaverGoldDomestic() {
   const proxies = [
     url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
-    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
   ];
 
   const fetchVia = async (target) => {
@@ -16470,7 +16461,7 @@ async function fetchStockNews(stockName) {
     url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
     url => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`,
-    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
   ];
 
   for (const feedUrl of feeds) {
@@ -16561,7 +16552,7 @@ async function fetchFundFacts(ticker) {
   const proxies = [
     { url: `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(apiUrl)}`, parse: async (res) => JSON.parse((await res.json()).contents) },
     { url: `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`, parse: async (res) => JSON.parse((await res.json()).contents) },
-    { url: `https://corsproxy.io/?${encodeURIComponent(apiUrl)}`, parse: async (res) => res.json() },
+    { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(apiUrl)}`, parse: async (res) => res.json() },
     { url: `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(apiUrl)}`, parse: async (res) => res.json() },
   ];
 
@@ -16635,7 +16626,7 @@ async function fetchNewsRSS() {
   const proxies = [
     url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
-    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     url => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`,
   ];
 
@@ -18333,7 +18324,7 @@ function openSettingsModal() {
           <span style="font-size:20px;">👤</span>
           <div style="flex:1;">
             <div style="font-size:13px; font-weight:600;">계정</div>
-            <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${currentUser?.email ? escapeHTML(currentUser.email) : '로그인 / 동기화'}</div>
+            <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${(typeof firebaseUser !== 'undefined' && firebaseUser?.email) ? firebaseUser.email : '로그인 / 동기화'}</div>
           </div>
           <i class="ti ti-chevron-right" style="color:var(--text-tertiary);"></i>
         </div>
@@ -19249,7 +19240,7 @@ function editAsset(id) {
             </div>
             <button type="button" onclick="document.getElementById('asset-autobuy-capture-input').click()" style="width:100%; margin-top:6px; padding:8px; border:1px dashed #5E5CE6; background:white; color:#5E5CE6; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">📸 체결내역 캡처로 회차 정리</button>
             <input type="file" id="asset-autobuy-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processAutobuyCapture(this)" />
-            <div class="autobuy-capture-status" style="display:none; margin-top:6px; padding:8px; background:rgba(94,92,230,0.06); border-radius:6px; font-size:10px; color:#5E5CE6; text-align:center;"></div>
+            <div id="autobuy-capture-status" style="display:none; margin-top:6px; padding:8px; background:rgba(94,92,230,0.06); border-radius:6px; font-size:10px; color:#5E5CE6; text-align:center;"></div>
           </div>`;
         } else {
           // 자동매수 연결 X → 추가 버튼 + 캡처
@@ -19261,7 +19252,7 @@ function editAsset(id) {
             <button onclick="addAutoBuyForAsset(${a.id})" style="width:100%; padding:9px; border:none; background:#5E5CE6; color:white; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; margin-bottom:6px;">+ 자동매수 설정</button>
             <button type="button" onclick="document.getElementById('asset-autobuy-capture-input').click()" style="width:100%; padding:9px; border:1px dashed #5E5CE6; background:white; color:#5E5CE6; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">📸 증권사 체결·자동적립 캡처</button>
             <input type="file" id="asset-autobuy-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processAutobuyCapture(this)" />
-            <div class="autobuy-capture-status" style="display:none; margin-top:6px; padding:8px; background:rgba(94,92,230,0.06); border-radius:6px; font-size:10px; color:#5E5CE6; text-align:center;"></div>
+            <div id="autobuy-capture-status" style="display:none; margin-top:6px; padding:8px; background:rgba(94,92,230,0.06); border-radius:6px; font-size:10px; color:#5E5CE6; text-align:center;"></div>
           </div>`;
         }
       })()}
@@ -19312,7 +19303,7 @@ function editAsset(id) {
               </div>
             </div>
             <input type="file" id="asset-lot-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processAutobuyCapture(this)" />
-            <div class="autobuy-capture-status" style="display:none; margin-top:6px; padding:8px; background:rgba(94,92,230,0.06); border-radius:6px; font-size:10px; color:#5E5CE6; text-align:center;"></div>
+            <div id="autobuy-capture-status" style="display:none; margin-top:6px; padding:8px; background:rgba(94,92,230,0.06); border-radius:6px; font-size:10px; color:#5E5CE6; text-align:center;"></div>
             ${(() => {
               // 🔧 자동매수와 수동 기록 분리
               const autoLots = lots.filter(l => l.autoBuy);
@@ -20339,23 +20330,14 @@ function initAuth() {
     if (user) {
       currentUser = user;
       window._cloudLoadPending = true; // 🔧 로드 끝날 때까지 저장 차단
-      try {
-        const cloudData = await loadFromFirebase(user.uid);
-        if (cloudData && cloudData.__empty) {
-          // 클라우드에 데이터 없음(신규 계정) → 로컬 유지, 저장 허용
-          window._cloudLoadPending = false;
-        } else if (cloudData) {
-          applyData(cloudData);
-          window._cloudLoadPending = false;
-          saveLocal();
-        } else {
-          window._cloudLoadPending = false;
-        }
-      } catch (e) {
-        // 네트워크/Firestore 오류 → 저장 차단 유지(로컬이 클라우드 덮어쓰는 것 방지)
-        console.error('클라우드 로드 실패:', e);
-        if (typeof showToast === 'function') showToast('클라우드 로드 실패. 저장을 잠시 중단했어요.');
-        // _cloudLoadPending 을 true로 유지 → 다음 정상 로드까지 저장 안 함
+      const cloudData = await loadFromFirebase(user.uid);
+      if (cloudData) {
+        applyData(cloudData);
+        window._cloudLoadPending = false; // 로드 완료 → 저장 허용
+        saveLocal();
+      } else {
+        // 클라우드에 데이터 없음(신규 계정 등) → 로컬 유지, 저장 허용
+        window._cloudLoadPending = false;
       }
 
       // AI 키 Firebase에서 복원 (다른 기기에서 저장한 거)
