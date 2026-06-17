@@ -8009,7 +8009,7 @@ async function fixAutoLotsToInteger(assetId) {
     if (histClose != null) {
       if (histIsUSD) {
         const histFx = lot.date ? getHistPriceOn(fxHistMap, lot.date) : null;
-        const rate = histFx != null ? histFx * fxSpreadMul : (lot.buyRate || 1380);
+        const rate = histFx != null ? histFx * fxSpreadMul : (lot.buyRate || getLastFxRate() || 1380);
         realPrice = histClose * rate;
         lot.buyRate = Math.round(rate);
       } else {
@@ -8236,7 +8236,7 @@ async function runRecalcAutoBuy(assetId, fixedId) {
     if (basePrice != null) {
       if (histIsUSD) {
         const histFx = getHistPriceOn(fxHistMap, dStr);
-        lotBuyRate = histFx != null ? histFx * fxSpreadMul : (live?.krwPrice && live?.currentPrice ? live.krwPrice / live.currentPrice : 1380);
+        lotBuyRate = histFx != null ? histFx * fxSpreadMul : (live?.krwPrice && live?.currentPrice ? live.krwPrice / live.currentPrice : (getLastFxRate() || 1380));
         lotPrice = basePrice * lotBuyRate;
       } else {
         lotPrice = basePrice;
@@ -15640,11 +15640,22 @@ async function fetchNaverIndex(code) {
 }
 
 // 네이버 환율 (USD/KRW) - 네이버 모바일/PC 페이지가 실제 사용하는 엔드포인트 사용
+
+// 마지막으로 성공한 USD/KRW 환율 (없으면 null). 1380 하드코딩 대신 사용.
+function getLastFxRate() {
+  if (window._lastFxRate && window._lastFxRate > 1000 && window._lastFxRate < 2000) return window._lastFxRate;
+  try {
+    const s = JSON.parse(localStorage.getItem('last_fx_rate') || 'null');
+    if (s && s.price > 1000 && s.price < 2000) { window._lastFxRate = s.price; return s.price; }
+  } catch(e){}
+  return null;
+}
+
 async function fetchNaverExchange() {
   const proxies = [
-    url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
     url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    url => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`,
   ];
 
   // 🔧 우선순위 1: polling/quotes API (네이버가 실시간 표시에 사용하는 엔드포인트)
@@ -15680,7 +15691,10 @@ async function fetchNaverExchange() {
           const signedChange = rf === '2' || rf === '5' && change < 0 ? -Math.abs(change) : (rf === '1' ? Math.abs(change) : change);
           const signedPct = rf === '2' ? -Math.abs(changePct) : (rf === '1' ? Math.abs(changePct) : changePct);
           console.log(`✅ 네이버 환율 realtime: ${price}원, ${signedPct}%`);
-          return { price, previousClose: price - signedChange, change: signedChange, changePct: signedPct, currency: 'KRW', time: Date.now() };
+          const _r = { price, previousClose: price - signedChange, change: signedChange, changePct: signedPct, currency: 'KRW', time: Date.now() };
+          try { localStorage.setItem('last_fx_rate', JSON.stringify({ price, time: Date.now() })); } catch(e){}
+          window._lastFxRate = price;
+          return _r;
         }
       }
     } catch (e) {
@@ -15713,6 +15727,8 @@ async function fetchNaverExchange() {
       const changePct = (change / prevPrice) * 100;
 
       console.log(`✅ 네이버 환율: ${price}원, ${changePct.toFixed(2)}%`);
+      try { localStorage.setItem('last_fx_rate', JSON.stringify({ price, time: Date.now() })); } catch(e){}
+      window._lastFxRate = price;
       return { price, previousClose: prevPrice, change, changePct, currency: 'KRW', time: Date.now() };
     } catch (e) {
       continue;
