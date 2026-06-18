@@ -1487,6 +1487,45 @@ function migrateTodos() {
 }
 
 // 날짜 키 → 그룹 동적 분류 (today/tomorrow/week/later/past)
+// 🔁 반복 규칙을 사람이 읽는 문구로
+function repeatLabel(rep) {
+  if (!rep || !rep.type) return '';
+  if (rep.type === 'daily') return '매일';
+  if (rep.type === 'monthly') return '매월';
+  if (rep.type === 'weekly') {
+    const names = ['일','월','화','수','목','금','토'];
+    const days = Array.isArray(rep.days) ? rep.days.slice().sort((a,b)=>a-b) : [];
+    if (days.length === 7) return '매일';
+    if (days.length === 0) return '매주';
+    return '매주 ' + days.map(d => names[d]).join('·');
+  }
+  return '';
+}
+
+// 🔁 반복 할일이 특정 날짜(dateKey)에 표시돼야 하는지 판정
+//    시작일(t.dateKey)부터 규칙에 맞으면 true. 시작일 이전이면 false.
+function todoOccursOn(t, kStr) {
+  if (!t || !t.repeat || !t.dateKey || !kStr) return false;
+  if (kStr < t.dateKey) return false; // 시작일 이전 (YYYY-MM-DD 문자열 비교 안전)
+  const [sy, sm, sd] = t.dateKey.split('-').map(Number);
+  const [ky, km, kd] = kStr.split('-').map(Number);
+  const start = new Date(sy, sm-1, sd);
+  const cur = new Date(ky, km-1, kd);
+  const type = t.repeat.type;
+  if (type === 'daily') return true;
+  if (type === 'weekly') {
+    const days = Array.isArray(t.repeat.days) ? t.repeat.days : [];
+    return days.includes(cur.getDay());
+  }
+  if (type === 'monthly') {
+    // 시작일의 '일(day)'과 같은 날. 그 달에 해당 일이 없으면(예: 31일) 말일로 보정.
+    const lastDay = new Date(ky, km, 0).getDate();
+    const effDay = Math.min(sd, lastDay);
+    return kd === effDay;
+  }
+  return false;
+}
+
 function todoGroup(dateKeyStr) {
   if (!dateKeyStr) return 'today';
   const now = new Date();
@@ -2292,7 +2331,7 @@ function renderCalendar() {
       html += `<div class="empty-state" style="padding:20px;"><span style="font-size:11px;">이 카테고리에 기록이 없어요</span></div>`;
     } else {
       const renderEvt = (e) => {
-        const clickHandler = e.todoId !== undefined ? `onclick="toggleTodoFromCal(${e.todoId})"`
+        const clickHandler = e.todoId !== undefined ? `onclick="toggleTodoFromCal(${e.todoId}${e.recurDate ? `, '${e.recurDate}'` : ''})"`
           : e.expenseId !== undefined ? `onclick="editExpense(${e.expenseId})" style="cursor:pointer;"`
           : '';
         return `<div class="evt evt-${e.type}" ${clickHandler}>
@@ -2348,15 +2387,19 @@ function getEventsForDay(d) {
   const events = [];
   const k = dayKey(d);
 
-  // 할일
-  todos.filter(t => t.dateKey === k).forEach(t => {
+  // 할일 (일반: dateKey 일치 / 반복: 규칙상 이 날 발생)
+  todos.forEach(t => {
+    const isPlain = (t.dateKey === k) && !t.repeat;
+    const isRecur = !!t.repeat && todoOccursOn(t, k);
+    if (!isPlain && !isRecur) return;
     events.push({
       type: 'todo',
       title: t.title,
       sub: t.tag,
-      done: t.done,
+      done: isRecur ? !!(t.repeatDone && t.repeatDone[k]) : t.done,
       todoId: t.id,
-      amount: t.money
+      amount: t.money,
+      recurDate: isRecur ? k : null, // 반복 인스턴스면 그 날짜 표시
     });
   });
 
@@ -2623,12 +2666,22 @@ function jumpToMonth(y, m) {
   renderCalendar();
 }
 
-function toggleTodoFromCal(todoId) {
+function toggleTodoFromCal(todoId, recurDate) {
   const t = todos.find(x => x.id === todoId);
   if (t) {
-    t.done = !t.done;
-    saveData();
-    showToast(t.done ? `"${t.title}" 완료!` : `"${t.title}" 되돌림`);
+    if (recurDate && t.repeat) {
+      // 반복 인스턴스: 그 날짜만 완료 토글 (repeatDone 맵에 기록)
+      if (!t.repeatDone) t.repeatDone = {};
+      const now = !t.repeatDone[recurDate];
+      if (now) t.repeatDone[recurDate] = true;
+      else delete t.repeatDone[recurDate];
+      saveData();
+      showToast(now ? `"${t.title}" 완료!` : `"${t.title}" 되돌림`);
+    } else {
+      t.done = !t.done;
+      saveData();
+      showToast(t.done ? `"${t.title}" 완료!` : `"${t.title}" 되돌림`);
+    }
   }
   renderCalendar();
 }
@@ -2686,7 +2739,9 @@ function renderTodo() {
     <h1>할일</h1>
     <div class="header-actions">
       <button onclick="openChallengeModal()" aria-label="챌린지 추가"><i class="ti ti-flag"></i></button>
-      <button onclick="openTodoModal()" aria-label="추가"><i class="ti ti-plus"></i></button>
+      <button onclick="openTodoModal()" aria-label="할일 추가" style="display:flex; align-items:center; gap:4px; background:var(--text-info); color:white; padding:0 14px 0 10px; border-radius:999px; font-size:13px; font-weight:600; font-family:inherit;">
+        <i class="ti ti-plus" style="font-size:16px;"></i>할일
+      </button>
     </div>
   `;
 
@@ -2750,59 +2805,49 @@ function renderTodo() {
       </button>
     </div>
 
-    <!-- 4가지 카드 통계 -->
-    <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap:8px; margin-bottom:14px;">
+    <!-- 4가지 카드 통계 (한 줄 4칸 컴팩트) -->
+    <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:6px; margin-bottom:14px;">
       <!-- 오늘 -->
-      <div style="padding:12px; border-radius:12px; background:var(--bg-info); border:0.5px solid rgba(0,122,255,0.2);">
-        <div style="display:flex; align-items:center; justify-content:space-between;">
-          <span style="font-size:11px; color:var(--text-info); font-weight:600;">📅 오늘</span>
-          ${todayTodos.length > 0 && todayDone === todayTodos.length ? '<span style="font-size:14px;">✨</span>' : ''}
+      <div style="padding:10px 6px; border-radius:10px; background:var(--bg-info); border:0.5px solid rgba(0,122,255,0.2); text-align:center;">
+        <div style="font-size:10px; color:var(--text-info); font-weight:600;">📅 오늘</div>
+        <div style="font-size:18px; font-weight:700; color:var(--text-info); margin-top:3px; line-height:1.1;">
+          ${todayDone}<span style="font-size:11px; opacity:0.6;">/${todayTodos.length}</span>
         </div>
-        <div style="font-size:20px; font-weight:700; color:var(--text-info); margin-top:4px;">
-          ${todayDone}<span style="font-size:13px; opacity:0.6;">/${todayTodos.length}</span>
-        </div>
-        <div style="font-size:11px; color:var(--text-info); opacity:0.85; margin-top:2px;">
-          ${todayTodos.length === 0 ? '할일 없음' : todayTodos.length === todayDone ? '오늘 끝!' : (todayTodos.length - todayDone) + '개 남음'}
+        <div style="font-size:9px; color:var(--text-info); opacity:0.85; margin-top:2px;">
+          ${todayTodos.length === 0 ? '없음' : todayTodos.length === todayDone ? '끝!' : (todayTodos.length - todayDone) + '개 남음'}
         </div>
       </div>
 
-      <!-- 주간 통계 -->
-      <div style="padding:12px; border-radius:12px; background:var(--bg-secondary); border:0.5px solid var(--border-tertiary);">
-        <div style="display:flex; align-items:center; justify-content:space-between;">
-          <span style="font-size:11px; color:var(--text-secondary); font-weight:600;">📊 ${weekLabel}</span>
-          <span style="font-size:10px; color:var(--text-tertiary);">${weekPct}%</span>
+      <!-- 주간 -->
+      <div style="padding:10px 6px; border-radius:10px; background:var(--bg-secondary); border:0.5px solid var(--border-tertiary); text-align:center;">
+        <div style="font-size:10px; color:var(--text-secondary); font-weight:600;">📊 ${weekLabel}</div>
+        <div style="font-size:18px; font-weight:700; margin-top:3px; line-height:1.1;">
+          ${weekDone}<span style="font-size:11px; opacity:0.6;">/${weekTodos.length}</span>
         </div>
-        <div style="font-size:20px; font-weight:700; margin-top:4px;">
-          ${weekDone}<span style="font-size:13px; opacity:0.6;">/${weekTodos.length}</span>
-        </div>
-        <div style="height:4px; background:rgba(0,0,0,0.08); border-radius:2px; margin-top:6px; overflow:hidden;">
+        <div style="height:3px; background:rgba(0,0,0,0.08); border-radius:2px; margin-top:5px; overflow:hidden;">
           <div style="height:100%; width:${weekPct}%; background:var(--text-success);"></div>
         </div>
       </div>
 
-      <!-- 곧 마감 (3일 이내) -->
-      <div style="padding:12px; border-radius:12px; background:${soonDueTodos.length > 0 ? 'rgba(245,168,82,0.12)' : 'var(--bg-secondary)'}; border:0.5px solid ${soonDueTodos.length > 0 ? 'rgba(245,168,82,0.3)' : 'var(--border-tertiary)'};">
-        <div style="display:flex; align-items:center; justify-content:space-between;">
-          <span style="font-size:11px; color:${soonDueTodos.length > 0 ? '#C9863A' : 'var(--text-secondary)'}; font-weight:600;">⏱️ 곧 마감</span>
+      <!-- 곧 마감 -->
+      <div style="padding:10px 6px; border-radius:10px; background:${soonDueTodos.length > 0 ? 'rgba(245,168,82,0.12)' : 'var(--bg-secondary)'}; border:0.5px solid ${soonDueTodos.length > 0 ? 'rgba(245,168,82,0.3)' : 'var(--border-tertiary)'}; text-align:center;">
+        <div style="font-size:10px; color:${soonDueTodos.length > 0 ? '#C9863A' : 'var(--text-secondary)'}; font-weight:600;">⏱️ 곧 마감</div>
+        <div style="font-size:18px; font-weight:700; color:${soonDueTodos.length > 0 ? '#C9863A' : 'var(--text-tertiary)'}; margin-top:3px; line-height:1.1;">
+          ${soonDueTodos.length}<span style="font-size:11px; opacity:0.6;">개</span>
         </div>
-        <div style="font-size:20px; font-weight:700; color:${soonDueTodos.length > 0 ? '#C9863A' : 'var(--text-tertiary)'}; margin-top:4px;">
-          ${soonDueTodos.length}<span style="font-size:13px; opacity:0.6;">개</span>
-        </div>
-        <div style="font-size:11px; color:${soonDueTodos.length > 0 ? '#C9863A' : 'var(--text-tertiary)'}; opacity:0.85; margin-top:2px;">
-          ${soonDueTodos.length === 0 ? '여유 있어요' : '3일 이내'}
+        <div style="font-size:9px; color:${soonDueTodos.length > 0 ? '#C9863A' : 'var(--text-tertiary)'}; opacity:0.85; margin-top:2px;">
+          ${soonDueTodos.length === 0 ? '여유' : '3일내'}
         </div>
       </div>
 
-      <!-- 지난 미완료 -->
-      <div style="padding:12px; border-radius:12px; background:${pastTodos.length > 0 ? 'var(--bg-danger)' : 'var(--bg-secondary)'}; border:0.5px solid ${pastTodos.length > 0 ? 'rgba(255,59,48,0.2)' : 'var(--border-tertiary)'};">
-        <div style="display:flex; align-items:center; justify-content:space-between;">
-          <span style="font-size:11px; color:${pastTodos.length > 0 ? 'var(--text-danger)' : 'var(--text-secondary)'}; font-weight:600;">⏰ 밀린</span>
+      <!-- 밀린 -->
+      <div style="padding:10px 6px; border-radius:10px; background:${pastTodos.length > 0 ? 'var(--bg-danger)' : 'var(--bg-secondary)'}; border:0.5px solid ${pastTodos.length > 0 ? 'rgba(255,59,48,0.2)' : 'var(--border-tertiary)'}; text-align:center;">
+        <div style="font-size:10px; color:${pastTodos.length > 0 ? 'var(--text-danger)' : 'var(--text-secondary)'}; font-weight:600;">⏰ 밀린</div>
+        <div style="font-size:18px; font-weight:700; color:${pastTodos.length > 0 ? 'var(--text-danger)' : 'var(--text-tertiary)'}; margin-top:3px; line-height:1.1;">
+          ${pastTodos.length}<span style="font-size:11px; opacity:0.6;">개</span>
         </div>
-        <div style="font-size:20px; font-weight:700; color:${pastTodos.length > 0 ? 'var(--text-danger)' : 'var(--text-tertiary)'}; margin-top:4px;">
-          ${pastTodos.length}<span style="font-size:13px; opacity:0.6;">개</span>
-        </div>
-        <div style="font-size:11px; color:${pastTodos.length > 0 ? 'var(--text-danger)' : 'var(--text-tertiary)'}; opacity:0.85; margin-top:2px;">
-          ${pastTodos.length === 0 ? '깨끗해요 ✨' : '처리해주세요'}
+        <div style="font-size:9px; color:${pastTodos.length > 0 ? 'var(--text-danger)' : 'var(--text-tertiary)'}; opacity:0.85; margin-top:2px;">
+          ${pastTodos.length === 0 ? '깨끗 ✨' : '처리!'}
         </div>
       </div>
     </div>
@@ -3000,6 +3045,7 @@ function renderTodoRow(t) {
       <div class="todo-title">${t.time ? `<span style="color:var(--text-info); font-weight:700; margin-right:5px;">${escapeHTML(t.time)}</span>` : ''}${escapeHTML(t.title)}</div>
       <div class="todo-meta">
         <span class="tag">${escapeHTML(t.tag)}</span>
+        ${t.repeat ? `<span class="meta-repeat"><i class="ti ti-repeat" style="font-size:11px;"></i> ${repeatLabel(t.repeat)}</span>` : ''}
         ${t.dateKey ? `<span class="meta-mini" style="font-size:11px;"><i class="ti ti-calendar" style="font-size:11px;"></i> ${dateLabel(t.dateKey)}</span>` : ''}
         ${t.due ? `<span class="meta-mini">~ ${escapeHTML(t.due)}</span>` : ''}
         ${t.money ? `<span class="meta-money"><i class="ti ti-wallet" style="font-size:11px;"></i> ${escapeHTML(t.money)}</span>` : ''}
@@ -5295,7 +5341,7 @@ function renderMoney() {
         const dowColor = dow === 0 ? 'var(--text-danger)' : dow === 6 ? 'var(--text-info)' : 'var(--text-primary)';
         const dateK = dateKey(calY, calM, d);
 
-        html += `<div onclick="${hasData ? `showDayExpenses('${dateK}')` : ''}" style="min-height:42px; padding:3px; border-radius:5px; ${isToday ? 'background:rgba(70,140,255,0.12);' : hasData ? 'background:var(--bg-info); cursor:pointer;' : 'background:var(--bg-secondary);'} display:flex; flex-direction:column; align-items:center; justify-content:flex-start; font-size:10px;">
+        html += `<div onclick="${hasData ? `showDayExpenses('${dateK}')` : `openExpenseModal('${dateK}')`}" style="min-height:42px; padding:3px; border-radius:5px; ${isToday ? 'background:rgba(70,140,255,0.12); cursor:pointer;' : hasData ? 'background:var(--bg-info); cursor:pointer;' : 'background:var(--bg-secondary); cursor:pointer;'} display:flex; flex-direction:column; align-items:center; justify-content:flex-start; font-size:10px;">
           <span style="font-weight:${isToday ? '700' : '500'}; color:${dowColor};">${d}</span>`;
         if (data) {
           if (data.spent > 0) {
@@ -11679,6 +11725,30 @@ function openTodoModal(forDateKey, editTodoObj) {
       </div>
 
       <div class="field">
+        <div class="field-label">🔁 반복 <span style="font-size:10px; color:var(--text-tertiary);">(선택)</span></div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap;" id="repeat-grid">
+          ${[
+            {v:'none', label:'안 함'},
+            {v:'daily', label:'매일'},
+            {v:'weekly', label:'매주'},
+            {v:'monthly', label:'매월'}
+          ].map(({v, label}) => {
+            const cur = (isEdit && editTodoObj.repeat?.type) ? editTodoObj.repeat.type : 'none';
+            return `<button type="button" class="chip ${cur === v ? 'active' : ''}" data-rep="${v}" onclick="onRepeatTypeChange('${v}')" style="flex:1; min-width:64px;">${label}</button>`;
+          }).join('')}
+        </div>
+        <div id="repeat-weekdays" style="display:${(isEdit && editTodoObj.repeat?.type === 'weekly') ? 'flex' : 'none'}; gap:5px; margin-top:8px; flex-wrap:wrap;">
+          ${['일','월','화','수','목','금','토'].map((d, i) => {
+            const sel = (isEdit && Array.isArray(editTodoObj.repeat?.days)) ? editTodoObj.repeat.days.includes(i) : false;
+            return `<button type="button" class="chip ${sel ? 'active' : ''}" data-wday="${i}" onclick="this.classList.toggle('active')" style="flex:1; min-width:38px; padding:8px 4px;">${d}</button>`;
+          }).join('')}
+        </div>
+        <div id="repeat-hint" style="display:${(isEdit && editTodoObj.repeat?.type && editTodoObj.repeat.type !== 'none') ? 'block' : 'none'}; font-size:10px; color:var(--text-tertiary); margin-top:6px; line-height:1.5;">
+          위 날짜를 시작일로 반복돼요. 매주는 요일을 골라주세요. (종료일 없이 계속 반복)
+        </div>
+      </div>
+
+      <div class="field">
         <div class="field-label">📝 메모 <span style="font-size:10px; color:var(--text-tertiary);">(선택)</span></div>
         <textarea id="todo-memo" placeholder="세부 내용, 준비물, 링크 등" rows="3" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit; resize:vertical;">${isEdit && editTodoObj.memo ? editTodoObj.memo.replace(/</g,'&lt;') : ''}</textarea>
       </div>
@@ -11746,6 +11816,17 @@ function setTodoDate(preset) {
   input.value = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 
+// 🔁 반복 유형 선택 — 칩 활성 토글 + 요일 선택/안내 표시
+function onRepeatTypeChange(type) {
+  document.querySelectorAll('#repeat-grid .chip').forEach(b => {
+    b.classList.toggle('active', b.dataset.rep === type);
+  });
+  const wd = document.getElementById('repeat-weekdays');
+  const hint = document.getElementById('repeat-hint');
+  if (wd) wd.style.display = (type === 'weekly') ? 'flex' : 'none';
+  if (hint) hint.style.display = (type && type !== 'none') ? 'block' : 'none';
+}
+
 function saveTodo(editId) {
   const title = document.getElementById('todo-title').value.trim();
   if (!title) { showToast('내용을 입력해주세요'); return; }
@@ -11754,6 +11835,22 @@ function saveTodo(editId) {
   const flag = modal.querySelector('.toggle').classList.contains('on');
   const time = document.getElementById('todo-time')?.value || '';
   const memo = document.getElementById('todo-memo')?.value.trim() || '';
+
+  // 🔁 반복 설정 읽기
+  const repType = document.querySelector('#repeat-grid .chip.active')?.dataset.rep || 'none';
+  let repeat = null;
+  if (repType === 'daily' || repType === 'monthly') {
+    repeat = { type: repType };
+  } else if (repType === 'weekly') {
+    const days = Array.from(document.querySelectorAll('#repeat-weekdays .chip.active')).map(b => Number(b.dataset.wday));
+    if (days.length > 0) {
+      repeat = { type: 'weekly', days: days.sort((a,b)=>a-b) };
+    } else {
+      // 요일 미선택 시 시작일 요일로 기본 지정
+      const [yy, mm, dd] = (dateKeyVal || todayKey()).split('-').map(Number);
+      repeat = { type: 'weekly', days: [new Date(yy, mm-1, dd).getDay()] };
+    }
+  }
 
   if (editId) {
     // 수정
@@ -11765,6 +11862,8 @@ function saveTodo(editId) {
       t.flag = flag;
       t.time = time;
       t.memo = memo;
+      t.repeat = repeat;
+      if (!repeat) delete t.repeatDone; // 반복 해제 시 체크기록 정리
     }
     showToast('수정됨');
   } else {
@@ -11778,8 +11877,9 @@ function saveTodo(editId) {
       time,
       memo,
       done: false,
+      repeat,
     });
-    showToast(`"${title}" 추가됨`);
+    showToast(repeat ? `"${title}" 반복 할일 추가됨` : `"${title}" 추가됨`);
   }
   saveData();
   closeModal();
@@ -18331,6 +18431,28 @@ function openDataCheck() {
     } else {
       issues.push({ icon:'💾', text:'백업 기록 없음', detail:'한 번도 백업하지 않았어요' });
     }
+  } catch(e){}
+
+  // 🔧 시세 조회 실패 자산 (티커는 있는데 라이브 시세를 못 받아온 주식형)
+  const liveFail = (assets||[]).filter(a => {
+    if (!isStockLikeType(a.type)) return false;
+    if (!a.ticker) return false; // 티커 없는 건 위의 별도 항목에서 다룸
+    const lv = liveAssetData[a.id];
+    return !(lv && lv.hasLive);
+  });
+  if (liveFail.length) issues.push({ icon:'📡', text:`시세 조회 실패 ${liveFail.length}개`, detail: liveFail.map(a=>a.name).join(', ') });
+
+  // 🔧 증권사 캡처 보정이 오래된 자산 (ocrSnapshot 30일 이상 경과 → 재보정 권장)
+  try {
+    const now = Date.now();
+    const staleSnap = (assets||[]).filter(a => {
+      const d = a.ocrSnapshot?.date;
+      if (!d) return false;
+      const t = new Date(d).getTime();
+      if (!isFinite(t)) return false;
+      return (now - t) >= 30 * 86400000;
+    });
+    if (staleSnap.length) issues.push({ icon:'🔄', text:`증권사 보정 30일↑ ${staleSnap.length}개`, detail: staleSnap.map(a=>`${a.name}(${a.ocrSnapshot.date})`).join(', ') });
   } catch(e){}
 
   const body = issues.length === 0
