@@ -18301,6 +18301,60 @@ function openAccountModal() {
   modal.classList.add('show');
 }
 
+function openDataCheck() {
+  const issues = [];
+  // 티커 없는 주식형 자산
+  const noTicker = (assets||[]).filter(a => isStockLikeType(a.type) && !a.ticker && !guessKRTicker?.(a.name));
+  if (noTicker.length) issues.push({ icon:'📉', text:`티커 없는 주식·ETF ${noTicker.length}개`, detail: noTicker.map(a=>a.name).join(', ') });
+  // 금액 0 자산
+  const zeroAsset = (assets||[]).filter(a => (Number(a.price)||0) <= 0 && (Number(a.qty)||0) <= 0);
+  if (zeroAsset.length) issues.push({ icon:'💸', text:`금액 0원 자산 ${zeroAsset.length}개`, detail: zeroAsset.map(a=>a.name).join(', ') });
+  // 중복 자산명
+  const names = (assets||[]).map(a=>a.name);
+  const dupNames = [...new Set(names.filter((n,i)=>names.indexOf(n)!==i))];
+  if (dupNames.length) issues.push({ icon:'👯', text:`중복된 자산명 ${dupNames.length}개`, detail: dupNames.join(', ') });
+  // 날짜 없는 할일
+  const noDate = (todos||[]).filter(t => !t.dateKey && !t.date);
+  if (noDate.length) issues.push({ icon:'📅', text:`날짜 없는 할일 ${noDate.length}개`, detail:'' });
+  // 백업 경과일
+  let backupMsg = '';
+  try {
+    const lb = localStorage.getItem('last_backup_time');
+    if (lb) {
+      const days = Math.floor((Date.now() - Number(lb)) / 86400000);
+      if (days >= 7) issues.push({ icon:'💾', text:`최근 백업 ${days}일 전`, detail:'백업을 권장해요' });
+    } else {
+      issues.push({ icon:'💾', text:'백업 기록 없음', detail:'한 번도 백업하지 않았어요' });
+    }
+  } catch(e){}
+
+  const body = issues.length === 0
+    ? `<div style="text-align:center; padding:30px 10px;"><div style="font-size:40px; margin-bottom:10px;">✅</div><div style="font-size:14px; font-weight:600;">데이터가 깨끗해요!</div><div style="font-size:12px; color:var(--text-tertiary); margin-top:6px;">빠지거나 이상한 항목이 없어요.</div></div>`
+    : issues.map(it => `
+        <div style="display:flex; gap:10px; padding:12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:8px;">
+          <span style="font-size:18px;">${it.icon}</span>
+          <div style="flex:1; min-width:0;">
+            <div style="font-size:13px; font-weight:600;">${it.text}</div>
+            ${it.detail ? `<div style="font-size:11px; color:var(--text-tertiary); margin-top:2px; word-break:break-all;">${escapeHTML(it.detail)}</div>` : ''}
+          </div>
+        </div>`).join('');
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay show';
+  modal.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.4); display:flex; align-items:flex-end; justify-content:center; z-index:9999;';
+  modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+  modal.innerHTML = `
+    <div style="background:var(--bg-primary); width:100%; max-width:480px; border-radius:20px 20px 0 0; padding:20px; max-height:80vh; overflow-y:auto;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <h2 style="font-size:17px; font-weight:700; margin:0;">🩺 데이터 점검</h2>
+        <button onclick="this.closest('.modal-overlay').remove()" style="border:none; background:var(--bg-secondary); width:30px; height:30px; border-radius:50%; cursor:pointer; font-size:16px;">×</button>
+      </div>
+      ${issues.length ? `<div style="font-size:12px; color:var(--text-secondary); margin-bottom:12px;">점검 결과 ${issues.length}개 항목을 확인해보세요.</div>` : ''}
+      ${body}
+    </div>`;
+  document.body.appendChild(modal);
+}
+
 function openSettingsModal() {
   modal.innerHTML = `
     <div class="modal">
@@ -18348,6 +18402,15 @@ function openSettingsModal() {
         </div>
       </button>
 
+      <button onclick="openDataCheck()" style="width:100%; padding:14px; border:0.5px solid var(--border-tertiary); background:white; border-radius:var(--radius-md); cursor:pointer; font-family:inherit; text-align:left; margin-bottom:10px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-size:20px;">🩺</span>
+          <div style="flex:1;">
+            <div style="font-size:13px; font-weight:600;">데이터 점검</div>
+            <div style="font-size:11px; color:var(--text-tertiary); margin-top:1px;">빠지거나 이상한 데이터를 한눈에 확인</div>
+          </div>
+        </div>
+      </button>
       <!-- 💾 데이터 백업 -->
       <button onclick="exportBackup()" style="width:100%; padding:14px; border:0.5px solid var(--border-tertiary); background:white; border-radius:var(--radius-md); cursor:pointer; font-family:inherit; text-align:left; margin-bottom:10px;">
         <div style="display:flex; align-items:center; gap:10px;">
@@ -18511,6 +18574,7 @@ function autoBackupBeforeRestore() {
 }
 
 function exportBackup() {
+  try { localStorage.setItem('last_backup_time', String(Date.now())); } catch(e){}
   try {
     const payload = { todos, budget, workoutLog, assets, settings, userChannels, economySites, challenges, watchlist, _backupAt: new Date().toISOString(), _backupVersion: 'v5' };
     const json = JSON.stringify(payload, null, 2);
