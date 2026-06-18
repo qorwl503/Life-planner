@@ -42,8 +42,9 @@ const firebaseConfig = {
   // YouTube Data API 키 — 별도 키 사용 권장
   // localStorage에 youtube_api_key 가 있으면 그걸 쓰고, 없으면 Firebase 프로젝트 키로 폴백
   // (같은 구글 클라우드 프로젝트에 YouTube Data API v3 가 활성화돼 있어야 폴백이 작동함)
-  window._fbApiKey = firebaseConfig.apiKey; // 폴백 참조용
-  window.YOUTUBE_API_KEY = localStorage.getItem('youtube_api_key') || firebaseConfig.apiKey;
+  // (YouTube는 전용 키만 사용 — Firebase 키 폴백 제거됨)
+  // 🔧 YouTube는 전용 키만 사용 — Firebase 키 폴백 제거(보안·동작 정합성). 키 없으면 호출부가 안내 처리.
+  window.YOUTUBE_API_KEY = localStorage.getItem('youtube_api_key') || null;
 
   // Gemini AI API 키 — 사용자가 직접 입력 (localStorage)
   window.GEMINI_API_KEY = localStorage.getItem('gemini_api_key') || null;
@@ -17724,9 +17725,9 @@ function openAIKeyModal() {
       <!-- 🔧 YouTube Data API 키 (선택) -->
       <div class="field" style="margin-bottom:14px;">
         <div class="field-label">YouTube Data API 키 <span style="font-size:10px; color:var(--text-tertiary);">(선택)</span></div>
-        <input type="password" id="yt-key-input" placeholder="비워두면 기본 키 사용" value="${escapeAttr(localStorage.getItem('youtube_api_key') || '')}" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:monospace;" />
+        <input type="password" id="yt-key-input" placeholder="YouTube Data API v3 키 (AIza...)" value="${escapeAttr(localStorage.getItem('youtube_api_key') || '')}" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:monospace;" />
         <div style="font-size:11px; color:var(--text-tertiary); margin-top:6px; line-height:1.5;">
-          유튜브 영상 검색 전용 키예요. 비워두면 기본 키로 작동하지만, "일일 한도 초과"가 자주 뜨면 본인 키를 따로 넣어주세요.<br>
+          유튜브 영상 검색 전용 키예요. 키를 넣어야 검색이 작동해요. (비우면 유튜브 검색 비활성화)<br>
           <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color:var(--text-info); text-decoration:underline;">Google Cloud Console</a>에서 발급 → YouTube Data API v3 활성화 필요
         </div>
       </div>
@@ -17754,9 +17755,9 @@ async function saveAIKey() {
       localStorage.setItem('youtube_api_key', ytKey);
       window.YOUTUBE_API_KEY = ytKey;
     } else {
-      // 비우면 기본 키로 폴백
+      // 🔧 비우면 키 없음(null) — Firebase 키 폴백 제거. YouTube 검색은 전용 키 입력 시에만 동작.
       localStorage.removeItem('youtube_api_key');
-      window.YOUTUBE_API_KEY = window._fbApiKey || window.YOUTUBE_API_KEY;
+      window.YOUTUBE_API_KEY = null;
     }
   }
 
@@ -20391,16 +20392,20 @@ function initAuth() {
     if (user) {
       currentUser = user;
       window._cloudLoadPending = true; // 🔧 로드 끝날 때까지 저장 차단
+      window._cloudLoadFailed = false; // 🔧 새 인증 사이클 시작 — 이전 실패 플래그 초기화 (네트워크 복구 후 저장 재개)
       try {
         const cloudData = await loadFromFirebase(user.uid);
         if (cloudData && cloudData.__empty) {
           window._cloudLoadPending = false;
+          window._cloudLoadFailed = false; // 🔧 로드 성공 (빈 계정) — 저장 허용
         } else if (cloudData) {
           applyData(cloudData);
           window._cloudLoadPending = false;
+          window._cloudLoadFailed = false; // 🔧 로드 성공 — 저장 허용
           saveLocal();
         } else {
           window._cloudLoadPending = false;
+          window._cloudLoadFailed = false; // 🔧 로드 성공 (데이터 없음) — 저장 허용
         }
       } catch (e) {
         console.error('클라우드 로드 실패:', e);
@@ -20447,6 +20452,7 @@ function initAuth() {
     } else {
       currentUser = null;
       window._cloudLoadPending = false;
+      window._cloudLoadFailed = false; // 🔧 로그아웃 — 플래그 초기화
       showLoginScreen();
     }
   });
