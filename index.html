@@ -3236,45 +3236,51 @@ function renderChallengeCard(c) {
   // 상태 배지: 금지형=지킴, 그 외=연속 성공일
   const streak = getChallengeStreak(c);
   const badge = isCompleted
-    ? '🏁 완료'
+    ? '🏁'
     : c.type === 'forbidden'
-      ? `🛡 ${streak}일 지킴`
-      : streak > 0 ? `🔥 ${streak}일 연속` : '🎯 도전 중';
+      ? `🛡 ${streak}`
+      : streak > 0 ? `🔥 ${streak}` : '';
   const daysLeft = Math.max(0, totalDays - daysPassed);
-  const todayStatusText = c._weekDone ? '이번 주 목표 달성 🎉' : todayChecked === true ? '오늘 성공 ✓' : todayChecked === 'fail' ? '오늘 실패 기록' : '오늘 아직 미체크';
-  const miniWeek = renderChallengeMiniWeek(c, accent);
+  const todayChecked2 = c.checks?.[tKey];
 
-  return `<div style="position:relative; overflow:hidden; margin-bottom:12px; padding:14px; border-radius:16px; background:${softBg}; border:0.5px solid ${softBorder};">
-    <div style="position:absolute; right:-18px; top:-22px; font-size:78px; opacity:0.07; pointer-events:none;">${typeIcon}</div>
+  // 오늘 액션 버튼 (인라인, 컴팩트)
+  let actionBtn = '';
+  if (isCompleted) {
+    actionBtn = `<span style="font-size:12px; font-weight:800; color:${accent}; white-space:nowrap;">🎉 달성!</span>`;
+  } else if (c.type === 'forbidden') {
+    actionBtn = `<div style="display:flex; gap:5px; flex-shrink:0;">
+      <button onclick="event.stopPropagation(); checkChallenge(${c.id}, true)" style="border:none; border-radius:9px; padding:7px 10px; background:${todayChecked2===true?'#3B6D11':'white'}; color:${todayChecked2===true?'white':'var(--text-success)'}; font-size:11px; font-weight:800; font-family:inherit; cursor:pointer; white-space:nowrap;">${todayChecked2===true?'지킴 ✓':'지켰어요'}</button>
+      <button onclick="event.stopPropagation(); checkChallenge(${c.id}, 'fail')" style="border:none; border-radius:9px; padding:7px 10px; background:${todayChecked2==='fail'?'#A32D2D':'white'}; color:${todayChecked2==='fail'?'white':'var(--text-danger)'}; font-size:11px; font-weight:800; font-family:inherit; cursor:pointer; white-space:nowrap;">${todayChecked2==='fail'?'실패':'실패'}</button>
+    </div>`;
+  } else if (c._weekDone) {
+    actionBtn = `<span style="font-size:11px; font-weight:800; color:#3B6D11; white-space:nowrap;">🎉 주목표 달성</span>`;
+  } else {
+    actionBtn = `<button onclick="event.stopPropagation(); checkChallenge(${c.id}, ${todayChecked2===true ? 'false' : 'true'})" style="border:none; border-radius:9px; padding:7px 12px; background:${todayChecked2===true?'#3B6D11':'#1A1A1A'}; color:white; font-size:12px; font-weight:800; font-family:inherit; cursor:pointer; white-space:nowrap; flex-shrink:0;">${todayChecked2===true?'완료 ✓':'오늘 완료'}</button>`;
+  }
 
-    <div style="display:flex; align-items:flex-start; gap:10px;">
-      <div style="flex:1; min-width:0;">
-        <div style="display:flex; gap:5px; flex-wrap:wrap; margin-bottom:7px;">
-          <span style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:999px; background:rgba(255,255,255,0.75); color:${accent};">${badge}</span>
-          ${!isCompleted ? `<span style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:999px; background:rgba(255,255,255,0.75); color:var(--text-secondary);">D-${daysLeft}</span>` : ''}
+  const expanded = window._challengeExpanded === c.id;
+  const miniWeek = expanded ? renderChallengeMiniWeek(c, accent) : '';
+
+  return `<div style="position:relative; overflow:hidden; margin-bottom:8px; padding:11px 12px; border-radius:13px; background:${softBg}; border:0.5px solid ${softBorder};">
+    <div style="position:absolute; right:-14px; top:-16px; font-size:56px; opacity:0.06; pointer-events:none;">${typeIcon}</div>
+
+    <div style="display:flex; align-items:center; gap:10px;">
+      <div style="width:38px; height:38px; border-radius:50%; background:conic-gradient(${accent} ${progressPct}%, rgba(255,255,255,0.6) 0); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+        <div style="width:29px; height:29px; border-radius:50%; background:white; display:flex; align-items:center; justify-content:center; font-size:9px; font-weight:800; color:${accent};">${Math.round(progressPct)}%</div>
+      </div>
+
+      <div style="flex:1; min-width:0;" onclick="window._challengeExpanded = ${expanded ? 'null' : c.id}; renderTodo();">
+        <div style="display:flex; align-items:center; gap:5px;">
+          <span style="font-size:14px; font-weight:800; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHTML(c.title)}</span>
+          ${badge ? `<span style="font-size:10px; font-weight:700; color:${accent}; flex-shrink:0;">${badge}</span>` : ''}
         </div>
-        <div style="font-size:15px; font-weight:800; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHTML(c.title)}</div>
-        <div style="font-size:11px; color:var(--text-secondary); margin-top:3px;">${daysPassed}일째 · ${progressText} · ${todayStatusText}</div>
+        <div style="font-size:10px; color:var(--text-secondary); margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${progressText} · D-${daysLeft}</div>
       </div>
-      <div style="width:50px; height:50px; border-radius:50%; background:conic-gradient(${accent} ${progressPct}%, rgba(255,255,255,0.6) 0); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
-        <div style="width:39px; height:39px; border-radius:50%; background:white; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; color:${accent};">${Math.round(progressPct)}%</div>
-      </div>
-      <button onclick="event.stopPropagation(); editChallenge(${c.id})" style="border:none; background:transparent; color:var(--text-tertiary); padding:2px; font-size:16px; cursor:pointer; font-family:inherit; flex-shrink:0;">⋮</button>
-    </div>
 
+      ${actionBtn}
+      <button onclick="event.stopPropagation(); editChallenge(${c.id})" style="border:none; background:transparent; color:var(--text-tertiary); padding:2px; font-size:15px; cursor:pointer; font-family:inherit; flex-shrink:0;">⋮</button>
+    </div>
     ${miniWeek}
-
-    <div style="display:flex; gap:8px; margin-top:11px;">
-      ${isCompleted
-        ? `<div style="flex:1; text-align:center; padding:11px; border-radius:12px; background:rgba(255,255,255,0.6); font-size:12px; font-weight:800; color:${accent};">🎉 목표 달성!</div>`
-        : c.type === 'forbidden'
-          ? `<button onclick="checkChallenge(${c.id}, true)" style="flex:1; border:none; border-radius:12px; padding:11px; background:${todayChecked===true?'#3B6D11':'white'}; color:${todayChecked===true?'white':'var(--text-success)'}; font-size:12px; font-weight:800; font-family:inherit; cursor:pointer;">${todayChecked===true?'지켰어요 ✓':'오늘도 지켰어요'}</button>
-             <button onclick="checkChallenge(${c.id}, 'fail')" style="flex:1; border:none; border-radius:12px; padding:11px; background:${todayChecked==='fail'?'#A32D2D':'white'}; color:${todayChecked==='fail'?'white':'var(--text-danger)'}; font-size:12px; font-weight:800; font-family:inherit; cursor:pointer;">${todayChecked==='fail'?'실패 기록됨':'실패했어요'}</button>`
-          : c._weekDone
-            ? `<div style="flex:1; text-align:center; padding:12px; border-radius:12px; background:rgba(255,255,255,0.6); font-size:12px; font-weight:800; color:#3B6D11;">🎉 이번 주 목표 달성! (${c._thisWeekCount}/${c.perWeek}회)</div>`
-          : `<button onclick="checkChallenge(${c.id}, ${todayChecked===true ? 'false' : 'true'})" style="flex:1; border:none; border-radius:12px; padding:12px; background:${todayChecked===true?'#3B6D11':'#1A1A1A'}; color:white; font-size:13px; font-weight:800; font-family:inherit; cursor:pointer;">${todayChecked===true?'오늘 완료됨 ✓':'오늘 완료했어요'}</button>`
-      }
-    </div>
   </div>`;
 }
 
