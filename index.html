@@ -5361,7 +5361,7 @@ function renderMoney() {
   // ===== 날짜별 내역 그룹 (전체 보기 + 편집 모드) =====
   const allMonthExp = viewMonthExpenses.slice().sort((a, b) => (b.dateKey || '').localeCompare(a.dateKey || ''));
   const isEditMode = window.expenseEditMode || false;
-  if (typeof window.expenseListExpanded === 'undefined') window.expenseListExpanded = true;
+  if (typeof window.expenseListExpanded === 'undefined') window.expenseListExpanded = false;
   const listExpanded = window.expenseListExpanded || isEditMode;
 
   html += `<div style="display:flex; justify-content:space-between; align-items:center; margin: 18px 0 8px;">
