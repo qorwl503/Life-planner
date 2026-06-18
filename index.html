@@ -1099,6 +1099,10 @@ function saveData(immediate = false) {
   if (!currentUser || !window._fb) return;
   // 🔧 Firebase에서 클라우드 데이터를 아직 다 못 불러왔으면 저장 금지
   //    (로드 전에 저장하면 빈/옛 로컬 데이터가 서버를 덮어써서 자동매수 등이 날아감)
+  if (window._cloudLoadFailed) {
+    console.warn('클라우드 로드 실패 상태 — 로컬에만 저장');
+    return;
+  }
   if (window._cloudLoadPending) {
     console.warn('⏸️ 클라우드 로드 중 — 저장 보류 (덮어쓰기 방지)');
     return;
@@ -18276,7 +18280,7 @@ function openAccountModal() {
         <div style="width:56px; height:56px; border-radius:50%; background:linear-gradient(135deg, #185FA5 0%, #3B6D11 100%); margin:0 auto 10px; display:flex; align-items:center; justify-content:center; color:white;">
           <i class="ti ti-user" style="font-size:28px;"></i>
         </div>
-        <div style="font-size:14px; font-weight:600; margin-bottom:4px;">${email}</div>
+        <div style="font-size:14px; font-weight:600; margin-bottom:4px;">${escapeHTML(email)}</div>
         <div style="font-size:11px; color:var(--text-tertiary);">로그인 상태</div>
       </div>
 
@@ -18574,7 +18578,6 @@ function autoBackupBeforeRestore() {
 }
 
 function exportBackup() {
-  try { localStorage.setItem('last_backup_time', String(Date.now())); } catch(e){}
   try {
     const payload = { todos, budget, workoutLog, assets, settings, userChannels, economySites, challenges, watchlist, _backupAt: new Date().toISOString(), _backupVersion: 'v5' };
     const json = JSON.stringify(payload, null, 2);
@@ -18586,6 +18589,7 @@ function exportBackup() {
     a.download = `life-planner-backup-${ds}.json`;
     document.body.appendChild(a);
     a.click();
+    try { localStorage.setItem('last_backup_time', String(Date.now())); } catch(e){}
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     showToast('💾 백업 파일 다운로드됨');
@@ -20400,7 +20404,9 @@ function initAuth() {
         }
       } catch (e) {
         console.error('클라우드 로드 실패:', e);
-        if (typeof showToast === 'function') showToast('클라우드 로드 실패. 저장을 잠시 중단했어요.');
+        window._cloudLoadPending = false;
+        window._cloudLoadFailed = true;
+        if (typeof showToast === 'function') showToast('클라우드 로드 실패. 현재는 로컬에만 저장돼요.');
       }
 
       // AI 키 Firebase에서 복원 (다른 기기에서 저장한 거)
