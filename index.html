@@ -586,33 +586,35 @@ const firebaseConfig = {
   .wcell.future { opacity: 0.3; }
   .wcell.empty { background: transparent; border: none; pointer-events: none; }
 
-  /* AI 코칭 카드 */
+  /* AI 코칭 카드 — 흰 카드 + 왼쪽 보라 라인 + 진남색 뱃지 (과하지 않게 AI 영역 구분) */
   .ai-card {
-    background: linear-gradient(135deg, #EDE9FE 0%, #E0E7FF 100%);
-    border: 1px solid #C4B5F0;
+    background: #FFFFFF;
+    border: 1px solid rgba(124, 58, 237, 0.22);
+    border-left: 4px solid #7C3AED;
     border-radius: 14px;
     padding: 16px;
     color: var(--text-primary);
     margin-bottom: 14px;
     position: relative;
     overflow: hidden;
+    box-shadow: 0 6px 18px rgba(124, 58, 237, 0.08);
   }
   .ai-card::before {
     content: '';
     position: absolute;
     top: -40px; right: -40px;
     width: 120px; height: 120px;
-    background: radial-gradient(circle, rgba(124,58,237,0.16) 0%, transparent 70%);
+    background: radial-gradient(circle, rgba(124,58,237,0.07) 0%, transparent 70%);
     pointer-events: none;
   }
   .ai-badge {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 3px 9px;
+    padding: 4px 9px;
     border-radius: 999px;
-    background: #7C3AED;
-    color: white;
+    background: #111827;
+    color: #FFFFFF;
     font-size: 10px;
     font-weight: 700;
     margin-bottom: 10px;
@@ -626,7 +628,7 @@ const firebaseConfig = {
     line-height: 1.6;
     color: var(--text-secondary);
   }
-  .ai-card .ai-text b { color: #6D28D9; font-weight: 700; }
+  .ai-card .ai-text b { color: #7C3AED; font-weight: 700; }
   .ai-plan-row {
     display: flex; align-items: center;
     gap: 10px;
@@ -637,19 +639,19 @@ const firebaseConfig = {
   .ai-plan-num {
     width: 22px; height: 22px;
     border-radius: 50%;
-    background: rgba(99,91,205,0.15);
-    color: #5B53C9;
+    background: rgba(124,58,237,0.12);
+    color: #7C3AED;
     display: flex; align-items: center; justify-content: center;
     font-size: 10px; font-weight: 600;
     flex-shrink: 0;
   }
   .ai-plan-text { font-size: 11px; line-height: 1.5; flex: 1; }
 
-  /* 밝은 ai-card 배경에 맞춰 내부 흰색/금색 요소 보정 */
+  /* 흰 ai-card 배경에 맞춰 내부 요소 보정 */
   .ai-card .spinner { border-color: rgba(124,58,237,0.25) !important; border-top-color: #7C3AED !important; }
   .ai-card .ai-badge i { color: white !important; }
-  /* 흰색 전제로 인라인 처리된 버튼들(반투명 흰 배경 + 흰 글씨)을 밝은 테마로 */
-  .ai-card button[style*="rgba(255,255,255"] { background: rgba(124,58,237,0.12) !important; color: #6D28D9 !important; }
+  /* 흰색 전제로 인라인 처리된 버튼들(반투명 흰 배경 + 흰 글씨)을 보라 톤으로 */
+  .ai-card button[style*="rgba(255,255,255"] { background: rgba(124,58,237,0.10) !important; color: #6D28D9 !important; }
   .ai-card button[style*="color:white"], .ai-card button[style*="color: white"] { color: #6D28D9 !important; }
 
   .connect-card {
@@ -1512,6 +1514,20 @@ function repeatLabel(rep) {
   return '';
 }
 
+// 🔁 특정 날짜에 '발생하는' 할일 목록 (일반: dateKey 일치 / 반복: 규칙상 발생)
+//    완료여부는 일반=t.done, 반복=t.repeatDone[kStr]
+function todosOnDate(kStr) {
+  const out = [];
+  for (const t of todos) {
+    if (!t.repeat) {
+      if (t.dateKey === kStr) out.push({ t, done: !!t.done });
+    } else if (todoOccursOn(t, kStr)) {
+      out.push({ t, done: !!(t.repeatDone && t.repeatDone[kStr]) });
+    }
+  }
+  return out;
+}
+
 // 🔁 반복 할일이 특정 날짜(dateKey)에 표시돼야 하는지 판정
 //    시작일(t.dateKey)부터 규칙에 맞으면 true. 시작일 이전이면 false.
 function todoOccursOn(t, kStr) {
@@ -2035,7 +2051,10 @@ function renderMonthlyReportCard() {
 
   // 4. 할일
   const monthTodos = (todos || []).filter(t => t.dateKey?.startsWith(targetMStr));
-  const monthTodoDone = monthTodos.filter(t => t.done).length;
+  const monthTodoDone = monthTodos.filter(t => {
+    if (t.repeat) return t.repeatDone && Object.keys(t.repeatDone).some(k => k.startsWith(targetMStr) && t.repeatDone[k]);
+    return t.done;
+  }).length;
   const monthTodoTotal = monthTodos.length;
 
   // 5. 자산 변화 (스냅샷 기반)
@@ -2767,13 +2786,14 @@ function renderTodo() {
   const done = todos.filter(t => t.done).length;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
 
-  // 할일 통계 계산 - 세분화
+  // 할일 통계 계산 - 세분화 (🔁 반복 할일 발생분 포함)
   const todayK = todayKey();
-  const todayTodos = todos.filter(t => t.dateKey === todayK);
-  const todayDone = todayTodos.filter(t => t.done).length;
+  const todayList = todosOnDate(todayK);
+  const todayTodos = todayList.map(x => x.t);       // 호환: 길이/표시용
+  const todayDone = todayList.filter(x => x.done).length;
 
-  const pastTodos = todos.filter(t => todoGroup(t.dateKey) === 'past' && !t.done);
-  const pastDoneAll = todos.filter(t => t.dateKey && t.dateKey < todayK && t.done);
+  const pastTodos = todos.filter(t => !t.repeat && todoGroup(t.dateKey) === 'past' && !t.done);
+  const pastDoneAll = todos.filter(t => !t.repeat && t.dateKey && t.dateKey < todayK && t.done);
 
   // 본인이 선택한 주 (todoWeekOffset 기준)
   const baseDate = new Date();
@@ -2788,9 +2808,21 @@ function renderTodo() {
   const sunday = weekEnd; // 변수명 유지 (실제는 토요일)
   const mondayK = dateKey(monday.getFullYear(), monday.getMonth(), monday.getDate());
   const sundayK = dateKey(sunday.getFullYear(), sunday.getMonth(), sunday.getDate());
-  const weekTodos = todos.filter(t => t.dateKey && t.dateKey >= mondayK && t.dateKey <= sundayK);
-  const weekDone = weekTodos.filter(t => t.done).length;
-  const weekPct = weekTodos.length > 0 ? Math.round((weekDone / weekTodos.length) * 100) : 0;
+  // 🔁 주간 통계 — 7일 각각 발생분 합산 (반복 할일 포함)
+  let weekCount = 0, weekDoneCount = 0;
+  {
+    const cur = new Date(weekStart);
+    for (let i = 0; i < 7; i++) {
+      const kk = dateKey(cur.getFullYear(), cur.getMonth(), cur.getDate());
+      const list = todosOnDate(kk);
+      weekCount += list.length;
+      weekDoneCount += list.filter(x => x.done).length;
+      cur.setDate(cur.getDate() + 1);
+    }
+  }
+  const weekTodos = { length: weekCount };           // 호환: .length 사용처 유지
+  const weekDone = weekDoneCount;
+  const weekPct = weekCount > 0 ? Math.round((weekDone / weekCount) * 100) : 0;
 
   const weekLabel = window.todoWeekOffset === 0 ? '이번 주' :
     window.todoWeekOffset === 1 ? '다음 주' :
@@ -9774,6 +9806,7 @@ async function processAssetCapture(input) {
   let successCount = 0;
   let failCount = 0;
   let lastFailReason = ''; // 🔧 마지막 실패 사유
+  let capInfo = null; // 🔧 OCR이 읽은 캡처 기준일 (confidence 높은 것 우선)
 
   for (let idx = 0; idx < files.length; idx++) {
     const file = files[idx];
@@ -9859,7 +9892,7 @@ async function processAssetCapture(input) {
 - 키움 SPY 3주 / 토스 SPY 5주 → SPY 두 번 추출 (앱이 합산 처리)
 
 📤 출력 (JSON만, 안 보이는 필드는 생략):
-{"items":[
+{"captureDate":"2026-06-19","captureDateLabel":"조회일","captureDateConfidence":"high","items":[
   {"type":"주식","name":"삼성전자","qty":10,"price":70000,"priceCurrency":"KRW","ticker":"005930","evalAmount":720000,"profitPct":2.9,"profitAmount":20000},
   {"type":"ETF","name":"TIGER 미국S&P500","qty":9,"price":27360,"priceCurrency":"KRW","ticker":"360750"},
   {"type":"주식","name":"애플","qty":3,"price":195.4,"priceCurrency":"USD","avgBuyRate":1342,"ticker":"AAPL","evalAmount":850000,"profitPct":8.1},
@@ -9867,6 +9900,14 @@ async function processAssetCapture(input) {
   {"type":"예적금","name":"토스 정기예금","qty":1,"price":5000000,"ticker":""},
   {"type":"청약","name":"KB 주택청약","qty":1,"price":1500000,"ticker":""}
 ]}
+
+📅 captureDate (캡처 기준일) 추출 규칙:
+- 보유잔고/평가금액 화면이면 화면 상단의 "조회일" 또는 "평가 기준일"을 captureDate로 (YYYY-MM-DD)
+- captureDateLabel: 그 날짜의 실제 라벨 ("조회일", "평가기준일", "기준일" 등)
+- 화면에 조회일/기준일이 명확히 보이면 captureDateConfidence="high"
+- 날짜가 여럿이거나(체결일·주문일 섞임) 어떤 게 기준일인지 애매하면 가장 위쪽 기준일을 쓰되 confidence="mid" 또는 "low"
+- 날짜가 전혀 안 보이면 captureDate는 생략 (앱이 오늘 날짜로 처리)
+- ⚠️ 체결일·주문일·입금일을 기준일로 착각하지 말 것. 보유잔고 화면의 '조회/평가 기준' 날짜가 우선
 
 ❌ 분석 불가 (화면에 자산이 정말 하나도 없을 때만):
 {"items":[],"error":"구체적 이유"}
@@ -9956,6 +9997,12 @@ async function processAssetCapture(input) {
         it._sourceImg = `이미지 ${idx + 1}/${files.length}`;
       });
       allItems.push(...parsed.items);
+      // 🔧 캡처 기준일 수집 — confidence 우선순위(high>mid>low)로 가장 신뢰도 높은 것 채택
+      if (parsed.captureDate && /^\d{4}-\d{2}-\d{2}$/.test(parsed.captureDate)) {
+        const rank = c => (c === 'high' ? 3 : c === 'mid' ? 2 : c === 'low' ? 1 : 0);
+        const cand = { date: parsed.captureDate, label: parsed.captureDateLabel || '기준일', conf: parsed.captureDateConfidence || 'low' };
+        if (!capInfo || rank(cand.conf) > rank(capInfo.conf)) capInfo = cand;
+      }
       successCount++;
     } catch (e) {
       console.error(`이미지 ${idx + 1} 오류:`, e);
@@ -10034,7 +10081,7 @@ async function processAssetCapture(input) {
   }
 
   showToast(`✅ ${files.length}장에서 ${mergedItems.length}개 자산 추출됨`);
-  openAssetReviewModal(mergedItems);
+  openAssetReviewModal(mergedItems, capInfo);
 
   if (!Array.isArray(input) && input) input.value = '';
 }
@@ -10750,7 +10797,10 @@ function applyFixedReview() {
   render(); // 🔧 현재 탭 유지
 }
 
-function openAssetReviewModal(items) {
+function openAssetReviewModal(items, capInfo) {
+  // 🔧 캡처 기준일: OCR이 읽었으면 그 값, 없으면 오늘
+  window._captureDateInfo = capInfo || null;
+  window._captureDate = (capInfo && capInfo.date) ? capInfo.date : todayKey();
   // 각 항목에 기존 자산 매칭 (티커 우선) + 액션
   window._assetReviewItems = items.map((it, i) => {
     const type = it.type || '주식';
@@ -10903,6 +10953,20 @@ function openAssetReviewModal(items) {
         🔗 <b>합산</b>: 기존에 더하기 · ✨ <b>신규</b>: 새 자산으로
       </div>
 
+      ${(() => {
+        const ci = window._captureDateInfo;
+        const conf = ci?.conf || 'none';
+        let hint, hintColor;
+        if (conf === 'high') { hint = `OCR이 화면의 ${ci.label || '조회일'}을 기준일로 인식했어요.`; hintColor = 'var(--text-success)'; }
+        else if (conf === 'mid' || conf === 'low') { hint = '날짜 인식이 확실하지 않아요. 필요하면 수정하세요.'; hintColor = '#C9863A'; }
+        else { hint = '화면에서 날짜를 못 찾아 오늘로 설정했어요. 캡처한 날짜가 다르면 바꿔주세요.'; hintColor = 'var(--text-tertiary)'; }
+        return `<div style="padding:11px 12px; background:var(--bg-secondary); border-radius:8px; margin-bottom:12px;">
+          <div style="font-size:11px; font-weight:600; color:var(--text-secondary); margin-bottom:6px;">📅 캡처 기준일</div>
+          <input type="date" id="capture-date-input" value="${window._captureDate}" onchange="window._captureDate = this.value;" style="width:100%; padding:9px 10px; border:0.5px solid var(--border-tertiary); border-radius:7px; font-size:13px; font-family:inherit; background:white; color:var(--text-primary);" />
+          <div style="font-size:10px; color:${hintColor}; margin-top:5px; line-height:1.5;">${hint}</div>
+        </div>`;
+      })()}
+
       <div id="asset-review-list" style="max-height:60vh; overflow-y:auto;"></div>
     </div>
   `;
@@ -10959,7 +11023,7 @@ function saveAssetReviewItems() {
   let addedCount = 0;
   let mergedCount = 0;
   let correctedCount = 0;
-  const today = todayKey(); // 🔧 UTC 밀림 방지
+  const today = (window._captureDate && /^\d{4}-\d{2}-\d{2}$/.test(window._captureDate)) ? window._captureDate : todayKey(); // 🔧 캡처 기준일 우선(OCR 인식/사용자 수정), 없으면 오늘
 
   // 🔧 달러 매입가가 하나라도 있으면 환율 받아둠 (원화 환산용)
   const hasUSD = selected.some(it => it.priceCurrency === 'USD');
@@ -12507,6 +12571,24 @@ function buildAssetDetailCard(a, live) {
       <div style="padding:14px; background:var(--bg-secondary); border-radius:12px;">
         ${body}
         ${holdInfo ? `<div style="font-size:11px; color:var(--text-tertiary); margin-top:12px; padding-top:10px; border-top:0.5px solid var(--border-tertiary);">${holdInfo}</div>` : ''}
+        ${(() => {
+          const p = getAssetProvenance(a);
+          const lab = provenanceLabel(p);
+          if (!lab) return '';
+          const accText = p.accuracy === 'high' ? '높음' : p.accuracy === 'mid' ? '보통 (추정 포함)' : p.accuracy === 'low' ? '낮음 (보정 권장)' : '미보정';
+          const accColor = p.accuracy === 'high' ? '#3B6D11' : p.accuracy === 'mid' ? '#2D7BC9' : p.accuracy === 'low' ? '#C9863A' : 'var(--text-tertiary)';
+          return `<div style="margin-top:12px; padding-top:10px; border-top:0.5px solid var(--border-tertiary);">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+              <span style="font-size:11px; color:var(--text-tertiary);">📌 데이터 출처</span>
+              <span style="font-size:11px; font-weight:700; color:${accColor};">정확도 ${accText}</span>
+            </div>
+            <div style="font-size:11px; color:var(--text-secondary); line-height:1.6;">
+              ${p.baseDate ? `· 기준: <b>${p.baseDate}</b> 증권사 보정${p.daysSince != null ? ` (${p.daysSince}일 전)` : ''}` : '· 증권사 보정 이력 없음'}
+              ${p.estimatedCount > 0 ? `<br>· 이후 자동매수 추정 <b>${p.estimatedCount}건</b> 포함 (라이브 시세로 평가)` : ''}
+            </div>
+            <button onclick="openAssetCaptureForCorrection()" style="width:100%; margin-top:10px; border:none; background:var(--bg-info); color:var(--text-info); padding:9px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">📸 증권사 캡처로 보정하기</button>
+          </div>`;
+        })()}
       </div>
 
       <div style="display:flex; gap:8px; margin-top:12px;">
@@ -12929,18 +13011,15 @@ function renderAsset() {
           const fxWarn = live.fxRateMissing
             ? `<span style="color:var(--text-warning); font-size:10px;" title="평균 매입 환율 미입력 — 환차손익이 빠져 증권사 수익률과 다를 수 있어요. 자산 수정에서 입력하세요.">⚠️ 환율</span>`
             : '';
-          // 🔧 출처/정확도 뱃지 — 캡처 기준점·이후 자동매수 추정·보정 경과 반영
+          // 🔧 목록에선 간결하게 — 미보정/오래된 보정일 때만 작은 신호. 자세한 출처는 상세에서.
           const _lots = a.lots || [];
           const _hasAuto = _lots.some(l => l.autoBuy);
           const _prov = getAssetProvenance(a);
-          const _provLabel = provenanceLabel(_prov);
           let estTag = '';
           if (_prov.accuracy === 'none' && _hasAuto) {
-            // 보정 이력 없음 + 자동매수 → 캡처 유도 (기존 동작)
-            estTag = `<span onclick="event.stopPropagation(); openAssetCaptureForCorrection();" style="color:var(--text-tertiary); font-size:10px; cursor:pointer; text-decoration:underline dotted;" title="자동매수 추정치예요. 탭하면 증권사 캡처로 보정할 수 있어요.">≈추정${_prov.estimatedCount>0?' '+_prov.estimatedCount+'건':''}</span>`;
-          } else if (_provLabel && (_prov.estimatedCount > 0 || _prov.accuracy === 'low')) {
-            // 보정은 됐지만 이후 추정분이 있거나 보정이 오래됨 → 출처 뱃지(탭하면 재보정)
-            estTag = `<span onclick="event.stopPropagation(); openAssetCaptureForCorrection();" style="color:${_provLabel.color}; font-size:10px; cursor:pointer; text-decoration:underline dotted;" title="탭하면 증권사 캡처로 다시 보정할 수 있어요.">${_provLabel.text}</span>`;
+            estTag = `<span onclick="event.stopPropagation(); openAssetCaptureForCorrection();" style="color:var(--text-tertiary); font-size:10px; cursor:pointer; text-decoration:underline dotted;" title="자동매수 추정치예요. 탭하면 증권사 캡처로 보정할 수 있어요.">≈추정</span>`;
+          } else if (_prov.accuracy === 'low') {
+            estTag = `<span onclick="event.stopPropagation(); openAssetCaptureForCorrection();" style="color:#C9863A; font-size:10px; cursor:pointer;" title="증권사 보정이 오래됐어요. 탭하면 다시 보정할 수 있어요.">🔄</span>`;
           }
           // 🔧 보유 수량 표시 (정수면 그대로, 소수면 4자리)
           const qtyStr = Number.isInteger(Number(a.qty))
@@ -17872,7 +17951,7 @@ function openAIKeyModal() {
         <button class="modal-save" onclick="saveAIKey()">저장</button>
       </div>
 
-      <div style="padding:14px; background:linear-gradient(135deg, #EDE9FE 0%, #E0E7FF 100%); border:1px solid #C4B5F0; border-radius:12px; color:var(--text-primary); margin-bottom:14px;">
+      <div style="padding:14px; background:#FFFFFF; border:1px solid rgba(124,58,237,0.22); border-left:4px solid #7C3AED; border-radius:12px; color:var(--text-primary); margin-bottom:14px; box-shadow:0 6px 18px rgba(124,58,237,0.08);">
         <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">
           <i class="ti ti-sparkles" style="font-size:13px; color:#7C3AED;"></i>
           <span style="font-size:11px; font-weight:700; color:#6D28D9;">Gemini AI 설정</span>
@@ -18585,7 +18664,7 @@ function openDataCheck() {
     const lv = liveAssetData[a.id];
     return !(lv && lv.hasLive);
   });
-  if (liveFail.length) issues.push({ icon:'📡', text:`시세 조회 실패 ${liveFail.length}개`, detail: liveFail.map(a=>a.name).join(', ') });
+  if (liveFail.length) issues.push({ icon:'📡', text:`시세 조회 실패 ${liveFail.length}개`, detail: liveFail.map(a=>a.name).join(', '), assetIds: liveFail.map(a=>a.id) });
 
   // 🔧 증권사 캡처 보정이 오래된 자산 (ocrSnapshot 30일 이상 경과 → 재보정 권장)
   try {
@@ -18597,14 +18676,14 @@ function openDataCheck() {
       if (!isFinite(t)) return false;
       return (now - t) >= 30 * 86400000;
     });
-    if (staleSnap.length) issues.push({ icon:'🔄', text:`증권사 보정 30일↑ ${staleSnap.length}개`, detail: staleSnap.map(a=>`${a.name}(${a.ocrSnapshot.date})`).join(', ') });
+    if (staleSnap.length) issues.push({ icon:'🔄', text:`증권사 보정 30일↑ ${staleSnap.length}개`, detail: staleSnap.map(a=>`${a.name}(${a.ocrSnapshot.date})`).join(', '), assetIds: staleSnap.map(a=>a.id) });
   } catch(e){}
 
   // 🔧 자동매수 추정분이 섞인 자산 (캡처 이후 자동매수 → 증권사 확정값과 미세 차이 가능)
   try {
     const estMixed = (assets||[]).map(a => ({ a, p: getAssetProvenance(a) }))
       .filter(x => x.p.estimatedCount > 0);
-    if (estMixed.length) issues.push({ icon:'🧮', text:`자동매수 추정 포함 ${estMixed.length}개`, detail: estMixed.map(x=>`${x.a.name}(추정 ${x.p.estimatedCount}건)`).join(', ') });
+    if (estMixed.length) issues.push({ icon:'🧮', text:`자동매수 추정 포함 ${estMixed.length}개`, detail: estMixed.map(x=>`${x.a.name}(추정 ${x.p.estimatedCount}건)`).join(', '), assetIds: estMixed.map(x=>x.a.id) });
   } catch(e){}
 
   const body = issues.length === 0
@@ -18615,6 +18694,7 @@ function openDataCheck() {
           <div style="flex:1; min-width:0;">
             <div style="font-size:13px; font-weight:600;">${it.text}</div>
             ${it.detail ? `<div style="font-size:11px; color:var(--text-tertiary); margin-top:2px; word-break:break-all;">${escapeHTML(it.detail)}</div>` : ''}
+            ${Array.isArray(it.assetIds) && it.assetIds.length ? `<button onclick="this.closest('.modal-overlay').remove(); openAssetDetail(${it.assetIds[0]});" style="margin-top:7px; border:none; background:var(--bg-info); color:var(--text-info); padding:6px 12px; border-radius:7px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">자세히 보기 →</button>` : ''}
           </div>
         </div>`).join('');
 
