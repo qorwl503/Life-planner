@@ -3669,8 +3669,40 @@ function editChallenge(id) {
 
       <div style="padding:14px; background:var(--bg-secondary); border-radius:var(--radius-md); margin-bottom:14px;">
         <div style="font-size:14px; font-weight:600; margin-bottom:4px;">${escapeHTML(c.title)}</div>
-        <div style="font-size:11px; color:var(--text-secondary);">${c.totalDays}일 챌린지 · 시작 ${c.startDate}</div>
+        <div style="font-size:11px; color:var(--text-secondary);">${c.totalDays}일 챌린지 · 시작 ${c.startDate}${c.perWeek ? ` · 주 ${c.perWeek}회` : ''}</div>
       </div>
+
+      <!-- ⚙️ 설정 수정 -->
+      <details style="margin-bottom:14px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); overflow:hidden;">
+        <summary style="padding:12px 14px; font-size:13px; font-weight:600; cursor:pointer; background:var(--bg-secondary); list-style:none;">⚙️ 설정 수정 <span style="font-size:11px; color:var(--text-tertiary); font-weight:400;">(제목·기간 등)</span></summary>
+        <div style="padding:14px;">
+          <div class="field">
+            <div class="field-label">제목</div>
+            <input type="text" id="ce-title" value="${escapeAttr(c.title)}" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit;" />
+          </div>
+          <div class="field">
+            <div class="field-label">총 기간 (일)</div>
+            <input type="number" id="ce-totaldays" value="${Number(c.totalDays) || 0}" min="1" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit;" />
+            <div style="display:flex; gap:6px; margin-top:8px; flex-wrap:wrap;">
+              <button type="button" class="chip" onclick="document.getElementById('ce-totaldays').value=7">7일</button>
+              <button type="button" class="chip" onclick="document.getElementById('ce-totaldays').value=14">14일</button>
+              <button type="button" class="chip" onclick="document.getElementById('ce-totaldays').value=30">30일</button>
+              <button type="button" class="chip" onclick="document.getElementById('ce-totaldays').value=100">100일</button>
+            </div>
+          </div>
+          ${c.type === 'count' ? `
+          <div class="field">
+            <div class="field-label">주 몇 회 <span style="font-size:10px; color:var(--text-tertiary);">(비우면 횟수 챌린지)</span></div>
+            <input type="number" id="ce-perweek" value="${c.perWeek != null ? c.perWeek : ''}" min="1" max="7" placeholder="예: 4" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit;" />
+          </div>
+          <div class="field">
+            <div class="field-label">목표 총 횟수 <span style="font-size:10px; color:var(--text-tertiary);">(비우면 자동 계산)</span></div>
+            <input type="number" id="ce-targetcount" value="${c.targetCount != null ? c.targetCount : ''}" min="1" placeholder="예: 17" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit;" />
+          </div>
+          ` : ''}
+          <button onclick="saveChallengeEdit(${id})" style="width:100%; padding:12px; border:none; border-radius:var(--radius-md); background:var(--text-info); color:white; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit;">설정 저장</button>
+        </div>
+      </details>
 
       <div style="margin-bottom:14px;">
         <div style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:8px;">📅 지난 기록 체크 ${isForbidden ? '(탭: 성공→실패→해제)' : '(탭하면 체크/해제)'}</div>
@@ -3710,6 +3742,37 @@ function deleteChallenge(id) {
     showToast('삭제됨');
     renderTodo();
   }
+}
+
+// ⚙️ 챌린지 설정 수정 저장 (제목·기간·주N회·목표횟수)
+function saveChallengeEdit(id) {
+  const c = challenges.find(x => x.id === id);
+  if (!c) return;
+
+  const title = (document.getElementById('ce-title')?.value || '').trim();
+  if (!title) { showToast('제목을 입력해주세요'); return; }
+  const totalDays = Math.max(1, Number(document.getElementById('ce-totaldays')?.value) || c.totalDays);
+
+  c.title = title;
+  c.totalDays = totalDays;
+
+  if (c.type === 'count') {
+    const pwRaw = document.getElementById('ce-perweek')?.value;
+    const tcRaw = document.getElementById('ce-targetcount')?.value;
+    const perWeek = pwRaw !== '' && pwRaw != null ? Math.max(1, Number(pwRaw)) : null;
+    c.perWeek = perWeek;
+    // 목표 횟수: 직접 입력 우선, 비우면 주N회 기준 자동 계산
+    if (tcRaw !== '' && tcRaw != null) {
+      c.targetCount = Math.max(1, Number(tcRaw));
+    } else if (perWeek) {
+      c.targetCount = Math.round(perWeek * (totalDays / 7));
+    }
+  }
+
+  saveData();
+  showToast('설정이 저장됐어요');
+  closeModal();
+  renderTodo();
 }
 
 function showCompletedChallenges() {
