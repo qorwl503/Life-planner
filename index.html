@@ -588,8 +588,8 @@ const firebaseConfig = {
 
   /* AI 코칭 카드 */
   .ai-card {
-    background: linear-gradient(135deg, #F0EFFA 0%, #EAF1FB 100%);
-    border: 0.5px solid #D9DCF0;
+    background: linear-gradient(135deg, #EDE9FE 0%, #E0E7FF 100%);
+    border: 1px solid #C4B5F0;
     border-radius: 14px;
     padding: 16px;
     color: var(--text-primary);
@@ -602,19 +602,19 @@ const firebaseConfig = {
     position: absolute;
     top: -40px; right: -40px;
     width: 120px; height: 120px;
-    background: radial-gradient(circle, rgba(120,110,220,0.12) 0%, transparent 70%);
+    background: radial-gradient(circle, rgba(124,58,237,0.16) 0%, transparent 70%);
     pointer-events: none;
   }
   .ai-badge {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 3px 8px;
+    padding: 3px 9px;
     border-radius: 999px;
-    background: rgba(99,91,205,0.12);
-    color: #5B53C9;
+    background: #7C3AED;
+    color: white;
     font-size: 10px;
-    font-weight: 600;
+    font-weight: 700;
     margin-bottom: 10px;
   }
   .ai-card h3 {
@@ -626,7 +626,7 @@ const firebaseConfig = {
     line-height: 1.6;
     color: var(--text-secondary);
   }
-  .ai-card .ai-text b { color: #C9863A; font-weight: 700; }
+  .ai-card .ai-text b { color: #6D28D9; font-weight: 700; }
   .ai-plan-row {
     display: flex; align-items: center;
     gap: 10px;
@@ -646,11 +646,11 @@ const firebaseConfig = {
   .ai-plan-text { font-size: 11px; line-height: 1.5; flex: 1; }
 
   /* 밝은 ai-card 배경에 맞춰 내부 흰색/금색 요소 보정 */
-  .ai-card .spinner { border-color: rgba(99,91,205,0.25) !important; border-top-color: #5B53C9 !important; }
-  .ai-card .ai-badge i { color: #C9863A !important; }
+  .ai-card .spinner { border-color: rgba(124,58,237,0.25) !important; border-top-color: #7C3AED !important; }
+  .ai-card .ai-badge i { color: white !important; }
   /* 흰색 전제로 인라인 처리된 버튼들(반투명 흰 배경 + 흰 글씨)을 밝은 테마로 */
-  .ai-card button[style*="rgba(255,255,255"] { background: rgba(99,91,205,0.12) !important; color: #5B53C9 !important; }
-  .ai-card button[style*="color:white"], .ai-card button[style*="color: white"] { color: #5B53C9 !important; }
+  .ai-card button[style*="rgba(255,255,255"] { background: rgba(124,58,237,0.12) !important; color: #6D28D9 !important; }
+  .ai-card button[style*="color:white"], .ai-card button[style*="color: white"] { color: #6D28D9 !important; }
 
   .connect-card {
     display: flex; align-items: center; gap: 12px;
@@ -17191,20 +17191,17 @@ function renderAssetMarket(total, byType) {
   // 1) AI 시장 브리핑
   html += `
     <div id="ai-market-briefing" style="margin-bottom:14px;">
-      <div style="padding:18px; background:linear-gradient(135deg, #1A1A1A 0%, #2D2D2D 100%); border-radius:14px; color:white;">
+      <div class="ai-card" style="margin-bottom:0;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-          <div style="display:flex; align-items:center; gap:6px;">
-            <i class="ti ti-sparkles" style="font-size:14px; color:#FFD700;"></i>
-            <span style="font-size:11px; font-weight:600; letter-spacing:0.5px;">AI 시장 브리핑</span>
-          </div>
-          <button onclick="loadAIBriefing(true)" style="border:none; background:rgba(255,255,255,0.15); color:white; padding:5px 10px; border-radius:6px; font-size:11px; cursor:pointer; font-family:inherit;">
+          <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:12px;"></i> AI 시장 브리핑</div>
+          <button onclick="loadAIBriefing(true)" style="border:none; background:rgba(124,58,237,0.12); color:#6D28D9; padding:5px 10px; border-radius:6px; font-size:11px; cursor:pointer; font-family:inherit;">
             <i class="ti ti-refresh" style="font-size:11px;"></i> 새로고침
           </button>
         </div>
-        <div id="ai-briefing-content" style="font-size:12px; line-height:1.7; opacity:0.92;">
+        <div id="ai-briefing-content" class="ai-text" style="font-size:12px; line-height:1.7;">
           <div style="display:flex; align-items:center; gap:8px; padding:14px 0;">
-            <div class="spinner" style="border-color:rgba(255,255,255,0.3); border-top-color:white;"></div>
-            <span style="font-size:11px; opacity:0.8;">AI가 시장 상황 분석 중...</span>
+            <div class="spinner"></div>
+            <span style="font-size:11px;">AI가 시장 상황 분석 중...</span>
           </div>
         </div>
       </div>
@@ -17875,12 +17872,12 @@ function openAIKeyModal() {
         <button class="modal-save" onclick="saveAIKey()">저장</button>
       </div>
 
-      <div style="padding:14px; background:linear-gradient(135deg, #1A1A1A 0%, #2D2D2D 100%); border-radius:12px; color:white; margin-bottom:14px;">
+      <div style="padding:14px; background:linear-gradient(135deg, #EDE9FE 0%, #E0E7FF 100%); border:1px solid #C4B5F0; border-radius:12px; color:var(--text-primary); margin-bottom:14px;">
         <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">
-          <i class="ti ti-sparkles" style="font-size:13px; color:#FFD700;"></i>
-          <span style="font-size:11px; font-weight:600;">Gemini AI 설정</span>
+          <i class="ti ti-sparkles" style="font-size:13px; color:#7C3AED;"></i>
+          <span style="font-size:11px; font-weight:700; color:#6D28D9;">Gemini AI 설정</span>
         </div>
-        <div style="font-size:12px; line-height:1.6; opacity:0.9;">
+        <div style="font-size:12px; line-height:1.6; color:var(--text-secondary);">
           AI 시장 브리핑, 자산 분석, 뉴스 요약 기능을 사용하려면 본인의 Gemini API 키가 필요해요. 키는 본인 기기에만 저장되고 안전해요.
         </div>
       </div>
