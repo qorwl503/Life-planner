@@ -42,9 +42,8 @@ const firebaseConfig = {
   // YouTube Data API 키 — 별도 키 사용 권장
   // localStorage에 youtube_api_key 가 있으면 그걸 쓰고, 없으면 Firebase 프로젝트 키로 폴백
   // (같은 구글 클라우드 프로젝트에 YouTube Data API v3 가 활성화돼 있어야 폴백이 작동함)
-  // (YouTube는 전용 키만 사용 — Firebase 키 폴백 제거됨)
-  // 🔧 YouTube는 전용 키만 사용 — Firebase 키 폴백 제거(보안·동작 정합성). 키 없으면 호출부가 안내 처리.
-  window.YOUTUBE_API_KEY = localStorage.getItem('youtube_api_key') || null;
+  window._fbApiKey = firebaseConfig.apiKey; // 폴백 참조용
+  window.YOUTUBE_API_KEY = localStorage.getItem('youtube_api_key') || firebaseConfig.apiKey;
 
   // Gemini AI API 키 — 사용자가 직접 입력 (localStorage)
   window.GEMINI_API_KEY = localStorage.getItem('gemini_api_key') || null;
@@ -198,13 +197,13 @@ const firebaseConfig = {
     background: var(--bg-primary);
   }
   .stat-card {
-    padding: 7px 9px;
+    padding: 10px 12px;
     border-radius: var(--radius-md);
     background: var(--bg-secondary);
   }
-  .stat-card .label { font-size: 9px; color: var(--text-tertiary); margin-bottom: 1px; }
-  .stat-card .value { font-size: 16px; font-weight: 600; line-height: 1.15; }
-  .stat-card .sub { font-size: 8px; color: var(--text-secondary); }
+  .stat-card .label { font-size: 10px; color: var(--text-tertiary); margin-bottom: 2px; }
+  .stat-card .value { font-size: 18px; font-weight: 600; }
+  .stat-card .sub { font-size: 9px; color: var(--text-secondary); }
 
   .chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 10px; }
   .chips::-webkit-scrollbar { height: 0; }
@@ -586,37 +585,33 @@ const firebaseConfig = {
   .wcell.future { opacity: 0.3; }
   .wcell.empty { background: transparent; border: none; pointer-events: none; }
 
-  /* AI 코칭 카드 — 흰 카드 + 왼쪽 보라 라인 + 진남색 뱃지 (과하지 않게 AI 영역 구분) */
+  /* AI 코칭 카드 */
   .ai-card {
-    background: linear-gradient(135deg, #EAF6F4 0%, #E0F0EE 100%);
-    border: 1px solid rgba(13, 148, 136, 0.28);
-    border-left: 4px solid #0D9488;
+    background: linear-gradient(135deg, #1A1A1A 0%, #2D2D2D 100%);
     border-radius: 14px;
     padding: 16px;
-    color: var(--text-primary);
+    color: white;
     margin-bottom: 14px;
     position: relative;
     overflow: hidden;
-    box-shadow: 0 4px 16px rgba(13, 148, 136, 0.12);
   }
   .ai-card::before {
     content: '';
     position: absolute;
     top: -40px; right: -40px;
     width: 120px; height: 120px;
-    background: radial-gradient(circle, rgba(13,148,136,0.10) 0%, transparent 70%);
+    background: radial-gradient(circle, rgba(255,200,100,0.15) 0%, transparent 70%);
     pointer-events: none;
   }
   .ai-badge {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 4px 9px;
+    padding: 3px 8px;
     border-radius: 999px;
-    background: #0F766E;
-    color: #FFFFFF;
+    background: rgba(255,255,255,0.15);
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 500;
     margin-bottom: 10px;
   }
   .ai-card h3 {
@@ -626,33 +621,25 @@ const firebaseConfig = {
   .ai-card .ai-text {
     font-size: 12px;
     line-height: 1.6;
-    color: var(--text-secondary);
+    opacity: 0.9;
   }
-  .ai-card .ai-text b { color: #0F766E; font-weight: 700; }
+  .ai-card .ai-text b { color: #FFD66E; font-weight: 600; }
   .ai-plan-row {
     display: flex; align-items: center;
     gap: 10px;
     padding: 10px 0;
-    border-bottom: 0.5px solid rgba(0,0,0,0.08);
+    border-bottom: 0.5px solid rgba(255,255,255,0.1);
   }
   .ai-plan-row:last-child { border-bottom: none; }
   .ai-plan-num {
     width: 22px; height: 22px;
     border-radius: 50%;
-    background: rgba(13,148,136,0.14);
-    color: #0F766E;
+    background: rgba(255,255,255,0.2);
     display: flex; align-items: center; justify-content: center;
     font-size: 10px; font-weight: 600;
     flex-shrink: 0;
   }
   .ai-plan-text { font-size: 11px; line-height: 1.5; flex: 1; }
-
-  /* 청록 ai-card 배경에 맞춰 내부 요소 보정 */
-  .ai-card .spinner { border-color: rgba(13,148,136,0.25) !important; border-top-color: #0D9488 !important; }
-  .ai-card .ai-badge i { color: white !important; }
-  /* 흰색 전제로 인라인 처리된 버튼들 → 청록 톤 */
-  .ai-card button[style*="rgba(255,255,255"] { background: rgba(13,148,136,0.12) !important; color: #0F766E !important; }
-  .ai-card button[style*="color:white"], .ai-card button[style*="color: white"] { color: #0F766E !important; }
 
   .connect-card {
     display: flex; align-items: center; gap: 12px;
@@ -1499,59 +1486,6 @@ function migrateTodos() {
 }
 
 // 날짜 키 → 그룹 동적 분류 (today/tomorrow/week/later/past)
-// 🔁 반복 규칙을 사람이 읽는 문구로
-function repeatLabel(rep) {
-  if (!rep || !rep.type) return '';
-  if (rep.type === 'daily') return '매일';
-  if (rep.type === 'monthly') return '매월';
-  if (rep.type === 'weekly') {
-    const names = ['일','월','화','수','목','금','토'];
-    const days = Array.isArray(rep.days) ? rep.days.slice().sort((a,b)=>a-b) : [];
-    if (days.length === 7) return '매일';
-    if (days.length === 0) return '매주';
-    return '매주 ' + days.map(d => names[d]).join('·');
-  }
-  return '';
-}
-
-// 🔁 특정 날짜에 '발생하는' 할일 목록 (일반: dateKey 일치 / 반복: 규칙상 발생)
-//    완료여부는 일반=t.done, 반복=t.repeatDone[kStr]
-function todosOnDate(kStr) {
-  const out = [];
-  for (const t of todos) {
-    if (!t.repeat) {
-      if (t.dateKey === kStr) out.push({ t, done: !!t.done });
-    } else if (todoOccursOn(t, kStr)) {
-      out.push({ t, done: !!(t.repeatDone && t.repeatDone[kStr]) });
-    }
-  }
-  return out;
-}
-
-// 🔁 반복 할일이 특정 날짜(dateKey)에 표시돼야 하는지 판정
-//    시작일(t.dateKey)부터 규칙에 맞으면 true. 시작일 이전이면 false.
-function todoOccursOn(t, kStr) {
-  if (!t || !t.repeat || !t.dateKey || !kStr) return false;
-  if (kStr < t.dateKey) return false; // 시작일 이전 (YYYY-MM-DD 문자열 비교 안전)
-  const [sy, sm, sd] = t.dateKey.split('-').map(Number);
-  const [ky, km, kd] = kStr.split('-').map(Number);
-  const start = new Date(sy, sm-1, sd);
-  const cur = new Date(ky, km-1, kd);
-  const type = t.repeat.type;
-  if (type === 'daily') return true;
-  if (type === 'weekly') {
-    const days = Array.isArray(t.repeat.days) ? t.repeat.days : [];
-    return days.includes(cur.getDay());
-  }
-  if (type === 'monthly') {
-    // 시작일의 '일(day)'과 같은 날. 그 달에 해당 일이 없으면(예: 31일) 말일로 보정.
-    const lastDay = new Date(ky, km, 0).getDate();
-    const effDay = Math.min(sd, lastDay);
-    return kd === effDay;
-  }
-  return false;
-}
-
 function todoGroup(dateKeyStr) {
   if (!dateKeyStr) return 'today';
   const now = new Date();
@@ -2050,18 +1984,9 @@ function renderMonthlyReportCard() {
     : `${totalChCheck}일 실천`;
 
   // 4. 할일
-  // 🔁 월간 할일 — 그 달 모든 날짜를 돌며 발생분 합산 (반복 할일 정확 반영)
-  let monthTodoTotal = 0, monthTodoDone = 0;
-  {
-    const [yy, mm] = targetMStr.split('-').map(Number);
-    const daysInMonth = new Date(yy, mm, 0).getDate();
-    for (let d = 1; d <= daysInMonth; d++) {
-      const kk = `${targetMStr}-${String(d).padStart(2,'0')}`;
-      const list = todosOnDate(kk);
-      monthTodoTotal += list.length;
-      monthTodoDone += list.filter(x => x.done).length;
-    }
-  }
+  const monthTodos = (todos || []).filter(t => t.dateKey?.startsWith(targetMStr));
+  const monthTodoDone = monthTodos.filter(t => t.done).length;
+  const monthTodoTotal = monthTodos.length;
 
   // 5. 자산 변화 (스냅샷 기반)
   const snapshots = settings.assetSnapshots || {};
@@ -2366,7 +2291,7 @@ function renderCalendar() {
       html += `<div class="empty-state" style="padding:20px;"><span style="font-size:11px;">이 카테고리에 기록이 없어요</span></div>`;
     } else {
       const renderEvt = (e) => {
-        const clickHandler = e.todoId !== undefined ? `onclick="toggleTodoFromCal(${e.todoId}${e.recurDate ? `, '${e.recurDate}'` : ''})"`
+        const clickHandler = e.todoId !== undefined ? `onclick="toggleTodoFromCal(${e.todoId})"`
           : e.expenseId !== undefined ? `onclick="editExpense(${e.expenseId})" style="cursor:pointer;"`
           : '';
         return `<div class="evt evt-${e.type}" ${clickHandler}>
@@ -2422,19 +2347,15 @@ function getEventsForDay(d) {
   const events = [];
   const k = dayKey(d);
 
-  // 할일 (일반: dateKey 일치 / 반복: 규칙상 이 날 발생)
-  todos.forEach(t => {
-    const isPlain = (t.dateKey === k) && !t.repeat;
-    const isRecur = !!t.repeat && todoOccursOn(t, k);
-    if (!isPlain && !isRecur) return;
+  // 할일
+  todos.filter(t => t.dateKey === k).forEach(t => {
     events.push({
       type: 'todo',
       title: t.title,
       sub: t.tag,
-      done: isRecur ? !!(t.repeatDone && t.repeatDone[k]) : t.done,
+      done: t.done,
       todoId: t.id,
-      amount: t.money,
-      recurDate: isRecur ? k : null, // 반복 인스턴스면 그 날짜 표시
+      amount: t.money
     });
   });
 
@@ -2701,22 +2622,12 @@ function jumpToMonth(y, m) {
   renderCalendar();
 }
 
-function toggleTodoFromCal(todoId, recurDate) {
+function toggleTodoFromCal(todoId) {
   const t = todos.find(x => x.id === todoId);
   if (t) {
-    if (recurDate && t.repeat) {
-      // 반복 인스턴스: 그 날짜만 완료 토글 (repeatDone 맵에 기록)
-      if (!t.repeatDone) t.repeatDone = {};
-      const now = !t.repeatDone[recurDate];
-      if (now) t.repeatDone[recurDate] = true;
-      else delete t.repeatDone[recurDate];
-      saveData();
-      showToast(now ? `"${t.title}" 완료!` : `"${t.title}" 되돌림`);
-    } else {
-      t.done = !t.done;
-      saveData();
-      showToast(t.done ? `"${t.title}" 완료!` : `"${t.title}" 되돌림`);
-    }
+    t.done = !t.done;
+    saveData();
+    showToast(t.done ? `"${t.title}" 완료!` : `"${t.title}" 되돌림`);
   }
   renderCalendar();
 }
@@ -2774,9 +2685,7 @@ function renderTodo() {
     <h1>할일</h1>
     <div class="header-actions">
       <button onclick="openChallengeModal()" aria-label="챌린지 추가"><i class="ti ti-flag"></i></button>
-      <button onclick="openTodoModal()" aria-label="할일 추가" style="display:flex; align-items:center; gap:4px; background:var(--text-info); color:white; padding:0 14px 0 10px; border-radius:999px; font-size:13px; font-weight:600; font-family:inherit;">
-        <i class="ti ti-plus" style="font-size:16px;"></i>할일
-      </button>
+      <button onclick="openTodoModal()" aria-label="추가"><i class="ti ti-plus"></i></button>
     </div>
   `;
 
@@ -2792,14 +2701,13 @@ function renderTodo() {
   const done = todos.filter(t => t.done).length;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
 
-  // 할일 통계 계산 - 세분화 (🔁 반복 할일 발생분 포함)
+  // 할일 통계 계산 - 세분화
   const todayK = todayKey();
-  const todayList = todosOnDate(todayK);
-  const todayTodos = todayList.map(x => x.t);       // 호환: 길이/표시용
-  const todayDone = todayList.filter(x => x.done).length;
+  const todayTodos = todos.filter(t => t.dateKey === todayK);
+  const todayDone = todayTodos.filter(t => t.done).length;
 
-  const pastTodos = todos.filter(t => !t.repeat && todoGroup(t.dateKey) === 'past' && !t.done);
-  const pastDoneAll = todos.filter(t => !t.repeat && t.dateKey && t.dateKey < todayK && t.done);
+  const pastTodos = todos.filter(t => todoGroup(t.dateKey) === 'past' && !t.done);
+  const pastDoneAll = todos.filter(t => t.dateKey && t.dateKey < todayK && t.done);
 
   // 본인이 선택한 주 (todoWeekOffset 기준)
   const baseDate = new Date();
@@ -2814,21 +2722,9 @@ function renderTodo() {
   const sunday = weekEnd; // 변수명 유지 (실제는 토요일)
   const mondayK = dateKey(monday.getFullYear(), monday.getMonth(), monday.getDate());
   const sundayK = dateKey(sunday.getFullYear(), sunday.getMonth(), sunday.getDate());
-  // 🔁 주간 통계 — 7일 각각 발생분 합산 (반복 할일 포함)
-  let weekCount = 0, weekDoneCount = 0;
-  {
-    const cur = new Date(weekStart);
-    for (let i = 0; i < 7; i++) {
-      const kk = dateKey(cur.getFullYear(), cur.getMonth(), cur.getDate());
-      const list = todosOnDate(kk);
-      weekCount += list.length;
-      weekDoneCount += list.filter(x => x.done).length;
-      cur.setDate(cur.getDate() + 1);
-    }
-  }
-  const weekTodos = { length: weekCount };           // 호환: .length 사용처 유지
-  const weekDone = weekDoneCount;
-  const weekPct = weekCount > 0 ? Math.round((weekDone / weekCount) * 100) : 0;
+  const weekTodos = todos.filter(t => t.dateKey && t.dateKey >= mondayK && t.dateKey <= sundayK);
+  const weekDone = weekTodos.filter(t => t.done).length;
+  const weekPct = weekTodos.length > 0 ? Math.round((weekDone / weekTodos.length) * 100) : 0;
 
   const weekLabel = window.todoWeekOffset === 0 ? '이번 주' :
     window.todoWeekOffset === 1 ? '다음 주' :
@@ -2853,49 +2749,59 @@ function renderTodo() {
       </button>
     </div>
 
-    <!-- 4가지 카드 통계 (한 줄 4칸 컴팩트) -->
-    <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:6px; margin-bottom:14px;">
+    <!-- 4가지 카드 통계 -->
+    <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap:8px; margin-bottom:14px;">
       <!-- 오늘 -->
-      <div style="padding:10px 6px; border-radius:10px; background:var(--bg-info); border:0.5px solid rgba(0,122,255,0.2); text-align:center;">
-        <div style="font-size:10px; color:var(--text-info); font-weight:600;">📅 오늘</div>
-        <div style="font-size:18px; font-weight:700; color:var(--text-info); margin-top:3px; line-height:1.1;">
-          ${todayDone}<span style="font-size:11px; opacity:0.6;">/${todayTodos.length}</span>
+      <div style="padding:12px; border-radius:12px; background:var(--bg-info); border:0.5px solid rgba(0,122,255,0.2);">
+        <div style="display:flex; align-items:center; justify-content:space-between;">
+          <span style="font-size:11px; color:var(--text-info); font-weight:600;">📅 오늘</span>
+          ${todayTodos.length > 0 && todayDone === todayTodos.length ? '<span style="font-size:14px;">✨</span>' : ''}
         </div>
-        <div style="font-size:9px; color:var(--text-info); opacity:0.85; margin-top:2px;">
-          ${todayTodos.length === 0 ? '없음' : todayTodos.length === todayDone ? '끝!' : (todayTodos.length - todayDone) + '개 남음'}
+        <div style="font-size:20px; font-weight:700; color:var(--text-info); margin-top:4px;">
+          ${todayDone}<span style="font-size:13px; opacity:0.6;">/${todayTodos.length}</span>
+        </div>
+        <div style="font-size:11px; color:var(--text-info); opacity:0.85; margin-top:2px;">
+          ${todayTodos.length === 0 ? '할일 없음' : todayTodos.length === todayDone ? '오늘 끝!' : (todayTodos.length - todayDone) + '개 남음'}
         </div>
       </div>
 
-      <!-- 주간 -->
-      <div style="padding:10px 6px; border-radius:10px; background:var(--bg-secondary); border:0.5px solid var(--border-tertiary); text-align:center;">
-        <div style="font-size:10px; color:var(--text-secondary); font-weight:600;">📊 ${weekLabel}</div>
-        <div style="font-size:18px; font-weight:700; margin-top:3px; line-height:1.1;">
-          ${weekDone}<span style="font-size:11px; opacity:0.6;">/${weekTodos.length}</span>
+      <!-- 주간 통계 -->
+      <div style="padding:12px; border-radius:12px; background:var(--bg-secondary); border:0.5px solid var(--border-tertiary);">
+        <div style="display:flex; align-items:center; justify-content:space-between;">
+          <span style="font-size:11px; color:var(--text-secondary); font-weight:600;">📊 ${weekLabel}</span>
+          <span style="font-size:10px; color:var(--text-tertiary);">${weekPct}%</span>
         </div>
-        <div style="height:3px; background:rgba(0,0,0,0.08); border-radius:2px; margin-top:5px; overflow:hidden;">
+        <div style="font-size:20px; font-weight:700; margin-top:4px;">
+          ${weekDone}<span style="font-size:13px; opacity:0.6;">/${weekTodos.length}</span>
+        </div>
+        <div style="height:4px; background:rgba(0,0,0,0.08); border-radius:2px; margin-top:6px; overflow:hidden;">
           <div style="height:100%; width:${weekPct}%; background:var(--text-success);"></div>
         </div>
       </div>
 
-      <!-- 곧 마감 -->
-      <div style="padding:10px 6px; border-radius:10px; background:${soonDueTodos.length > 0 ? 'rgba(245,168,82,0.12)' : 'var(--bg-secondary)'}; border:0.5px solid ${soonDueTodos.length > 0 ? 'rgba(245,168,82,0.3)' : 'var(--border-tertiary)'}; text-align:center;">
-        <div style="font-size:10px; color:${soonDueTodos.length > 0 ? '#C9863A' : 'var(--text-secondary)'}; font-weight:600;">⏱️ 곧 마감</div>
-        <div style="font-size:18px; font-weight:700; color:${soonDueTodos.length > 0 ? '#C9863A' : 'var(--text-tertiary)'}; margin-top:3px; line-height:1.1;">
-          ${soonDueTodos.length}<span style="font-size:11px; opacity:0.6;">개</span>
+      <!-- 곧 마감 (3일 이내) -->
+      <div style="padding:12px; border-radius:12px; background:${soonDueTodos.length > 0 ? 'rgba(245,168,82,0.12)' : 'var(--bg-secondary)'}; border:0.5px solid ${soonDueTodos.length > 0 ? 'rgba(245,168,82,0.3)' : 'var(--border-tertiary)'};">
+        <div style="display:flex; align-items:center; justify-content:space-between;">
+          <span style="font-size:11px; color:${soonDueTodos.length > 0 ? '#C9863A' : 'var(--text-secondary)'}; font-weight:600;">⏱️ 곧 마감</span>
         </div>
-        <div style="font-size:9px; color:${soonDueTodos.length > 0 ? '#C9863A' : 'var(--text-tertiary)'}; opacity:0.85; margin-top:2px;">
-          ${soonDueTodos.length === 0 ? '여유' : '3일내'}
+        <div style="font-size:20px; font-weight:700; color:${soonDueTodos.length > 0 ? '#C9863A' : 'var(--text-tertiary)'}; margin-top:4px;">
+          ${soonDueTodos.length}<span style="font-size:13px; opacity:0.6;">개</span>
+        </div>
+        <div style="font-size:11px; color:${soonDueTodos.length > 0 ? '#C9863A' : 'var(--text-tertiary)'}; opacity:0.85; margin-top:2px;">
+          ${soonDueTodos.length === 0 ? '여유 있어요' : '3일 이내'}
         </div>
       </div>
 
-      <!-- 밀린 -->
-      <div style="padding:10px 6px; border-radius:10px; background:${pastTodos.length > 0 ? 'var(--bg-danger)' : 'var(--bg-secondary)'}; border:0.5px solid ${pastTodos.length > 0 ? 'rgba(255,59,48,0.2)' : 'var(--border-tertiary)'}; text-align:center;">
-        <div style="font-size:10px; color:${pastTodos.length > 0 ? 'var(--text-danger)' : 'var(--text-secondary)'}; font-weight:600;">⏰ 밀린</div>
-        <div style="font-size:18px; font-weight:700; color:${pastTodos.length > 0 ? 'var(--text-danger)' : 'var(--text-tertiary)'}; margin-top:3px; line-height:1.1;">
-          ${pastTodos.length}<span style="font-size:11px; opacity:0.6;">개</span>
+      <!-- 지난 미완료 -->
+      <div style="padding:12px; border-radius:12px; background:${pastTodos.length > 0 ? 'var(--bg-danger)' : 'var(--bg-secondary)'}; border:0.5px solid ${pastTodos.length > 0 ? 'rgba(255,59,48,0.2)' : 'var(--border-tertiary)'};">
+        <div style="display:flex; align-items:center; justify-content:space-between;">
+          <span style="font-size:11px; color:${pastTodos.length > 0 ? 'var(--text-danger)' : 'var(--text-secondary)'}; font-weight:600;">⏰ 밀린</span>
         </div>
-        <div style="font-size:9px; color:${pastTodos.length > 0 ? 'var(--text-danger)' : 'var(--text-tertiary)'}; opacity:0.85; margin-top:2px;">
-          ${pastTodos.length === 0 ? '깨끗 ✨' : '처리!'}
+        <div style="font-size:20px; font-weight:700; color:${pastTodos.length > 0 ? 'var(--text-danger)' : 'var(--text-tertiary)'}; margin-top:4px;">
+          ${pastTodos.length}<span style="font-size:13px; opacity:0.6;">개</span>
+        </div>
+        <div style="font-size:11px; color:${pastTodos.length > 0 ? 'var(--text-danger)' : 'var(--text-tertiary)'}; opacity:0.85; margin-top:2px;">
+          ${pastTodos.length === 0 ? '깨끗해요 ✨' : '처리해주세요'}
         </div>
       </div>
     </div>
@@ -3093,7 +2999,6 @@ function renderTodoRow(t) {
       <div class="todo-title">${t.time ? `<span style="color:var(--text-info); font-weight:700; margin-right:5px;">${escapeHTML(t.time)}</span>` : ''}${escapeHTML(t.title)}</div>
       <div class="todo-meta">
         <span class="tag">${escapeHTML(t.tag)}</span>
-        ${t.repeat ? `<span class="meta-repeat"><i class="ti ti-repeat" style="font-size:11px;"></i> ${repeatLabel(t.repeat)}</span>` : ''}
         ${t.dateKey ? `<span class="meta-mini" style="font-size:11px;"><i class="ti ti-calendar" style="font-size:11px;"></i> ${dateLabel(t.dateKey)}</span>` : ''}
         ${t.due ? `<span class="meta-mini">~ ${escapeHTML(t.due)}</span>` : ''}
         ${t.money ? `<span class="meta-money"><i class="ti ti-wallet" style="font-size:11px;"></i> ${escapeHTML(t.money)}</span>` : ''}
@@ -3284,51 +3189,45 @@ function renderChallengeCard(c) {
   // 상태 배지: 금지형=지킴, 그 외=연속 성공일
   const streak = getChallengeStreak(c);
   const badge = isCompleted
-    ? '🏁'
+    ? '🏁 완료'
     : c.type === 'forbidden'
-      ? `🛡 ${streak}`
-      : streak > 0 ? `🔥 ${streak}` : '';
+      ? `🛡 ${streak}일 지킴`
+      : streak > 0 ? `🔥 ${streak}일 연속` : '🎯 도전 중';
   const daysLeft = Math.max(0, totalDays - daysPassed);
-  const todayChecked2 = c.checks?.[tKey];
+  const todayStatusText = c._weekDone ? '이번 주 목표 달성 🎉' : todayChecked === true ? '오늘 성공 ✓' : todayChecked === 'fail' ? '오늘 실패 기록' : '오늘 아직 미체크';
+  const miniWeek = renderChallengeMiniWeek(c, accent);
 
-  // 오늘 액션 버튼 (인라인, 컴팩트)
-  let actionBtn = '';
-  if (isCompleted) {
-    actionBtn = `<span style="font-size:12px; font-weight:800; color:${accent}; white-space:nowrap;">🎉 달성!</span>`;
-  } else if (c.type === 'forbidden') {
-    actionBtn = `<div style="display:flex; gap:5px; flex-shrink:0;">
-      <button onclick="event.stopPropagation(); checkChallenge(${c.id}, true)" style="border:none; border-radius:9px; padding:7px 10px; background:${todayChecked2===true?'#3B6D11':'white'}; color:${todayChecked2===true?'white':'var(--text-success)'}; font-size:11px; font-weight:800; font-family:inherit; cursor:pointer; white-space:nowrap;">${todayChecked2===true?'지킴 ✓':'지켰어요'}</button>
-      <button onclick="event.stopPropagation(); checkChallenge(${c.id}, 'fail')" style="border:none; border-radius:9px; padding:7px 10px; background:${todayChecked2==='fail'?'#A32D2D':'white'}; color:${todayChecked2==='fail'?'white':'var(--text-danger)'}; font-size:11px; font-weight:800; font-family:inherit; cursor:pointer; white-space:nowrap;">${todayChecked2==='fail'?'실패':'실패'}</button>
-    </div>`;
-  } else if (c._weekDone) {
-    actionBtn = `<span style="font-size:11px; font-weight:800; color:#3B6D11; white-space:nowrap;">🎉 주목표 달성</span>`;
-  } else {
-    actionBtn = `<button onclick="event.stopPropagation(); checkChallenge(${c.id}, ${todayChecked2===true ? 'false' : 'true'})" style="border:none; border-radius:9px; padding:7px 12px; background:${todayChecked2===true?'#3B6D11':'#1A1A1A'}; color:white; font-size:12px; font-weight:800; font-family:inherit; cursor:pointer; white-space:nowrap; flex-shrink:0;">${todayChecked2===true?'완료 ✓':'오늘 완료'}</button>`;
-  }
+  return `<div style="position:relative; overflow:hidden; margin-bottom:12px; padding:14px; border-radius:16px; background:${softBg}; border:0.5px solid ${softBorder};">
+    <div style="position:absolute; right:-18px; top:-22px; font-size:78px; opacity:0.07; pointer-events:none;">${typeIcon}</div>
 
-  const expanded = window._challengeExpanded === c.id;
-  const miniWeek = expanded ? renderChallengeMiniWeek(c, accent) : '';
-
-  return `<div style="position:relative; overflow:hidden; margin-bottom:8px; padding:11px 12px; border-radius:13px; background:${softBg}; border:0.5px solid ${softBorder};">
-    <div style="position:absolute; right:-14px; top:-16px; font-size:56px; opacity:0.06; pointer-events:none;">${typeIcon}</div>
-
-    <div style="display:flex; align-items:center; gap:10px;">
-      <div style="width:38px; height:38px; border-radius:50%; background:conic-gradient(${accent} ${progressPct}%, rgba(255,255,255,0.6) 0); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
-        <div style="width:29px; height:29px; border-radius:50%; background:white; display:flex; align-items:center; justify-content:center; font-size:9px; font-weight:800; color:${accent};">${Math.round(progressPct)}%</div>
-      </div>
-
-      <div style="flex:1; min-width:0;" onclick="window._challengeExpanded = ${expanded ? 'null' : c.id}; renderTodo();">
-        <div style="display:flex; align-items:center; gap:5px;">
-          <span style="font-size:14px; font-weight:800; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHTML(c.title)}</span>
-          ${badge ? `<span style="font-size:10px; font-weight:700; color:${accent}; flex-shrink:0;">${badge}</span>` : ''}
+    <div style="display:flex; align-items:flex-start; gap:10px;">
+      <div style="flex:1; min-width:0;">
+        <div style="display:flex; gap:5px; flex-wrap:wrap; margin-bottom:7px;">
+          <span style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:999px; background:rgba(255,255,255,0.75); color:${accent};">${badge}</span>
+          ${!isCompleted ? `<span style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:999px; background:rgba(255,255,255,0.75); color:var(--text-secondary);">D-${daysLeft}</span>` : ''}
         </div>
-        <div style="font-size:10px; color:var(--text-secondary); margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${progressText} · D-${daysLeft}</div>
+        <div style="font-size:15px; font-weight:800; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHTML(c.title)}</div>
+        <div style="font-size:11px; color:var(--text-secondary); margin-top:3px;">${daysPassed}일째 · ${progressText} · ${todayStatusText}</div>
       </div>
-
-      ${actionBtn}
-      <button onclick="event.stopPropagation(); editChallenge(${c.id})" style="border:none; background:transparent; color:var(--text-tertiary); padding:2px; font-size:15px; cursor:pointer; font-family:inherit; flex-shrink:0;">⋮</button>
+      <div style="width:50px; height:50px; border-radius:50%; background:conic-gradient(${accent} ${progressPct}%, rgba(255,255,255,0.6) 0); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+        <div style="width:39px; height:39px; border-radius:50%; background:white; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; color:${accent};">${Math.round(progressPct)}%</div>
+      </div>
+      <button onclick="event.stopPropagation(); editChallenge(${c.id})" style="border:none; background:transparent; color:var(--text-tertiary); padding:2px; font-size:16px; cursor:pointer; font-family:inherit; flex-shrink:0;">⋮</button>
     </div>
+
     ${miniWeek}
+
+    <div style="display:flex; gap:8px; margin-top:11px;">
+      ${isCompleted
+        ? `<div style="flex:1; text-align:center; padding:11px; border-radius:12px; background:rgba(255,255,255,0.6); font-size:12px; font-weight:800; color:${accent};">🎉 목표 달성!</div>`
+        : c.type === 'forbidden'
+          ? `<button onclick="checkChallenge(${c.id}, true)" style="flex:1; border:none; border-radius:12px; padding:11px; background:${todayChecked===true?'#3B6D11':'white'}; color:${todayChecked===true?'white':'var(--text-success)'}; font-size:12px; font-weight:800; font-family:inherit; cursor:pointer;">${todayChecked===true?'지켰어요 ✓':'오늘도 지켰어요'}</button>
+             <button onclick="checkChallenge(${c.id}, 'fail')" style="flex:1; border:none; border-radius:12px; padding:11px; background:${todayChecked==='fail'?'#A32D2D':'white'}; color:${todayChecked==='fail'?'white':'var(--text-danger)'}; font-size:12px; font-weight:800; font-family:inherit; cursor:pointer;">${todayChecked==='fail'?'실패 기록됨':'실패했어요'}</button>`
+          : c._weekDone
+            ? `<div style="flex:1; text-align:center; padding:12px; border-radius:12px; background:rgba(255,255,255,0.6); font-size:12px; font-weight:800; color:#3B6D11;">🎉 이번 주 목표 달성! (${c._thisWeekCount}/${c.perWeek}회)</div>`
+          : `<button onclick="checkChallenge(${c.id}, ${todayChecked===true ? 'false' : 'true'})" style="flex:1; border:none; border-radius:12px; padding:12px; background:${todayChecked===true?'#3B6D11':'#1A1A1A'}; color:white; font-size:13px; font-weight:800; font-family:inherit; cursor:pointer;">${todayChecked===true?'오늘 완료됨 ✓':'오늘 완료했어요'}</button>`
+      }
+    </div>
   </div>`;
 }
 
@@ -3717,40 +3616,8 @@ function editChallenge(id) {
 
       <div style="padding:14px; background:var(--bg-secondary); border-radius:var(--radius-md); margin-bottom:14px;">
         <div style="font-size:14px; font-weight:600; margin-bottom:4px;">${escapeHTML(c.title)}</div>
-        <div style="font-size:11px; color:var(--text-secondary);">${c.totalDays}일 챌린지 · 시작 ${c.startDate}${c.perWeek ? ` · 주 ${c.perWeek}회` : ''}</div>
+        <div style="font-size:11px; color:var(--text-secondary);">${c.totalDays}일 챌린지 · 시작 ${c.startDate}</div>
       </div>
-
-      <!-- ⚙️ 설정 수정 -->
-      <details style="margin-bottom:14px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); overflow:hidden;">
-        <summary style="padding:12px 14px; font-size:13px; font-weight:600; cursor:pointer; background:var(--bg-secondary); list-style:none;">⚙️ 설정 수정 <span style="font-size:11px; color:var(--text-tertiary); font-weight:400;">(제목·기간 등)</span></summary>
-        <div style="padding:14px;">
-          <div class="field">
-            <div class="field-label">제목</div>
-            <input type="text" id="ce-title" value="${escapeAttr(c.title)}" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit;" />
-          </div>
-          <div class="field">
-            <div class="field-label">총 기간 (일)</div>
-            <input type="number" id="ce-totaldays" value="${Number(c.totalDays) || 0}" min="1" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit;" />
-            <div style="display:flex; gap:6px; margin-top:8px; flex-wrap:wrap;">
-              <button type="button" class="chip" onclick="document.getElementById('ce-totaldays').value=7">7일</button>
-              <button type="button" class="chip" onclick="document.getElementById('ce-totaldays').value=14">14일</button>
-              <button type="button" class="chip" onclick="document.getElementById('ce-totaldays').value=30">30일</button>
-              <button type="button" class="chip" onclick="document.getElementById('ce-totaldays').value=100">100일</button>
-            </div>
-          </div>
-          ${c.type === 'count' ? `
-          <div class="field">
-            <div class="field-label">주 몇 회 <span style="font-size:10px; color:var(--text-tertiary);">(비우면 횟수 챌린지)</span></div>
-            <input type="number" id="ce-perweek" value="${c.perWeek != null ? c.perWeek : ''}" min="1" max="7" placeholder="예: 4" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit;" />
-          </div>
-          <div class="field">
-            <div class="field-label">목표 총 횟수 <span style="font-size:10px; color:var(--text-tertiary);">(비우면 자동 계산)</span></div>
-            <input type="number" id="ce-targetcount" value="${c.targetCount != null ? c.targetCount : ''}" min="1" placeholder="예: 17" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit;" />
-          </div>
-          ` : ''}
-          <button onclick="saveChallengeEdit(${id})" style="width:100%; padding:12px; border:none; border-radius:var(--radius-md); background:var(--text-info); color:white; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit;">설정 저장</button>
-        </div>
-      </details>
 
       <div style="margin-bottom:14px;">
         <div style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:8px;">📅 지난 기록 체크 ${isForbidden ? '(탭: 성공→실패→해제)' : '(탭하면 체크/해제)'}</div>
@@ -3790,37 +3657,6 @@ function deleteChallenge(id) {
     showToast('삭제됨');
     renderTodo();
   }
-}
-
-// ⚙️ 챌린지 설정 수정 저장 (제목·기간·주N회·목표횟수)
-function saveChallengeEdit(id) {
-  const c = challenges.find(x => x.id === id);
-  if (!c) return;
-
-  const title = (document.getElementById('ce-title')?.value || '').trim();
-  if (!title) { showToast('제목을 입력해주세요'); return; }
-  const totalDays = Math.max(1, Number(document.getElementById('ce-totaldays')?.value) || c.totalDays);
-
-  c.title = title;
-  c.totalDays = totalDays;
-
-  if (c.type === 'count') {
-    const pwRaw = document.getElementById('ce-perweek')?.value;
-    const tcRaw = document.getElementById('ce-targetcount')?.value;
-    const perWeek = pwRaw !== '' && pwRaw != null ? Math.max(1, Number(pwRaw)) : null;
-    c.perWeek = perWeek;
-    // 목표 횟수: 직접 입력 우선, 비우면 주N회 기준 자동 계산
-    if (tcRaw !== '' && tcRaw != null) {
-      c.targetCount = Math.max(1, Number(tcRaw));
-    } else if (perWeek) {
-      c.targetCount = Math.round(perWeek * (totalDays / 7));
-    }
-  }
-
-  saveData();
-  showToast('설정이 저장됐어요');
-  closeModal();
-  renderTodo();
 }
 
 function showCompletedChallenges() {
@@ -3971,7 +3807,7 @@ function renderWorkout() {
 
   // 통계
   html += `
-    <div style="display:flex; gap:6px; margin: 4px 0 10px;">
+    <div style="display:flex; gap:8px; margin: 8px 0 14px;">
       <div class="stat-card" style="flex:1;">
         <div class="label">${isWorkoutCurrentMonth() ? '이번 달' : monthLabels[workoutViewMonth]}</div>
         <div class="value" style="color:var(--text-success);">${monthDoneCount}<span style="font-size:11px; color:var(--text-tertiary); font-weight:400;">/${woDaysInMonth}일</span></div>
@@ -5145,6 +4981,126 @@ function renderMoney() {
   // ★ AI 분석 카드
   html += renderMoneyAI(variableSpent, projectedTotal);
 
+  if (typeof window.fixedExpanded === 'undefined') window.fixedExpanded = false;
+
+  html += `<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+    <div onclick="window.fixedExpanded = !window.fixedExpanded; renderMoney();" style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+      <span style="font-size:14px; font-weight:600;">등록된 고정지출 ${budget.fixed.length}개</span>
+      <span style="font-size:11px; color:var(--text-tertiary);">${window.fixedExpanded ? '▲' : '▼'}</span>
+    </div>
+    <div style="display:flex; gap:8px;">
+      ${budget.fixed.length > 0 ? `<button onclick="toggleFixedEditMode()" style="border:none; background:transparent; font-size:12px; color:var(--text-secondary); cursor:pointer; font-family:inherit; font-weight:500;">${window._fixedEditMode ? '완료' : '✏️ 편집'}</button>` : ''}
+      <button onclick="openFixedAddModal()" style="border:none; background:transparent; font-size:12px; color:var(--text-info); cursor:pointer; font-family:inherit; font-weight:500;">+ 추가</button>
+    </div>
+  </div>`;
+
+  if (window.fixedExpanded) {
+    // 편집 모드: 일괄 삭제 바
+    if (window._fixedEditMode) {
+      const selCount = (window._fixedSelected || []).length;
+      html += `<div style="display:flex; gap:6px; margin-bottom:8px; padding:8px; background:var(--bg-secondary); border-radius:8px;">
+        <span style="flex:1; font-size:11px; color:var(--text-secondary); align-self:center;">${selCount}개 선택됨</span>
+        <button onclick="deleteSelectedFixed()" style="border:none; background:${selCount >= 1 ? 'var(--bg-danger)' : 'var(--bg-tertiary)'}; color:${selCount >= 1 ? 'var(--text-danger)' : 'var(--text-tertiary)'}; padding:6px 12px; border-radius:6px; font-size:11px; font-weight:600; cursor:${selCount >= 1 ? 'pointer' : 'default'}; font-family:inherit;">🗑️ 삭제</button>
+      </div>`;
+    }
+    html += `<div class="card" style="padding:0 14px; margin-bottom:10px;">${renderFixedRows()}</div>`;
+  }
+
+  html += `<div style="margin-bottom:14px; text-align:center; font-size:11px; color:var(--text-tertiary);">
+    납부 완료 <b style="color:var(--text-success);">${fixedPaid.toLocaleString()}원</b> · 남음 <b>${fixedRemaining.toLocaleString()}원</b>
+  </div>`;
+
+  // ===== 카테고리별 도넛 차트 (순수 소비 지출만 — 투자 카테고리 제외) =====
+  // 🔧 금·주식·ETF·펀드·달러·예적금·청약·부동산은 '자산 이동'이지 소비가 아니므로
+  //    소비 분석 도넛에서 빼낸다. (안 그러면 금 산 게 식비·카페와 섞여 비율이 왜곡됨)
+  const INVEST_CATS_EXCLUDE = ['주식','국내주식','미국주식','ETF','국내ETF','해외ETF','펀드','채권','금','달러','예적금','청약','부동산'];
+  const expensesOnly = viewMonthExpenses.filter(e => e.type !== 'income' && !INVEST_CATS_EXCLUDE.includes(e.cat));
+  if (expensesOnly.length > 0) {
+    // 카테고리별 합계
+    const catTotals = {};
+    expensesOnly.forEach(e => {
+      catTotals[e.cat] = (catTotals[e.cat] || 0) + Number(e.amt);
+    });
+    const totalExp = Object.values(catTotals).reduce((s, v) => s + v, 0);
+    const catEntries = Object.entries(catTotals).sort((a, b) => b[1] - a[1]);
+
+  if (totalExp > 0) {
+    // 카테고리별 색상
+    const catColors = ['#FF6B6B', '#4ECDC4', '#FFD93D', '#6BCF7F', '#A78BFA', '#FF8E72', '#54A0FF', '#FB7185', '#34D399', '#FBBF24', '#A3A3A3'];
+
+    // SVG 도넛 차트
+    const size = 140;
+    const cx = size / 2;
+    const cy = size / 2;
+    const r = 50;
+    const innerR = 32;
+
+    let cumPct = 0;
+    let donutPaths = '';
+    catEntries.forEach(([cat, amt], i) => {
+      const pct = (amt / totalExp) * 100;
+      const startAngle = (cumPct / 100) * 2 * Math.PI - Math.PI / 2;
+      const endAngle = ((cumPct + pct) / 100) * 2 * Math.PI - Math.PI / 2;
+      cumPct += pct;
+
+      const x1 = cx + r * Math.cos(startAngle);
+      const y1 = cy + r * Math.sin(startAngle);
+      const x2 = cx + r * Math.cos(endAngle);
+      const y2 = cy + r * Math.sin(endAngle);
+      const ix2 = cx + innerR * Math.cos(endAngle);
+      const iy2 = cy + innerR * Math.sin(endAngle);
+      const ix1 = cx + innerR * Math.cos(startAngle);
+      const iy1 = cy + innerR * Math.sin(startAngle);
+      const largeArc = pct > 50 ? 1 : 0;
+
+      const color = catColors[i % catColors.length];
+      donutPaths += `<path d="M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2} L ${ix2} ${iy2} A ${innerR} ${innerR} 0 ${largeArc} 0 ${ix1} ${iy1} Z" fill="${color}" />`;
+    });
+
+    html += `
+      <div style="margin: 18px 0 14px; padding:14px; background:var(--bg-secondary); border-radius:14px;">
+        <div style="font-size:13px; font-weight:600; margin-bottom:10px;">📊 카테고리별 비율</div>
+        <div style="display:flex; align-items:center; gap:14px;">
+          <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="flex-shrink:0;">
+            ${donutPaths}
+            <text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="9" fill="var(--text-tertiary)">총 지출</text>
+            <text x="${cx}" y="${cy + 8}" text-anchor="middle" font-size="11" font-weight="600" fill="var(--text-primary)">${(totalExp / 10000).toFixed(0)}만</text>
+          </svg>
+          <div style="flex:1; min-width:0; max-height:140px; overflow-y:auto;">
+            ${catEntries.slice(0, 8).map(([cat, amt], i) => {
+              const pct = (amt / totalExp) * 100;
+              return `<div style="display:flex; align-items:center; gap:6px; margin-bottom:5px; font-size:11px;">
+                <div style="width:10px; height:10px; border-radius:2px; background:${catColors[i % catColors.length]}; flex-shrink:0;"></div>
+                <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${cat}</span>
+                <span style="font-weight:600;">${pct.toFixed(0)}%</span>
+                <span style="color:var(--text-tertiary); font-size:11px;">${fmtManShort(amt)}</span>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+        ${(() => {
+          const monthDeposit = viewMonthExpenses.filter(e => e.type === 'income').reduce((s, e) => s + Number(e.amt), 0);
+          const finalSpent = Math.max(0, totalExp - monthDeposit);
+          return `<div style="margin-top:12px; padding-top:10px; border-top:0.5px solid var(--border-tertiary); display:flex; justify-content:space-between; align-items:baseline;">
+            <div>
+              <div style="font-size:11px; color:var(--text-tertiary);">총 지출</div>
+              <div style="font-size:14px; font-weight:700;">${totalExp.toLocaleString()}원</div>
+            </div>
+            ${monthDeposit > 0 ? `<div style="text-align:center;">
+              <div style="font-size:11px; color:var(--text-tertiary);">입금</div>
+              <div style="font-size:14px; font-weight:700; color:var(--text-success);">-${monthDeposit.toLocaleString()}원</div>
+            </div>` : ''}
+            <div style="text-align:right;">
+              <div style="font-size:11px; color:var(--text-tertiary);">최종 지출</div>
+              <div style="font-size:16px; font-weight:700; color:var(--text-info);">${finalSpent.toLocaleString()}원</div>
+            </div>
+          </div>`;
+        })()}
+      </div>
+    `;
+  } // end if (totalExp > 0)
+  }
+
   // ===== 📊 월별 지출 추이 막대그래프 (최근 6개월) =====
   if (typeof window.moneyBarExpanded === 'undefined') window.moneyBarExpanded = true;
   (() => {
@@ -5292,97 +5248,6 @@ function renderMoney() {
     html += `</div>`;
   })();
 
-  // ===== 카테고리별 도넛 차트 (순수 소비 지출만 — 투자 카테고리 제외) =====
-  // 🔧 금·주식·ETF·펀드·달러·예적금·청약·부동산은 '자산 이동'이지 소비가 아니므로
-  //    소비 분석 도넛에서 빼낸다. (안 그러면 금 산 게 식비·카페와 섞여 비율이 왜곡됨)
-  const INVEST_CATS_EXCLUDE = ['주식','국내주식','미국주식','ETF','국내ETF','해외ETF','펀드','채권','금','달러','예적금','청약','부동산'];
-  const expensesOnly = viewMonthExpenses.filter(e => e.type !== 'income' && !INVEST_CATS_EXCLUDE.includes(e.cat));
-  if (expensesOnly.length > 0) {
-    // 카테고리별 합계
-    const catTotals = {};
-    expensesOnly.forEach(e => {
-      catTotals[e.cat] = (catTotals[e.cat] || 0) + Number(e.amt);
-    });
-    const totalExp = Object.values(catTotals).reduce((s, v) => s + v, 0);
-    const catEntries = Object.entries(catTotals).sort((a, b) => b[1] - a[1]);
-
-  if (totalExp > 0) {
-    // 카테고리별 색상
-    const catColors = ['#FF6B6B', '#4ECDC4', '#FFD93D', '#6BCF7F', '#A78BFA', '#FF8E72', '#54A0FF', '#FB7185', '#34D399', '#FBBF24', '#A3A3A3'];
-
-    // SVG 도넛 차트
-    const size = 140;
-    const cx = size / 2;
-    const cy = size / 2;
-    const r = 50;
-    const innerR = 32;
-
-    let cumPct = 0;
-    let donutPaths = '';
-    catEntries.forEach(([cat, amt], i) => {
-      const pct = (amt / totalExp) * 100;
-      const startAngle = (cumPct / 100) * 2 * Math.PI - Math.PI / 2;
-      const endAngle = ((cumPct + pct) / 100) * 2 * Math.PI - Math.PI / 2;
-      cumPct += pct;
-
-      const x1 = cx + r * Math.cos(startAngle);
-      const y1 = cy + r * Math.sin(startAngle);
-      const x2 = cx + r * Math.cos(endAngle);
-      const y2 = cy + r * Math.sin(endAngle);
-      const ix2 = cx + innerR * Math.cos(endAngle);
-      const iy2 = cy + innerR * Math.sin(endAngle);
-      const ix1 = cx + innerR * Math.cos(startAngle);
-      const iy1 = cy + innerR * Math.sin(startAngle);
-      const largeArc = pct > 50 ? 1 : 0;
-
-      const color = catColors[i % catColors.length];
-      donutPaths += `<path d="M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2} L ${ix2} ${iy2} A ${innerR} ${innerR} 0 ${largeArc} 0 ${ix1} ${iy1} Z" fill="${color}" />`;
-    });
-
-    html += `
-      <div style="margin: 18px 0 14px; padding:14px; background:var(--bg-secondary); border-radius:14px;">
-        <div style="font-size:13px; font-weight:600; margin-bottom:10px;">📊 카테고리별 비율</div>
-        <div style="display:flex; align-items:center; gap:14px;">
-          <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="flex-shrink:0;">
-            ${donutPaths}
-            <text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="9" fill="var(--text-tertiary)">총 지출</text>
-            <text x="${cx}" y="${cy + 8}" text-anchor="middle" font-size="11" font-weight="600" fill="var(--text-primary)">${(totalExp / 10000).toFixed(0)}만</text>
-          </svg>
-          <div style="flex:1; min-width:0; max-height:140px; overflow-y:auto;">
-            ${catEntries.slice(0, 8).map(([cat, amt], i) => {
-              const pct = (amt / totalExp) * 100;
-              return `<div style="display:flex; align-items:center; gap:6px; margin-bottom:5px; font-size:11px;">
-                <div style="width:10px; height:10px; border-radius:2px; background:${catColors[i % catColors.length]}; flex-shrink:0;"></div>
-                <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${cat}</span>
-                <span style="font-weight:600;">${pct.toFixed(0)}%</span>
-                <span style="color:var(--text-tertiary); font-size:11px;">${fmtManShort(amt)}</span>
-              </div>`;
-            }).join('')}
-          </div>
-        </div>
-        ${(() => {
-          const monthDeposit = viewMonthExpenses.filter(e => e.type === 'income').reduce((s, e) => s + Number(e.amt), 0);
-          const finalSpent = Math.max(0, totalExp - monthDeposit);
-          return `<div style="margin-top:12px; padding-top:10px; border-top:0.5px solid var(--border-tertiary); display:flex; justify-content:space-between; align-items:baseline;">
-            <div>
-              <div style="font-size:11px; color:var(--text-tertiary);">총 지출</div>
-              <div style="font-size:14px; font-weight:700;">${totalExp.toLocaleString()}원</div>
-            </div>
-            ${monthDeposit > 0 ? `<div style="text-align:center;">
-              <div style="font-size:11px; color:var(--text-tertiary);">입금</div>
-              <div style="font-size:14px; font-weight:700; color:var(--text-success);">-${monthDeposit.toLocaleString()}원</div>
-            </div>` : ''}
-            <div style="text-align:right;">
-              <div style="font-size:11px; color:var(--text-tertiary);">최종 지출</div>
-              <div style="font-size:16px; font-weight:700; color:var(--text-info);">${finalSpent.toLocaleString()}원</div>
-            </div>
-          </div>`;
-        })()}
-      </div>
-    `;
-  } // end if (totalExp > 0)
-  }
-
   // ===== 📅 월별 캘린더형 일별 합계 =====
   if (typeof window.moneyCalExpanded === 'undefined') window.moneyCalExpanded = true;
 
@@ -5429,7 +5294,7 @@ function renderMoney() {
         const dowColor = dow === 0 ? 'var(--text-danger)' : dow === 6 ? 'var(--text-info)' : 'var(--text-primary)';
         const dateK = dateKey(calY, calM, d);
 
-        html += `<div onclick="${hasData ? `showDayExpenses('${dateK}')` : `openExpenseModal('${dateK}')`}" style="min-height:42px; padding:3px; border-radius:5px; ${isToday ? 'background:rgba(70,140,255,0.12); cursor:pointer;' : hasData ? 'background:var(--bg-info); cursor:pointer;' : 'background:var(--bg-secondary); cursor:pointer;'} display:flex; flex-direction:column; align-items:center; justify-content:flex-start; font-size:10px;">
+        html += `<div onclick="${hasData ? `showDayExpenses('${dateK}')` : ''}" style="min-height:42px; padding:3px; border-radius:5px; ${isToday ? 'background:rgba(70,140,255,0.12);' : hasData ? 'background:var(--bg-info); cursor:pointer;' : 'background:var(--bg-secondary);'} display:flex; flex-direction:column; align-items:center; justify-content:flex-start; font-size:10px;">
           <span style="font-weight:${isToday ? '700' : '500'}; color:${dowColor};">${d}</span>`;
         if (data) {
           if (data.spent > 0) {
@@ -5446,39 +5311,10 @@ function renderMoney() {
     html += `</div>`;
   }
 
-  if (typeof window.fixedExpanded === 'undefined') window.fixedExpanded = false;
-
-  html += `<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
-    <div onclick="window.fixedExpanded = !window.fixedExpanded; renderMoney();" style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-      <span style="font-size:14px; font-weight:600;">등록된 고정지출 ${budget.fixed.length}개</span>
-      <span style="font-size:11px; color:var(--text-tertiary);">${window.fixedExpanded ? '▲' : '▼'}</span>
-    </div>
-    <div style="display:flex; gap:8px;">
-      ${budget.fixed.length > 0 ? `<button onclick="toggleFixedEditMode()" style="border:none; background:transparent; font-size:12px; color:var(--text-secondary); cursor:pointer; font-family:inherit; font-weight:500;">${window._fixedEditMode ? '완료' : '✏️ 편집'}</button>` : ''}
-      <button onclick="openFixedAddModal()" style="border:none; background:transparent; font-size:12px; color:var(--text-info); cursor:pointer; font-family:inherit; font-weight:500;">+ 추가</button>
-    </div>
-  </div>`;
-
-  if (window.fixedExpanded) {
-    // 편집 모드: 일괄 삭제 바
-    if (window._fixedEditMode) {
-      const selCount = (window._fixedSelected || []).length;
-      html += `<div style="display:flex; gap:6px; margin-bottom:8px; padding:8px; background:var(--bg-secondary); border-radius:8px;">
-        <span style="flex:1; font-size:11px; color:var(--text-secondary); align-self:center;">${selCount}개 선택됨</span>
-        <button onclick="deleteSelectedFixed()" style="border:none; background:${selCount >= 1 ? 'var(--bg-danger)' : 'var(--bg-tertiary)'}; color:${selCount >= 1 ? 'var(--text-danger)' : 'var(--text-tertiary)'}; padding:6px 12px; border-radius:6px; font-size:11px; font-weight:600; cursor:${selCount >= 1 ? 'pointer' : 'default'}; font-family:inherit;">🗑️ 삭제</button>
-      </div>`;
-    }
-    html += `<div class="card" style="padding:0 14px; margin-bottom:10px;">${renderFixedRows()}</div>`;
-  }
-
-  html += `<div style="margin-bottom:14px; text-align:center; font-size:11px; color:var(--text-tertiary);">
-    납부 완료 <b style="color:var(--text-success);">${fixedPaid.toLocaleString()}원</b> · 남음 <b>${fixedRemaining.toLocaleString()}원</b>
-  </div>`;
-
   // ===== 날짜별 내역 그룹 (전체 보기 + 편집 모드) =====
   const allMonthExp = viewMonthExpenses.slice().sort((a, b) => (b.dateKey || '').localeCompare(a.dateKey || ''));
   const isEditMode = window.expenseEditMode || false;
-  if (typeof window.expenseListExpanded === 'undefined') window.expenseListExpanded = false;
+  if (typeof window.expenseListExpanded === 'undefined') window.expenseListExpanded = true;
   const listExpanded = window.expenseListExpanded || isEditMode;
 
   html += `<div style="display:flex; justify-content:space-between; align-items:center; margin: 18px 0 8px;">
@@ -9744,9 +9580,7 @@ function deleteExpense(id) {
 // ===== 📸 자산 캡처 OCR (Gemini Vision) =====
 // 보정 배너에서 호출 — 증권사 잔고 캡처 파일 선택창을 연다.
 // 캡처를 올리면 기존 OCR 검토 흐름으로 이어지고, 자동매수 자산은 '보정'이 기본 선택됨.
-function openAssetCaptureForCorrection(preferAssetId) {
-  // 🔧 상세화면에서 호출 시 그 자산을 우선 보정 대상으로 (검토 모달에서 correct로 잡힘)
-  window._preferCorrectAssetId = (preferAssetId != null) ? preferAssetId : null;
+function openAssetCaptureForCorrection() {
   if (!window.GEMINI_API_KEY) {
     showToast('AI 키를 먼저 설정해주세요 (설정 → AI 키)');
     return;
@@ -9814,7 +9648,6 @@ async function processAssetCapture(input) {
   let successCount = 0;
   let failCount = 0;
   let lastFailReason = ''; // 🔧 마지막 실패 사유
-  let capInfo = null; // 🔧 OCR이 읽은 캡처 기준일 (confidence 높은 것 우선)
 
   for (let idx = 0; idx < files.length; idx++) {
     const file = files[idx];
@@ -9866,10 +9699,18 @@ async function processAssetCapture(input) {
    - 부동산: 현재 시세 (800000000 등)
 
 3. **priceCurrency (매입가 통화)**: 주식/ETF/펀드만 — price가 어떤 통화인지
-   - ⭐ 화면에 "원화 평균단가", "원화 매입가", "원화 평균매입가" 같은 원화 기준 단가가 보이면
+   - ⚠️⚠️ 가장 흔한 실수: 미국 종목의 달러 매입가를 원화로 잘못 표시하는 것. 아래 규칙을 반드시 지킬 것.
+   - ⭐ **종목이 미국주식/해외ETF(영문 티커 GOOGL·QQQM·SPY·AAPL 등)이면 매입가·현재가는 거의 항상 달러(USD)다.**
+     → 화면 제목이 "원화 평가 현황"이라도, 매입가/현재가 칸 숫자는 달러인 경우가 대부분.
+     (키움 등은 매입가·현재가는 달러로, 평가금액·매입금액만 원화로 섞어서 보여줌)
+   - ⭐ **결정적 단서 — 매입가 숫자 모양으로 통화 구분:**
+     · 매입가가 소수점을 가진 작은 숫자(예: 349.68, 297.07, 86.58, 195.40) → **USD** (미국 주식 달러 단가)
+     · 매입가가 소수점 없는 큰 정수(예: 70000, 27360, 536837) → **KRW** (원화 단가)
+     · 즉 "349.6800"처럼 소수점 4자리로 보이면 그건 원화가 아니라 달러다. 절대 KRW로 넣지 말 것.
+   - ⭐ 화면에 "원화 평균단가/원화 매입가/원화 평균매입가"라고 **명시적으로 '원화'라고 적힌** 단가가 따로 보이면
      → 그 원화 숫자를 price에, priceCurrency="KRW" (이게 가장 정확함! 환율 불필요)
-   - 달러 단가($, USD)만 보이면 → 그 달러 숫자를 price에, priceCurrency="USD"
-   - 원, 원화이거나 한국 종목이면 → "KRW"
+   - 그 외 달러 단가($, USD, 소수점 형태)면 → 그 달러 숫자를 price에, priceCurrency="USD"
+   - 한국 종목(6자리 숫자 티커)이면 → "KRW"
    - 애매하면 한국 종목은 "KRW", 미국 종목은 "USD"
    - ⚠️ 절대 직접 환산하지 말 것 — 화면 숫자를 그대로 두고 통화만 표시
 
@@ -9890,6 +9731,9 @@ async function processAssetCapture(input) {
 
 6. **profitPct (수익률 %)**: 화면에 보이는 그 종목의 수익률 (예: 12.5, -3.2)
    - "수익률", "손익률", "평가손익률" 항목의 % 숫자. 부호 그대로 (마이너스면 음수)
+   - ⭐⭐ 이 값은 매우 중요하다. 화면에 수익률 %가 보이면 **반드시** 넣을 것.
+     앱이 이 수익률로 매입가를 검산/역산하므로, 통화를 헷갈려 매입가가 틀려도 수익률만 정확하면 바로잡을 수 있다.
+   - 부호 주의: 빨강/플러스(+)는 양수, 파랑/마이너스(-)는 음수. 화면 색이 아니라 +/- 부호와 숫자를 그대로.
    - 안 보이면 생략
 
 7. **profitAmount (평가손익 금액, 원화)**: 화면에 보이는 평가손익 (원화, 예: 350000, -82000)
@@ -9900,22 +9744,16 @@ async function processAssetCapture(input) {
 - 키움 SPY 3주 / 토스 SPY 5주 → SPY 두 번 추출 (앱이 합산 처리)
 
 📤 출력 (JSON만, 안 보이는 필드는 생략):
-{"captureDate":"2026-06-19","captureDateLabel":"조회일","captureDateConfidence":"high","items":[
+{"items":[
   {"type":"주식","name":"삼성전자","qty":10,"price":70000,"priceCurrency":"KRW","ticker":"005930","evalAmount":720000,"profitPct":2.9,"profitAmount":20000},
   {"type":"ETF","name":"TIGER 미국S&P500","qty":9,"price":27360,"priceCurrency":"KRW","ticker":"360750"},
   {"type":"주식","name":"애플","qty":3,"price":195.4,"priceCurrency":"USD","avgBuyRate":1342,"ticker":"AAPL","evalAmount":850000,"profitPct":8.1},
+  {"type":"주식","name":"알파벳 A","qty":1,"price":349.68,"priceCurrency":"USD","ticker":"GOOGL","evalAmount":525119,"profitPct":-2.43,"profitAmount":-13111},
+  {"type":"해외ETF","name":"나스닥 100 인베스코 ETF","qty":3.523,"price":297.07,"priceCurrency":"USD","ticker":"QQQM","evalAmount":1610481,"profitPct":-0.02,"profitAmount":-469},
   {"type":"금","name":"신한 골드뱅킹","qty":3.75,"price":218860,"ticker":""},
   {"type":"예적금","name":"토스 정기예금","qty":1,"price":5000000,"ticker":""},
   {"type":"청약","name":"KB 주택청약","qty":1,"price":1500000,"ticker":""}
 ]}
-
-📅 captureDate (캡처 기준일) 추출 규칙:
-- 보유잔고/평가금액 화면이면 화면 상단의 "조회일" 또는 "평가 기준일"을 captureDate로 (YYYY-MM-DD)
-- captureDateLabel: 그 날짜의 실제 라벨 ("조회일", "평가기준일", "기준일" 등)
-- 화면에 조회일/기준일이 명확히 보이면 captureDateConfidence="high"
-- 날짜가 여럿이거나(체결일·주문일 섞임) 어떤 게 기준일인지 애매하면 가장 위쪽 기준일을 쓰되 confidence="mid" 또는 "low"
-- 날짜가 전혀 안 보이면 captureDate는 생략 (앱이 오늘 날짜로 처리)
-- ⚠️ 체결일·주문일·입금일을 기준일로 착각하지 말 것. 보유잔고 화면의 '조회/평가 기준' 날짜가 우선
 
 ❌ 분석 불가 (화면에 자산이 정말 하나도 없을 때만):
 {"items":[],"error":"구체적 이유"}
@@ -10005,12 +9843,6 @@ async function processAssetCapture(input) {
         it._sourceImg = `이미지 ${idx + 1}/${files.length}`;
       });
       allItems.push(...parsed.items);
-      // 🔧 캡처 기준일 수집 — confidence 우선순위(high>mid>low)로 가장 신뢰도 높은 것 채택
-      if (parsed.captureDate && /^\d{4}-\d{2}-\d{2}$/.test(parsed.captureDate)) {
-        const rank = c => (c === 'high' ? 3 : c === 'mid' ? 2 : c === 'low' ? 1 : 0);
-        const cand = { date: parsed.captureDate, label: parsed.captureDateLabel || '기준일', conf: parsed.captureDateConfidence || 'low' };
-        if (!capInfo || rank(cand.conf) > rank(capInfo.conf)) capInfo = cand;
-      }
       successCount++;
     } catch (e) {
       console.error(`이미지 ${idx + 1} 오류:`, e);
@@ -10071,10 +9903,14 @@ async function processAssetCapture(input) {
   const mergedItems = Object.values(mergedMap).map(m => {
     const totQty = m._qtySum;
     const avg = totQty > 0 ? m._costSum / totQty : num(m.price);
+    // 🔧 달러(USD) 단가는 소수점을 보존해야 한다 (예: $349.68 → 350으로 뭉개지면 안 됨).
+    //    원화(KRW) 단가만 정수 반올림. 통화 미상이면 소수점이 의미 있을 수 있으니 보존.
+    const isUsd = (m.priceCurrency === 'USD');
+    const roundedAvg = isUsd ? parseFloat(avg.toFixed(4)) : Math.round(avg);
     const out = {
       ...m,
       qty: parseFloat(totQty.toFixed(4)),
-      price: Math.round(avg),                       // 가중평균 평단
+      price: roundedAvg,                            // 가중평균 평단 (USD는 소수점 보존)
       evalAmount: m._evalSum > 0 ? Math.round(m._evalSum) : m.evalAmount,
       profitAmount: m._profitSum !== 0 ? Math.round(m._profitSum) : m.profitAmount,
     };
@@ -10089,7 +9925,7 @@ async function processAssetCapture(input) {
   }
 
   showToast(`✅ ${files.length}장에서 ${mergedItems.length}개 자산 추출됨`);
-  openAssetReviewModal(mergedItems, capInfo);
+  openAssetReviewModal(mergedItems);
 
   if (!Array.isArray(input) && input) input.value = '';
 }
@@ -10556,15 +10392,6 @@ function saveAutobuyReview() {
         // 🔧 캡처로 회차를 맞췄으므로 '보정 날짜' 기록 (안 그러면 "아직 안 맞춰졌어요" 경고가 계속 뜸)
         asset.ocrSnapshot = {
           date: todayKey(),
-          qty: (Number(asset.qty) > 0) ? Number(asset.qty) : (asset.ocrSnapshot?.qty ?? null),  // 🔧 회차 반영 후 확정 수량
-          buyAmount: (() => {                                                                      // 🔧 lot 합(exactAmount 우선)으로 확정 원금
-            if (!Array.isArray(asset.lots)) return asset.ocrSnapshot?.buyAmount ?? null;
-            const t = asset.lots.reduce((s, l) => {
-              const ex = Number(l.exactAmount ?? 0);
-              return s + (ex > 0 ? ex : (Number(l.qty)||0) * (Number(l.price)||0));
-            }, 0);
-            return t > 0 ? Math.round(t) : (asset.ocrSnapshot?.buyAmount ?? null);
-          })(),
           evalAmount: (it.evalAmount != null && Number(it.evalAmount) > 0) ? Number(it.evalAmount) : (asset.ocrSnapshot?.evalAmount ?? null),
           profitPct: (it.profitPct != null && isFinite(Number(it.profitPct))) ? Number(it.profitPct) : (asset.ocrSnapshot?.profitPct ?? null),
           profitAmount: (it.profitAmount != null && isFinite(Number(it.profitAmount))) ? Number(it.profitAmount) : (asset.ocrSnapshot?.profitAmount ?? null),
@@ -10805,11 +10632,7 @@ function applyFixedReview() {
   render(); // 🔧 현재 탭 유지
 }
 
-function openAssetReviewModal(items, capInfo) {
-  // 🔧 캡처 기준일: OCR이 읽었으면 그 값, 없으면 오늘
-  window._captureDateInfo = capInfo || null;
-  window._captureDate = (capInfo && capInfo.date) ? capInfo.date : todayKey();
-  const _preferId = window._preferCorrectAssetId; // 🔧 이번 검토에만 적용
+function openAssetReviewModal(items) {
   // 각 항목에 기존 자산 매칭 (티커 우선) + 액션
   window._assetReviewItems = items.map((it, i) => {
     const type = it.type || '주식';
@@ -10830,20 +10653,14 @@ function openAssetReviewModal(items, capInfo) {
       const typeOk = f.assetInfo.type === existing.type;
       return tickerMatch || (nameMatch && typeOk);
     });
-    // 🔧 상세화면에서 '이 자산 보정'으로 들어왔으면 해당 자산을 우선 correct로 고정
-    let action = existing ? (linkedAuto ? 'correct' : 'merge') : 'new';
-    if (_preferId != null && existing && existing.id === _preferId) {
-      action = 'correct';
-    }
     return {
       ...it,
       _checked: true,
       _id: i,
       _existingId: existing?.id || null,
-      _action: action, // correct | merge | new | skip
+      _action: existing ? (linkedAuto ? 'correct' : 'merge') : 'new', // correct | merge | new | skip
     };
   });
-  window._preferCorrectAssetId = null; // 🔧 사용 후 초기화
 
   window._renderAssetReview = () => {
     const list = window._assetReviewItems.map((it, i) => {
@@ -10968,20 +10785,6 @@ function openAssetReviewModal(items, capInfo) {
         🔗 <b>합산</b>: 기존에 더하기 · ✨ <b>신규</b>: 새 자산으로
       </div>
 
-      ${(() => {
-        const ci = window._captureDateInfo;
-        const conf = ci?.conf || 'none';
-        let hint, hintColor;
-        if (conf === 'high') { hint = `OCR이 화면의 ${ci.label || '조회일'}을 기준일로 인식했어요.`; hintColor = 'var(--text-success)'; }
-        else if (conf === 'mid' || conf === 'low') { hint = '날짜 인식이 확실하지 않아요. 필요하면 수정하세요.'; hintColor = '#C9863A'; }
-        else { hint = '화면에서 날짜를 못 찾아 오늘로 설정했어요. 캡처한 날짜가 다르면 바꿔주세요.'; hintColor = 'var(--text-tertiary)'; }
-        return `<div style="padding:11px 12px; background:var(--bg-secondary); border-radius:8px; margin-bottom:12px;">
-          <div style="font-size:11px; font-weight:600; color:var(--text-secondary); margin-bottom:6px;">📅 캡처 기준일</div>
-          <input type="date" id="capture-date-input" value="${window._captureDate}" onchange="window._captureDate = this.value;" style="width:100%; padding:9px 10px; border:0.5px solid var(--border-tertiary); border-radius:7px; font-size:13px; font-family:inherit; background:white; color:var(--text-primary);" />
-          <div style="font-size:10px; color:${hintColor}; margin-top:5px; line-height:1.5;">${hint}</div>
-        </div>`;
-      })()}
-
       <div id="asset-review-list" style="max-height:60vh; overflow-y:auto;"></div>
     </div>
   `;
@@ -11038,7 +10841,7 @@ function saveAssetReviewItems() {
   let addedCount = 0;
   let mergedCount = 0;
   let correctedCount = 0;
-  const today = (window._captureDate && /^\d{4}-\d{2}-\d{2}$/.test(window._captureDate)) ? window._captureDate : todayKey(); // 🔧 캡처 기준일 우선(OCR 인식/사용자 수정), 없으면 오늘
+  const today = todayKey(); // 🔧 UTC 밀림 방지
 
   // 🔧 달러 매입가가 하나라도 있으면 환율 받아둠 (원화 환산용)
   const hasUSD = selected.some(it => it.priceCurrency === 'USD');
@@ -11056,7 +10859,26 @@ function saveAssetReviewItems() {
     // 🔧 달러 매입가 → 원화 환산 (lot은 항상 원화로 저장)
     //    OCR이 화면에서 평균 매입 환율을 읽었으면 그 환율로, 못 읽었으면 오늘 환율로 폴백
     let priceNote = '';
-    if (it.priceCurrency === 'USD' && rate) {
+    // 🛡️ 통화 오인 안전장치 (가장 신뢰도 높은 보정):
+    //    화면에 '원화 평가금액'과 '수익률(%)'이 같이 있으면, 통화를 어떻게 읽었든
+    //    원화 평단 = (평가금액 / 수량) / (1 + 수익률/100) 으로 역산한다.
+    //    예) 키움: 매입가 $349.68을 OCR이 원화로 오인해도, 평가금액 525,119원 + 수익률 -2.43%가
+    //        있으면 올바른 원화 평단(약 536,837원)이 복원되어 수익률이 키움과 일치한다.
+    const _evalKRW = Number(it.evalAmount) || 0;
+    const _pct = (it.profitPct != null && isFinite(Number(it.profitPct))) ? Number(it.profitPct) : null;
+    let _backCalcDone = false;
+    if (isStockLikeType(type) && qty > 0 && _evalKRW > 0 && _pct != null && _pct > -100) {
+      const costBasisKRW = _evalKRW / (1 + _pct / 100); // 총 매입원금(원화)
+      const avgKRW = Math.round(costBasisKRW / qty);     // 원화 평단
+      if (avgKRW > 0) {
+        price = avgKRW;
+        priceNote = ` (평가금액 ${Math.round(_evalKRW).toLocaleString()}원·수익률 ${_pct}%에서 원화 평단 역산)`;
+        _backCalcDone = true;
+      }
+    }
+    if (_backCalcDone) {
+      // 이미 원화 평단으로 확정 — 추가 환산 불필요
+    } else if (it.priceCurrency === 'USD' && rate) {
       const usdPrice = price;
       const ocrRate = Number(it.avgBuyRate) || 0;
       const useRate = ocrRate > 0 ? ocrRate : rate;
@@ -11122,8 +10944,6 @@ function saveAssetReviewItems() {
           ? Number(it.profitPct) : null;
         existing.ocrSnapshot = {
           date: today,
-          qty: realQty > 0 ? realQty : null,           // 🔧 캡처 시점 확정 수량 (기준점)
-          buyAmount: realCost > 0 ? realCost : null,    // 🔧 캡처 시점 확정 매입원금
           evalAmount: evalAmt > 0 ? evalAmt : null,
           profitPct: ocrProfitPct,
           profitAmount: (it.profitAmount != null && isFinite(Number(it.profitAmount)))
@@ -11894,30 +11714,6 @@ function openTodoModal(forDateKey, editTodoObj) {
       </div>
 
       <div class="field">
-        <div class="field-label">🔁 반복 <span style="font-size:10px; color:var(--text-tertiary);">(선택)</span></div>
-        <div style="display:flex; gap:6px; flex-wrap:wrap;" id="repeat-grid">
-          ${[
-            {v:'none', label:'안 함'},
-            {v:'daily', label:'매일'},
-            {v:'weekly', label:'매주'},
-            {v:'monthly', label:'매월'}
-          ].map(({v, label}) => {
-            const cur = (isEdit && editTodoObj.repeat?.type) ? editTodoObj.repeat.type : 'none';
-            return `<button type="button" class="chip ${cur === v ? 'active' : ''}" data-rep="${v}" onclick="onRepeatTypeChange('${v}')" style="flex:1; min-width:64px;">${label}</button>`;
-          }).join('')}
-        </div>
-        <div id="repeat-weekdays" style="display:${(isEdit && editTodoObj.repeat?.type === 'weekly') ? 'flex' : 'none'}; gap:5px; margin-top:8px; flex-wrap:wrap;">
-          ${['일','월','화','수','목','금','토'].map((d, i) => {
-            const sel = (isEdit && Array.isArray(editTodoObj.repeat?.days)) ? editTodoObj.repeat.days.includes(i) : false;
-            return `<button type="button" class="chip ${sel ? 'active' : ''}" data-wday="${i}" onclick="this.classList.toggle('active')" style="flex:1; min-width:38px; padding:8px 4px;">${d}</button>`;
-          }).join('')}
-        </div>
-        <div id="repeat-hint" style="display:${(isEdit && editTodoObj.repeat?.type && editTodoObj.repeat.type !== 'none') ? 'block' : 'none'}; font-size:10px; color:var(--text-tertiary); margin-top:6px; line-height:1.5;">
-          위 날짜를 시작일로 반복돼요. 매주는 요일을 골라주세요. (종료일 없이 계속 반복)
-        </div>
-      </div>
-
-      <div class="field">
         <div class="field-label">📝 메모 <span style="font-size:10px; color:var(--text-tertiary);">(선택)</span></div>
         <textarea id="todo-memo" placeholder="세부 내용, 준비물, 링크 등" rows="3" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit; resize:vertical;">${isEdit && editTodoObj.memo ? editTodoObj.memo.replace(/</g,'&lt;') : ''}</textarea>
       </div>
@@ -11985,17 +11781,6 @@ function setTodoDate(preset) {
   input.value = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 
-// 🔁 반복 유형 선택 — 칩 활성 토글 + 요일 선택/안내 표시
-function onRepeatTypeChange(type) {
-  document.querySelectorAll('#repeat-grid .chip').forEach(b => {
-    b.classList.toggle('active', b.dataset.rep === type);
-  });
-  const wd = document.getElementById('repeat-weekdays');
-  const hint = document.getElementById('repeat-hint');
-  if (wd) wd.style.display = (type === 'weekly') ? 'flex' : 'none';
-  if (hint) hint.style.display = (type && type !== 'none') ? 'block' : 'none';
-}
-
 function saveTodo(editId) {
   const title = document.getElementById('todo-title').value.trim();
   if (!title) { showToast('내용을 입력해주세요'); return; }
@@ -12004,22 +11789,6 @@ function saveTodo(editId) {
   const flag = modal.querySelector('.toggle').classList.contains('on');
   const time = document.getElementById('todo-time')?.value || '';
   const memo = document.getElementById('todo-memo')?.value.trim() || '';
-
-  // 🔁 반복 설정 읽기
-  const repType = document.querySelector('#repeat-grid .chip.active')?.dataset.rep || 'none';
-  let repeat = null;
-  if (repType === 'daily' || repType === 'monthly') {
-    repeat = { type: repType };
-  } else if (repType === 'weekly') {
-    const days = Array.from(document.querySelectorAll('#repeat-weekdays .chip.active')).map(b => Number(b.dataset.wday));
-    if (days.length > 0) {
-      repeat = { type: 'weekly', days: days.sort((a,b)=>a-b) };
-    } else {
-      // 요일 미선택 시 시작일 요일로 기본 지정
-      const [yy, mm, dd] = (dateKeyVal || todayKey()).split('-').map(Number);
-      repeat = { type: 'weekly', days: [new Date(yy, mm-1, dd).getDay()] };
-    }
-  }
 
   if (editId) {
     // 수정
@@ -12031,8 +11800,6 @@ function saveTodo(editId) {
       t.flag = flag;
       t.time = time;
       t.memo = memo;
-      t.repeat = repeat;
-      if (!repeat) delete t.repeatDone; // 반복 해제 시 체크기록 정리
     }
     showToast('수정됨');
   } else {
@@ -12046,9 +11813,8 @@ function saveTodo(editId) {
       time,
       memo,
       done: false,
-      repeat,
     });
-    showToast(repeat ? `"${title}" 반복 할일 추가됨` : `"${title}" 추가됨`);
+    showToast(`"${title}" 추가됨`);
   }
   saveData();
   closeModal();
@@ -12586,24 +12352,6 @@ function buildAssetDetailCard(a, live) {
       <div style="padding:14px; background:var(--bg-secondary); border-radius:12px;">
         ${body}
         ${holdInfo ? `<div style="font-size:11px; color:var(--text-tertiary); margin-top:12px; padding-top:10px; border-top:0.5px solid var(--border-tertiary);">${holdInfo}</div>` : ''}
-        ${(() => {
-          const p = getAssetProvenance(a);
-          const lab = provenanceLabel(p);
-          if (!lab) return '';
-          const accText = p.accuracy === 'high' ? '높음' : p.accuracy === 'mid' ? '보통 (추정 포함)' : p.accuracy === 'low' ? '낮음 (보정 권장)' : '미보정';
-          const accColor = p.accuracy === 'high' ? '#3B6D11' : p.accuracy === 'mid' ? '#2D7BC9' : p.accuracy === 'low' ? '#C9863A' : 'var(--text-tertiary)';
-          return `<div style="margin-top:12px; padding-top:10px; border-top:0.5px solid var(--border-tertiary);">
-            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
-              <span style="font-size:11px; color:var(--text-tertiary);">📌 보정 기준</span>
-              <span style="font-size:11px; font-weight:700; color:${accColor};">정확도 ${accText}</span>
-            </div>
-            <div style="font-size:11px; color:var(--text-secondary); line-height:1.6;">
-              ${p.baseDate ? `· 기준: <b>${p.baseDate}</b> 증권사 보정${p.daysSince != null ? ` (${p.daysSince}일 전)` : ''}` : '· 증권사 보정 이력 없음'}
-              ${p.estimatedCount > 0 ? `<br>· 이후 자동매수 추정 <b>${p.estimatedCount}건</b> 포함 (라이브 시세로 평가)` : ''}
-            </div>
-            <button onclick="openAssetCaptureForCorrection(${a.id})" style="width:100%; margin-top:10px; border:none; background:var(--bg-info); color:var(--text-info); padding:9px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">📸 증권사 캡처로 보정하기</button>
-          </div>`;
-        })()}
       </div>
 
       <div style="display:flex; gap:8px; margin-top:12px;">
@@ -13026,16 +12774,13 @@ function renderAsset() {
           const fxWarn = live.fxRateMissing
             ? `<span style="color:var(--text-warning); font-size:10px;" title="평균 매입 환율 미입력 — 환차손익이 빠져 증권사 수익률과 다를 수 있어요. 자산 수정에서 입력하세요.">⚠️ 환율</span>`
             : '';
-          // 🔧 목록에선 간결하게 — 미보정/오래된 보정일 때만 작은 신호. 자세한 출처는 상세에서.
+          // 🔧 자동매수 lot이 있는데 보정(OCR/회차수정)이 한 번도 안 됐으면 → 추정치 표시
           const _lots = a.lots || [];
           const _hasAuto = _lots.some(l => l.autoBuy);
-          const _prov = getAssetProvenance(a);
-          let estTag = '';
-          if (_prov.accuracy === 'none' && _hasAuto) {
-            estTag = `<span onclick="event.stopPropagation(); openAssetCaptureForCorrection();" style="color:var(--text-tertiary); font-size:10px; cursor:pointer; text-decoration:underline dotted;" title="자동매수 추정치예요. 탭하면 증권사 캡처로 보정할 수 있어요.">≈추정</span>`;
-          } else if (_prov.accuracy === 'low') {
-            estTag = `<span onclick="event.stopPropagation(); openAssetCaptureForCorrection();" style="color:#C9863A; font-size:10px; cursor:pointer;" title="증권사 보정이 오래됐어요. 탭하면 다시 보정할 수 있어요.">🔄</span>`;
-          }
+          const _isCorrected = !!a.ocrSnapshot || _lots.some(l => l.exactAmount != null && Number(l.exactAmount) > 0);
+          const estTag = (_hasAuto && !_isCorrected)
+            ? `<span onclick="event.stopPropagation(); openAssetCaptureForCorrection();" style="color:var(--text-tertiary); font-size:10px; cursor:pointer; text-decoration:underline dotted;" title="자동매수 추정치예요. 탭하면 증권사 캡처로 보정할 수 있어요.">≈추정</span>`
+            : '';
           // 🔧 보유 수량 표시 (정수면 그대로, 소수면 4자리)
           const qtyStr = Number.isInteger(Number(a.qty))
             ? Number(a.qty).toLocaleString()
@@ -17285,17 +17030,20 @@ function renderAssetMarket(total, byType) {
   // 1) AI 시장 브리핑
   html += `
     <div id="ai-market-briefing" style="margin-bottom:14px;">
-      <div class="ai-card" style="margin-bottom:0;">
+      <div style="padding:18px; background:linear-gradient(135deg, #1A1A1A 0%, #2D2D2D 100%); border-radius:14px; color:white;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-          <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:12px;"></i> AI 시장 브리핑</div>
-          <button onclick="loadAIBriefing(true)" style="border:none; background:rgba(13,148,136,0.12); color:#0F766E; padding:5px 10px; border-radius:6px; font-size:11px; cursor:pointer; font-family:inherit;">
+          <div style="display:flex; align-items:center; gap:6px;">
+            <i class="ti ti-sparkles" style="font-size:14px; color:#FFD700;"></i>
+            <span style="font-size:11px; font-weight:600; letter-spacing:0.5px;">AI 시장 브리핑</span>
+          </div>
+          <button onclick="loadAIBriefing(true)" style="border:none; background:rgba(255,255,255,0.15); color:white; padding:5px 10px; border-radius:6px; font-size:11px; cursor:pointer; font-family:inherit;">
             <i class="ti ti-refresh" style="font-size:11px;"></i> 새로고침
           </button>
         </div>
-        <div id="ai-briefing-content" class="ai-text" style="font-size:12px; line-height:1.7;">
+        <div id="ai-briefing-content" style="font-size:12px; line-height:1.7; opacity:0.92;">
           <div style="display:flex; align-items:center; gap:8px; padding:14px 0;">
-            <div class="spinner"></div>
-            <span style="font-size:11px;">AI가 시장 상황 분석 중...</span>
+            <div class="spinner" style="border-color:rgba(255,255,255,0.3); border-top-color:white;"></div>
+            <span style="font-size:11px; opacity:0.8;">AI가 시장 상황 분석 중...</span>
           </div>
         </div>
       </div>
@@ -17705,8 +17453,8 @@ function renderAICoaching(total, byType) {
 
     <div class="ai-card" style="margin-bottom:14px;">
       <div style="display:flex; justify-content:space-between; align-items:center;">
-        <div class="ai-badge" style="background:rgba(99,91,205,0.12); color:#5B53C9;"><i class="ti ti-trending-up" style="font-size:11px;"></i> 미래 자산 시뮬레이션</div>
-        <button onclick="openSimSettings()" style="border:none; background:rgba(99,91,205,0.12); color:#5B53C9; padding:4px 10px; border-radius:999px; font-size:11px; font-weight:500; cursor:pointer; font-family:inherit;">⚙️ 조정</button>
+        <div class="ai-badge" style="background:rgba(255,255,255,0.15); color:white;"><i class="ti ti-trending-up" style="font-size:11px;"></i> 미래 자산 시뮬레이션</div>
+        <button onclick="openSimSettings()" style="border:none; background:rgba(255,255,255,0.15); color:white; padding:4px 10px; border-radius:999px; font-size:11px; font-weight:500; cursor:pointer; font-family:inherit;">⚙️ 조정</button>
       </div>
       <div style="margin-top:10px;">
         <div style="font-size:11px; opacity:0.85; margin-bottom:8px; line-height:1.5;">
@@ -17724,7 +17472,7 @@ function renderAICoaching(total, byType) {
           </div>
           <div style="flex:1;">
             <div style="font-size:11px; opacity:0.6;">10년 후</div>
-            <div style="font-size:14px; font-weight:600; color:#C9863A;">${formatMoney(expected10Y)}</div>
+            <div style="font-size:14px; font-weight:600; color:#FFD66E;">${formatMoney(expected10Y)}</div>
           </div>
         </div>
         <div style="font-size:10px; opacity:0.5; margin-top:6px;">실제와 다를 수 있음 · ⚙️로 직접 조정 가능</div>
@@ -17763,7 +17511,7 @@ async function loadAIAssetCoach(total, byType, expected1Y, expected3Y, expected1
     container.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
         <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 자산 코치</div>
-        <button onclick="delete aiCache['${cacheKey}']; loadAIAssetCoach(${total}, ${byTypeStr}, ${expected1Y}, ${expected3Y}, ${expected10Y}, true);" style="border:none; background:transparent; color:var(--text-tertiary); opacity:0.9; padding:2px 6px; font-size:11px; cursor:pointer; font-family:inherit;">
+        <button onclick="delete aiCache['${cacheKey}']; loadAIAssetCoach(${total}, ${byTypeStr}, ${expected1Y}, ${expected3Y}, ${expected10Y}, true);" style="border:none; background:transparent; color:white; opacity:0.7; padding:2px 6px; font-size:11px; cursor:pointer; font-family:inherit;">
           <i class="ti ti-refresh" style="font-size:11px;"></i>
         </button>
       </div>
@@ -17966,12 +17714,12 @@ function openAIKeyModal() {
         <button class="modal-save" onclick="saveAIKey()">저장</button>
       </div>
 
-      <div style="padding:14px; background:linear-gradient(135deg, #EAF6F4 0%, #E0F0EE 100%); border:1px solid rgba(13,148,136,0.28); border-left:4px solid #0D9488; border-radius:12px; color:var(--text-primary); margin-bottom:14px; box-shadow:0 4px 16px rgba(13,148,136,0.12);">
+      <div style="padding:14px; background:linear-gradient(135deg, #1A1A1A 0%, #2D2D2D 100%); border-radius:12px; color:white; margin-bottom:14px;">
         <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">
-          <i class="ti ti-sparkles" style="font-size:13px; color:#0D9488;"></i>
-          <span style="font-size:11px; font-weight:700; color:#0F766E;">Gemini AI 설정</span>
+          <i class="ti ti-sparkles" style="font-size:13px; color:#FFD700;"></i>
+          <span style="font-size:11px; font-weight:600;">Gemini AI 설정</span>
         </div>
-        <div style="font-size:12px; line-height:1.6; color:var(--text-secondary);">
+        <div style="font-size:12px; line-height:1.6; opacity:0.9;">
           AI 시장 브리핑, 자산 분석, 뉴스 요약 기능을 사용하려면 본인의 Gemini API 키가 필요해요. 키는 본인 기기에만 저장되고 안전해요.
         </div>
       </div>
@@ -18012,9 +17760,9 @@ function openAIKeyModal() {
       <!-- 🔧 YouTube Data API 키 (선택) -->
       <div class="field" style="margin-bottom:14px;">
         <div class="field-label">YouTube Data API 키 <span style="font-size:10px; color:var(--text-tertiary);">(선택)</span></div>
-        <input type="password" id="yt-key-input" placeholder="YouTube Data API v3 키 (AIza...)" value="${escapeAttr(localStorage.getItem('youtube_api_key') || '')}" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:monospace;" />
+        <input type="password" id="yt-key-input" placeholder="비워두면 기본 키 사용" value="${escapeAttr(localStorage.getItem('youtube_api_key') || '')}" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:monospace;" />
         <div style="font-size:11px; color:var(--text-tertiary); margin-top:6px; line-height:1.5;">
-          유튜브 영상 검색 전용 키예요. 키를 넣어야 검색이 작동해요. (비우면 유튜브 검색 비활성화)<br>
+          유튜브 영상 검색 전용 키예요. 비워두면 기본 키로 작동하지만, "일일 한도 초과"가 자주 뜨면 본인 키를 따로 넣어주세요.<br>
           <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color:var(--text-info); text-decoration:underline;">Google Cloud Console</a>에서 발급 → YouTube Data API v3 활성화 필요
         </div>
       </div>
@@ -18042,9 +17790,9 @@ async function saveAIKey() {
       localStorage.setItem('youtube_api_key', ytKey);
       window.YOUTUBE_API_KEY = ytKey;
     } else {
-      // 🔧 비우면 키 없음(null) — Firebase 키 폴백 제거. YouTube 검색은 전용 키 입력 시에만 동작.
+      // 비우면 기본 키로 폴백
       localStorage.removeItem('youtube_api_key');
-      window.YOUTUBE_API_KEY = null;
+      window.YOUTUBE_API_KEY = window._fbApiKey || window.YOUTUBE_API_KEY;
     }
   }
 
@@ -18336,58 +18084,6 @@ function getAllocationBuckets7() {
 
 // 자산 1개의 원화 평가액
 //  우선순위: 라이브 시세 > OCR 평가금액 > lots 원가 합 > qty*price
-// 🔧 자산 숫자의 '출처/정확도' 메타 계산
-//   - baseDate: 마지막 증권사 캡처(보정) 날짜
-//   - estimatedCount: 캡처 이후 추가된 자동매수 lot 수 (=추정 포함분)
-//   - accuracy: 'high'(최근 보정) | 'mid'(추정 있음/보정 좀 됨) | 'low'(보정 오래됨) | 'none'(보정 이력 없음)
-function getAssetProvenance(a) {
-  const snap = a.ocrSnapshot;
-  const baseDate = snap?.date || a.assetBaseDate || null;
-
-  // 캡처일 이후의 자동매수 lot = 추정 포함분
-  let estimatedCount = 0;
-  if (Array.isArray(a.lots)) {
-    estimatedCount = a.lots.filter(l => {
-      if (!l.autoBuy) return false;
-      if (!baseDate) return true;            // 보정 이력이 없으면 모든 자동매수가 추정
-      return (l.date || '') > baseDate;       // 캡처 이후 회차만 추정
-    }).length;
-  }
-
-  // 보정 경과일
-  let daysSince = null;
-  if (baseDate) {
-    const t = new Date(baseDate).getTime();
-    if (isFinite(t)) daysSince = Math.floor((Date.now() - t) / 86400000);
-  }
-
-  let accuracy;
-  if (!baseDate) accuracy = 'none';
-  else if (daysSince != null && daysSince >= 30) accuracy = 'low';
-  else if (estimatedCount > 0) accuracy = 'mid';
-  else accuracy = 'high';
-
-  return { baseDate, estimatedCount, daysSince, accuracy };
-}
-
-// 출처 뱃지용 라벨/색 (정확도별)
-function provenanceLabel(p) {
-  if (!p) return null;
-  const fmt = (d) => {
-    if (!d) return '';
-    const [, m, dd] = d.split('-');
-    return `${Number(m)}/${Number(dd)}`;
-  };
-  if (p.accuracy === 'none') {
-    return { text: p.estimatedCount > 0 ? `자동매수 추정 ${p.estimatedCount}건 · 보정 필요` : '미보정', color: 'var(--text-tertiary)', bg: 'var(--bg-secondary)' };
-  }
-  const base = `기준 ${fmt(p.baseDate)} 보정`;
-  const est = p.estimatedCount > 0 ? ` · 추정 ${p.estimatedCount}건` : '';
-  if (p.accuracy === 'high') return { text: base + est, color: '#3B6D11', bg: '#EAF3E2' };
-  if (p.accuracy === 'mid')  return { text: base + est, color: '#2D7BC9', bg: '#E6F0FA' };
-  return { text: base + est + ' · 보정 권장', color: '#C9863A', bg: '#FBF0DD' }; // low
-}
-
 function assetKrwValue(a) {
   const live = liveAssetData[a.id];
   if (live?.hasLive && Number(live.krwValue) > 0) return Number(live.krwValue);
@@ -18672,35 +18368,6 @@ function openDataCheck() {
     }
   } catch(e){}
 
-  // 🔧 시세 조회 실패 자산 (티커는 있는데 라이브 시세를 못 받아온 주식형)
-  const liveFail = (assets||[]).filter(a => {
-    if (!isStockLikeType(a.type)) return false;
-    if (!a.ticker) return false; // 티커 없는 건 위의 별도 항목에서 다룸
-    const lv = liveAssetData[a.id];
-    return !(lv && lv.hasLive);
-  });
-  if (liveFail.length) issues.push({ icon:'📡', text:`시세 조회 실패 ${liveFail.length}개`, detail: liveFail.map(a=>a.name).join(', '), assetIds: liveFail.map(a=>a.id) });
-
-  // 🔧 증권사 캡처 보정이 오래된 자산 (ocrSnapshot 30일 이상 경과 → 재보정 권장)
-  try {
-    const now = Date.now();
-    const staleSnap = (assets||[]).filter(a => {
-      const d = a.ocrSnapshot?.date;
-      if (!d) return false;
-      const t = new Date(d).getTime();
-      if (!isFinite(t)) return false;
-      return (now - t) >= 30 * 86400000;
-    });
-    if (staleSnap.length) issues.push({ icon:'🔄', text:`증권사 보정 30일↑ ${staleSnap.length}개`, detail: staleSnap.map(a=>`${a.name}(${a.ocrSnapshot.date})`).join(', '), assetIds: staleSnap.map(a=>a.id) });
-  } catch(e){}
-
-  // 🔧 자동매수 추정분이 섞인 자산 (캡처 이후 자동매수 → 증권사 확정값과 미세 차이 가능)
-  try {
-    const estMixed = (assets||[]).map(a => ({ a, p: getAssetProvenance(a) }))
-      .filter(x => x.p.estimatedCount > 0);
-    if (estMixed.length) issues.push({ icon:'🧮', text:`자동매수 추정 포함 ${estMixed.length}개`, detail: estMixed.map(x=>`${x.a.name}(추정 ${x.p.estimatedCount}건)`).join(', '), assetIds: estMixed.map(x=>x.a.id) });
-  } catch(e){}
-
   const body = issues.length === 0
     ? `<div style="text-align:center; padding:30px 10px;"><div style="font-size:40px; margin-bottom:10px;">✅</div><div style="font-size:14px; font-weight:600;">데이터가 깨끗해요!</div><div style="font-size:12px; color:var(--text-tertiary); margin-top:6px;">빠지거나 이상한 항목이 없어요.</div></div>`
     : issues.map(it => `
@@ -18709,7 +18376,6 @@ function openDataCheck() {
           <div style="flex:1; min-width:0;">
             <div style="font-size:13px; font-weight:600;">${it.text}</div>
             ${it.detail ? `<div style="font-size:11px; color:var(--text-tertiary); margin-top:2px; word-break:break-all;">${escapeHTML(it.detail)}</div>` : ''}
-            ${Array.isArray(it.assetIds) && it.assetIds.length ? `<button onclick="this.closest('.modal-overlay').remove(); openAssetDetail(${it.assetIds[0]});" style="margin-top:7px; border:none; background:var(--bg-info); color:var(--text-info); padding:6px 12px; border-radius:7px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">자세히 보기 →</button>` : ''}
           </div>
         </div>`).join('');
 
@@ -20761,20 +20427,16 @@ function initAuth() {
     if (user) {
       currentUser = user;
       window._cloudLoadPending = true; // 🔧 로드 끝날 때까지 저장 차단
-      window._cloudLoadFailed = false; // 🔧 새 인증 사이클 시작 — 이전 실패 플래그 초기화 (네트워크 복구 후 저장 재개)
       try {
         const cloudData = await loadFromFirebase(user.uid);
         if (cloudData && cloudData.__empty) {
           window._cloudLoadPending = false;
-          window._cloudLoadFailed = false; // 🔧 로드 성공 (빈 계정) — 저장 허용
         } else if (cloudData) {
           applyData(cloudData);
           window._cloudLoadPending = false;
-          window._cloudLoadFailed = false; // 🔧 로드 성공 — 저장 허용
           saveLocal();
         } else {
           window._cloudLoadPending = false;
-          window._cloudLoadFailed = false; // 🔧 로드 성공 (데이터 없음) — 저장 허용
         }
       } catch (e) {
         console.error('클라우드 로드 실패:', e);
@@ -20821,7 +20483,6 @@ function initAuth() {
     } else {
       currentUser = null;
       window._cloudLoadPending = false;
-      window._cloudLoadFailed = false; // 🔧 로그아웃 — 플래그 초기화
       showLoginScreen();
     }
   });
