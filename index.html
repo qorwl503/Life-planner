@@ -9588,9 +9588,33 @@ function openAssetCaptureForCorrection() {
     showToast('AI 키를 먼저 설정해주세요 (설정 → AI 키)');
     return;
   }
+  // 🔧 파일 선택 / 클립보드 붙여넣기 둘 다 제공
+  const pasteSupported = !!(navigator.clipboard && navigator.clipboard.read);
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div style="padding:18px 16px;">
+        <h3 style="margin:0 0 4px; font-size:16px;">📸 증권사 캡처로 보정</h3>
+        <p style="margin:0 0 14px; font-size:12px; color:var(--text-secondary); line-height:1.5;">
+          증권사 잔고 화면을 캡처해 올리거나, 복사한 이미지를 바로 붙여넣으세요.
+        </p>
+        <button onclick="closeModal(); _doAssetCapturePick();" style="width:100%; padding:13px; border:1px solid var(--border-tertiary); background:var(--bg-secondary); border-radius:10px; font-weight:600; font-family:inherit; margin-bottom:8px; cursor:pointer;">
+          🖼️ 이미지 파일 선택
+        </button>
+        ${pasteSupported ? `
+        <button onclick="closeModal(); pasteImageForAssetOCR();" style="width:100%; padding:13px; border:1.5px dashed var(--text-info); background:rgba(70,140,255,0.04); color:var(--text-info); border-radius:10px; font-weight:600; font-family:inherit; margin-bottom:8px; cursor:pointer;">
+          📋 클립보드에서 붙여넣기
+        </button>` : ''}
+        <button onclick="closeModal()" style="width:100%; padding:11px; border:none; background:transparent; color:var(--text-tertiary); font-family:inherit; cursor:pointer;">취소</button>
+      </div>
+    </div>`;
+  modal.classList.add('show');
+}
+
+// 파일 선택 방식 (기존 동작)
+function _doAssetCapturePick() {
   let input = document.getElementById('asset-capture-input');
   if (!input) {
-    // 자산 추가 모달이 안 열려 있어도 동작하도록 임시 파일 인풋 생성
     input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/jpeg,image/png,image/heic,image/webp';
@@ -9638,14 +9662,39 @@ async function processAssetCapture(input) {
   }
 
   // 🔧 status 요소가 없어도 OCR이 죽지 않도록 안전 헬퍼
+  //    + 어느 진입점(상세화면 보정 등)에서 호출해도 보이도록 전역 오버레이도 함께 표시
   const statusEl = document.getElementById('asset-capture-status');
-  const setStatus = (htmlStr) => {
+  const ensureGlobalOverlay = () => {
+    let ov = document.getElementById('ocr-global-overlay');
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.id = 'ocr-global-overlay';
+      ov.style.cssText = 'position:fixed; inset:0; z-index:99999; background:rgba(0,0,0,0.45); display:flex; align-items:center; justify-content:center; backdrop-filter:blur(2px);';
+      ov.innerHTML = `
+        <div style="background:var(--bg-primary,#fff); padding:22px 26px; border-radius:16px; box-shadow:0 8px 30px rgba(0,0,0,0.25); display:flex; flex-direction:column; align-items:center; gap:12px; min-width:200px;">
+          <div class="spinner" style="width:28px; height:28px;"></div>
+          <div id="ocr-global-msg" style="font-size:13px; font-weight:600; color:var(--text-primary,#222); text-align:center;">분석 준비 중...</div>
+        </div>`;
+      document.body.appendChild(ov);
+    }
+    ov.style.display = 'flex';
+    return ov;
+  };
+  const setStatus = (htmlStr, plainMsg) => {
     if (statusEl) {
       statusEl.style.display = 'block';
       statusEl.innerHTML = htmlStr;
     }
+    // 전역 오버레이 메시지도 갱신 (HTML 태그 제거한 텍스트로)
+    const ov = ensureGlobalOverlay();
+    const msgEl = ov.querySelector('#ocr-global-msg');
+    if (msgEl) msgEl.textContent = (plainMsg || htmlStr.replace(/<[^>]*>/g, '').trim() || '분석 중...');
   };
-  setStatus('<div style="display:flex; align-items:center; justify-content:center; gap:6px;"><div class="spinner" style="width:12px; height:12px;"></div>분석 준비 중...</div>');
+  const clearGlobalOverlay = () => {
+    const ov = document.getElementById('ocr-global-overlay');
+    if (ov) ov.style.display = 'none';
+  };
+  setStatus('<div style="display:flex; align-items:center; justify-content:center; gap:6px;"><div class="spinner" style="width:12px; height:12px;"></div>분석 준비 중...</div>', '분석 준비 중...');
 
   const allItems = [];
   let successCount = 0;
@@ -9873,13 +9922,15 @@ async function processAssetCapture(input) {
   if (allItems.length === 0) {
     // 🔧 구체적 실패 사유 표시
     const reason = lastFailReason || '자산을 인식하지 못했어요';
-    setStatus(`<span style="color:var(--text-warning); font-size:11px; line-height:1.5;">⚠️ ${reason}</span>`);
+    setStatus(`<span style="color:var(--text-warning); font-size:11px; line-height:1.5;">⚠️ ${reason}</span>`, reason);
+    clearGlobalOverlay();
     showToast(`OCR 실패: ${reason}`);
     if (!Array.isArray(input) && input) input.value = '';
     return;
   }
 
   if (statusEl) statusEl.style.display = 'none';
+  clearGlobalOverlay();
   closeModal();
 
   // 🔧 같은 종목이 여러 줄로 잡히는 경우(증권사가 정수 매매분 / 소수점 자동적립분을
