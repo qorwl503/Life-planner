@@ -8579,8 +8579,11 @@ async function processAutoBuy(fixed) {
       if (/^\d{6}$/.test(histTickerForAvg)) histTickerForAvg = histTickerForAvg + '.KS';
 
       const exactClose = getHistPriceExact(histMap, dateStr);
-      const exactAvg = getHistAvgPriceExact(histTickerForAvg, dateStr);
-      let basePrice = (exactAvg != null) ? exactAvg : exactClose;
+      // 🔧 체결가 추정: 시가(open) 우선 → 평균가 → 종가.
+      //    한투 '금액모으기'는 장 시작 무렵 시장가 체결이 많아 시가가 실제에 가깝다.
+      //    (평균가는 저가가 섞여 낮게 나와 주수가 1주씩 과대추정되던 문제 교정)
+      const exactBuy = getHistBuyPriceExact(histTickerForAvg, dateStr);
+      let basePrice = (exactBuy != null) ? exactBuy : exactClose;
       let usedDateStr = dateStr;
 
       // 🔧 휴장일 처리: 그날 종가가 없는데 '과거(어제 이전)' 회차라면 → 휴장일로 보고
@@ -8598,7 +8601,7 @@ async function processAutoBuy(fixed) {
             const nd = new Date(dObj);
             nd.setDate(nd.getDate() + addDay);
             const ndStr = `${nd.getFullYear()}-${String(nd.getMonth()+1).padStart(2,'0')}-${String(nd.getDate()).padStart(2,'0')}`;
-            const ndAvg = getHistAvgPriceExact(histTickerForAvg, ndStr);
+            const ndAvg = getHistBuyPriceExact(histTickerForAvg, ndStr);
             const ndClose = getHistPriceExact(histMap, ndStr);
             const ndPrice = (ndAvg != null) ? ndAvg : ndClose;
             if (ndPrice != null) {
@@ -8619,7 +8622,7 @@ async function processAutoBuy(fixed) {
 
       let lotPrice = basePrice;
       let lotBuyRate = null;
-      let priceSrc = (exactAvg != null) ? '그날 평균가' : '그날 종가';
+      let priceSrc = (exactBuy != null) ? '그날 시가' : '그날 종가';
       if (histIsUSD) {
         const histFx = getHistPriceExact(fxHistMap, usedDateStr) || getHistPriceExact(fxHistMap, dateStr);
         if (histFx == null) {
@@ -9699,20 +9702,30 @@ async function processAssetCapture(input) {
    - 부동산: 현재 시세 (800000000 등)
 
 3. **priceCurrency (매입가 통화)**: 주식/ETF/펀드만 — price가 어떤 통화인지
-   - ⚠️⚠️ 가장 흔한 실수: 미국 종목의 달러 매입가를 원화로 잘못 표시하는 것. 아래 규칙을 반드시 지킬 것.
-   - ⭐ **종목이 미국주식/해외ETF(영문 티커 GOOGL·QQQM·SPY·AAPL 등)이면 매입가·현재가는 거의 항상 달러(USD)다.**
-     → 화면 제목이 "원화 평가 현황"이라도, 매입가/현재가 칸 숫자는 달러인 경우가 대부분.
-     (키움 등은 매입가·현재가는 달러로, 평가금액·매입금액만 원화로 섞어서 보여줌)
-   - ⭐ **결정적 단서 — 매입가 숫자 모양으로 통화 구분:**
-     · 매입가가 소수점을 가진 작은 숫자(예: 349.68, 297.07, 86.58, 195.40) → **USD** (미국 주식 달러 단가)
-     · 매입가가 소수점 없는 큰 정수(예: 70000, 27360, 536837) → **KRW** (원화 단가)
-     · 즉 "349.6800"처럼 소수점 4자리로 보이면 그건 원화가 아니라 달러다. 절대 KRW로 넣지 말 것.
-   - ⭐ 화면에 "원화 평균단가/원화 매입가/원화 평균매입가"라고 **명시적으로 '원화'라고 적힌** 단가가 따로 보이면
-     → 그 원화 숫자를 price에, priceCurrency="KRW" (이게 가장 정확함! 환율 불필요)
-   - 그 외 달러 단가($, USD, 소수점 형태)면 → 그 달러 숫자를 price에, priceCurrency="USD"
+   - ⚠️⚠️ 가장 흔한 실수: 미국 종목의 통화를 잘못 판단하는 것. 아래 순서대로 반드시 판단하라.
+
+   - 🥇 **1순위 — 화면 상단의 "외화 / 원화" 토글(모드)을 먼저 확인:**
+     · 키움 등 증권사 잔고 화면 상단에 [외화] [원화] 선택 버튼이 있다. 둘 중 **진하게 칠해진(선택된)** 쪽이 화면 전체의 표시 통화다.
+     · **"외화"가 선택**돼 있으면 → 매입가·현재가·평가금액·매입금액이 **전부 달러(USD)**. priceCurrency="USD", 그리고 evalAmount는 생략(달러라서).
+     · **"원화"가 선택**돼 있으면 → 매입가·현재가는 달러일 수 있지만 평가금액·매입금액은 원화. (아래 2·3순위로 매입가 통화 판단)
+     · 화면에 "외화 평가 현황"이라고 적혀 있으면 외화 모드, "원화 평가 현황"이면 원화 모드다.
+
+   - 🥈 **2순위 — 같은 종목의 '현재가' 숫자 모양으로 검증:**
+     · 현재가가 소수점 달러(예: 337.39, 290.95, 85.76)로 보이면 → 그 종목 단가는 **USD**.
+     · 현재가가 원화 큰 정수(예: 537,825원, 446,608원)로 보이면 → 화면이 원화 환산 중. 매입가도 같은 통화로 맞춰라.
+     · ⚠️ 매입가와 현재가는 **반드시 같은 통화**다. 둘이 다른 통화로 읽히면 잘못 읽은 것이니 다시 보라.
+
+   - 🥉 **3순위 — 매입가 숫자 모양:**
+     · 소수점 있는 작은 숫자(349.68, 297.07, 80.22) → **USD**
+     · 소수점 없는 큰 정수(70000, 27360) → **KRW**
+     · "349.6800"처럼 소수점 4자리면 원화가 아니라 **달러**다. 절대 KRW로 넣지 말 것.
+
+   - 화면에 "원화 평균단가/원화 매입가"라고 **명시적으로 '원화'라 적힌** 단가가 따로 있으면
+     → 그 원화 숫자를 price에, priceCurrency="KRW"
    - 한국 종목(6자리 숫자 티커)이면 → "KRW"
    - 애매하면 한국 종목은 "KRW", 미국 종목은 "USD"
    - ⚠️ 절대 직접 환산하지 말 것 — 화면 숫자를 그대로 두고 통화만 표시
+   - ⚠️ 핵심: **외화 모드면 evalAmount를 넣지 마라**(달러 평가금액으로 평단이 망가짐). 원화 모드의 원화 평가금액일 때만 evalAmount를 넣어라.
 
 3-1. **avgBuyRate (평균 매입 환율)**: 미국 주식/ETF에서 priceCurrency가 "USD"일 때만
    - 화면에 "평균 매입 환율", "매입환율", "평균환율", "환율" 같은 항목이 보이면 그 숫자 (예: 1330.5)
@@ -9725,15 +9738,17 @@ async function processAssetCapture(input) {
    - 금/예적금/청약/현금/부동산: 보통 없음 → ""
 
 5. **evalAmount (현재 평가금액, 원화)**: 화면에 보이는 그 종목의 현재 평가금액 (원화 총액)
-   - "평가금액", "평가액", "현재가치" 같은 항목의 원화 숫자
-   - 달러로만 보이면 생략, 원화 평가금액이 보일 때만 넣기
+   - "평가금액", "평가액", "현재가치" 같은 항목의 **원화** 숫자
+   - ⚠️⚠️ 매우 중요: **반드시 '원화(원)' 평가금액일 때만** 넣어라.
+     · 화면 상단에 "외화"가 선택돼 있거나 "외화 평가" 모드면, 평가금액도 **달러**다 → 이 필드를 **생략**하라.
+     · 평가금액 숫자가 매입가($349 등)와 비슷하게 작으면(예: 2,440 / 1,217) 그건 달러다 → **생략**.
+     · 원화 평가금액은 보통 수십만~수백만 원의 큰 숫자다(예: 525,119 / 1,610,481). 이럴 때만 넣어라.
+   - 달러 평가금액이거나 애매하면 → **생략** (앱이 매입가×환율로 계산함)
    - 안 보이면 생략
 
 6. **profitPct (수익률 %)**: 화면에 보이는 그 종목의 수익률 (예: 12.5, -3.2)
    - "수익률", "손익률", "평가손익률" 항목의 % 숫자. 부호 그대로 (마이너스면 음수)
-   - ⭐⭐ 이 값은 매우 중요하다. 화면에 수익률 %가 보이면 **반드시** 넣을 것.
-     앱이 이 수익률로 매입가를 검산/역산하므로, 통화를 헷갈려 매입가가 틀려도 수익률만 정확하면 바로잡을 수 있다.
-   - 부호 주의: 빨강/플러스(+)는 양수, 파랑/마이너스(-)는 음수. 화면 색이 아니라 +/- 부호와 숫자를 그대로.
+   - 부호 주의: +는 양수, -는 음수. 화면 색이 아니라 +/- 부호와 숫자를 그대로.
    - 안 보이면 생략
 
 7. **profitAmount (평가손익 금액, 원화)**: 화면에 보이는 평가손익 (원화, 예: 350000, -82000)
@@ -9743,17 +9758,21 @@ async function processAssetCapture(input) {
 📌 동일 종목 여러 줄이면 각각 추출:
 - 키움 SPY 3주 / 토스 SPY 5주 → SPY 두 번 추출 (앱이 합산 처리)
 
-📤 출력 (JSON만, 안 보이는 필드는 생략):
+📌 화면 모드별 처리 (중요):
+- "원화" 모드 화면: 미국종목 매입가는 USD로, 평가금액은 원화로 → priceCurrency="USD" + evalAmount(원화) 넣기
+- "외화" 모드 화면: 전부 달러 → priceCurrency="USD", **evalAmount는 생략** (달러 평가금액 넣으면 평단 망가짐)
+
+📤 출력 (JSON만, 주석 없이, 안 보이는 필드는 생략):
 {"items":[
   {"type":"주식","name":"삼성전자","qty":10,"price":70000,"priceCurrency":"KRW","ticker":"005930","evalAmount":720000,"profitPct":2.9,"profitAmount":20000},
   {"type":"ETF","name":"TIGER 미국S&P500","qty":9,"price":27360,"priceCurrency":"KRW","ticker":"360750"},
-  {"type":"주식","name":"애플","qty":3,"price":195.4,"priceCurrency":"USD","avgBuyRate":1342,"ticker":"AAPL","evalAmount":850000,"profitPct":8.1},
   {"type":"주식","name":"알파벳 A","qty":1,"price":349.68,"priceCurrency":"USD","ticker":"GOOGL","evalAmount":525119,"profitPct":-2.43,"profitAmount":-13111},
   {"type":"해외ETF","name":"나스닥 100 인베스코 ETF","qty":3.523,"price":297.07,"priceCurrency":"USD","ticker":"QQQM","evalAmount":1610481,"profitPct":-0.02,"profitAmount":-469},
+  {"type":"해외ETF","name":"SPYM","qty":28.45,"price":80.22,"priceCurrency":"USD","ticker":"SPYM","profitPct":6.75},
   {"type":"금","name":"신한 골드뱅킹","qty":3.75,"price":218860,"ticker":""},
-  {"type":"예적금","name":"토스 정기예금","qty":1,"price":5000000,"ticker":""},
-  {"type":"청약","name":"KB 주택청약","qty":1,"price":1500000,"ticker":""}
+  {"type":"예적금","name":"토스 정기예금","qty":1,"price":5000000,"ticker":""}
 ]}
+(위 예시에서: GOOGL·QQQM은 '원화 모드'라 원화 evalAmount 포함, SPYM은 '외화 모드'라 evalAmount 생략)
 
 ❌ 분석 불가 (화면에 자산이 정말 하나도 없을 때만):
 {"items":[],"error":"구체적 이유"}
@@ -10859,20 +10878,33 @@ function saveAssetReviewItems() {
     // 🔧 달러 매입가 → 원화 환산 (lot은 항상 원화로 저장)
     //    OCR이 화면에서 평균 매입 환율을 읽었으면 그 환율로, 못 읽었으면 오늘 환율로 폴백
     let priceNote = '';
-    // 🛡️ 통화 오인 안전장치 (가장 신뢰도 높은 보정):
+    // 🛡️ 통화 오인 안전장치 (원화 평가금액이 확실할 때만):
     //    화면에 '원화 평가금액'과 '수익률(%)'이 같이 있으면, 통화를 어떻게 읽었든
     //    원화 평단 = (평가금액 / 수량) / (1 + 수익률/100) 으로 역산한다.
-    //    예) 키움: 매입가 $349.68을 OCR이 원화로 오인해도, 평가금액 525,119원 + 수익률 -2.43%가
-    //        있으면 올바른 원화 평단(약 536,837원)이 복원되어 수익률이 키움과 일치한다.
-    const _evalKRW = Number(it.evalAmount) || 0;
+    //    ⚠️ 단, 키움 '외화' 모드 화면은 평가금액도 '달러'라서 이 역산을 쓰면 안 된다.
+    //       → 역산값이 'USD 매입가×환율'과 비슷할 때만 채택(원화 평가금액임을 검증).
+    const _evalAmt = Number(it.evalAmount) || 0;
     const _pct = (it.profitPct != null && isFinite(Number(it.profitPct))) ? Number(it.profitPct) : null;
     let _backCalcDone = false;
-    if (isStockLikeType(type) && qty > 0 && _evalKRW > 0 && _pct != null && _pct > -100) {
-      const costBasisKRW = _evalKRW / (1 + _pct / 100); // 총 매입원금(원화)
-      const avgKRW = Math.round(costBasisKRW / qty);     // 원화 평단
-      if (avgKRW > 0) {
-        price = avgKRW;
-        priceNote = ` (평가금액 ${Math.round(_evalKRW).toLocaleString()}원·수익률 ${_pct}%에서 원화 평단 역산)`;
+    if (isStockLikeType(type) && qty > 0 && _evalAmt > 0 && _pct != null && _pct > -100) {
+      const costBasis = _evalAmt / (1 + _pct / 100); // 총 매입원금
+      const backAvg = Math.round(costBasis / qty);   // 역산 평단(평가금액 통화 기준)
+
+      // 이 역산이 '원화'로서 타당한지 검증:
+      //  - USD 매입가가 있으면, 정상 원화평단 ≈ USD가격 × 환율.
+      //    역산값이 그 1/3 미만이면 평가금액이 달러였다는 뜻 → 역산 폐기.
+      const usdPrice = Number(it.price) || 0;
+      const expectedKRW = (it.priceCurrency === 'USD' && rate) ? usdPrice * rate : 0;
+      let backCalcValid = backAvg > 0;
+      if (expectedKRW > 0) {
+        const ratio = backAvg / expectedKRW;
+        // 역산 원화평단이 기대치의 30%~300% 범위 안일 때만 신뢰
+        backCalcValid = (ratio >= 0.3 && ratio <= 3);
+      }
+
+      if (backCalcValid) {
+        price = backAvg;
+        priceNote = ` (평가금액 ${Math.round(_evalAmt).toLocaleString()}·수익률 ${_pct}%에서 평단 역산)`;
         _backCalcDone = true;
       }
     }
@@ -10895,21 +10927,31 @@ function saveAssetReviewItems() {
       if (existing) {
         if (!existing.ticker && it.ticker) existing.ticker = it.ticker;
 
-        // 캡처에서 읽은 "실제 총 보유분" (원화 기준)
+        // 캡처에서 읽은 "실제 총 보유분"
         const realQty = qty;
-        let realAvg = price; // 위에서 이미 원화 환산됨 (OCR 매입단가)
+        let realAvg = price; // 위에서 이미 원화로 환산/역산 완료된 평단
 
-        // 🔧 평단 정확도 개선 — 평가금액·수익률을 읽었으면 거기서 평단 역산.
-        //    OCR이 매입단가를 직접 읽으면 부정확할 때가 많지만,
-        //    평가금액·수익률은 큰 숫자라 잘 읽힘 → 평단 = (평가금액/수량) / (1+수익률)
-        const evalForCalc = Number(it.evalAmount) || 0;
-        const pctForCalc = (it.profitPct != null && isFinite(Number(it.profitPct))) ? Number(it.profitPct) : null;
-        if (realQty > 0 && evalForCalc > 0 && pctForCalc != null && pctForCalc > -100) {
-          const costBasis = evalForCalc / (1 + pctForCalc / 100); // 총 매입원금
-          const calcedAvg = Math.round(costBasis / realQty);
-          if (calcedAvg > 0) {
-            realAvg = calcedAvg;
-            priceNote = ` (평가금액·수익률에서 평단 역산)`;
+        // 🔧 평단 역산은 위 블록에서 이미 검증·처리됨(_backCalcDone).
+        //    여기서 중복 역산하면 '외화 모드'(평가금액이 달러)에서 평단이 다시 망가짐.
+        //    따라서 위에서 역산이 안 끝났을 때만, 그리고 원화 타당성 검증을 통과할 때만 역산.
+        if (!_backCalcDone) {
+          const evalForCalc = Number(it.evalAmount) || 0;
+          const pctForCalc = (it.profitPct != null && isFinite(Number(it.profitPct))) ? Number(it.profitPct) : null;
+          if (realQty > 0 && evalForCalc > 0 && pctForCalc != null && pctForCalc > -100) {
+            const costBasis = evalForCalc / (1 + pctForCalc / 100);
+            const calcedAvg = Math.round(costBasis / realQty);
+            // 원화 타당성 검증: USD 매입가×환율 대비 30%~300% 범위일 때만
+            const usdPx = Number(it.price) || 0;
+            const expectKRW = (it.priceCurrency === 'USD' && rate) ? usdPx * rate : 0;
+            let valid = calcedAvg > 0;
+            if (expectKRW > 0) {
+              const r = calcedAvg / expectKRW;
+              valid = (r >= 0.3 && r <= 3);
+            }
+            if (valid) {
+              realAvg = calcedAvg;
+              priceNote = ` (평가금액·수익률에서 평단 역산)`;
+            }
           }
         }
 
@@ -15276,6 +15318,23 @@ function getHistAvgPriceExact(ticker, dateStr) {
   return ohlc[dateStr].avg != null ? ohlc[dateStr].avg : null;
 }
 
+// 🔧 자동매수 주수 추정용 — 그 날짜의 '체결 추정가'를 반환.
+//    한투 등 '금액모으기'는 장 시작 무렵 시장가로 체결되는 경우가 많아,
+//    (시+고+저+종)/4 평균가는 저가가 섞여 실제 체결가보다 낮게 나오고
+//    → 주수가 1주씩 과대추정되는 원인이 된다 (예: 시세 낮은 날 경계에서 +1주).
+//    시가(open)가 실제 체결가에 더 가까우므로 시가 우선, 없으면 평균가/종가 폴백.
+//    '정확히 그 날짜'만 (역추적 안 함 — 없으면 null로 회차 보류).
+function getHistBuyPriceExact(ticker, dateStr) {
+  const cached = ticker ? histPriceCache[ticker] : null;
+  const ohlc = cached?.ohlc;
+  if (!ohlc || !ohlc[dateStr]) return null;
+  const row = ohlc[dateStr];
+  if (row.o != null) return row.o;       // 시가 우선 (체결가에 가장 근접)
+  if (row.avg != null) return row.avg;   // 평균가 폴백
+  if (row.c != null) return row.c;       // 종가 폴백
+  return null;
+}
+
 function getHistPriceExact(histMap, dateStr) {
   if (!histMap) return null;
   return histMap[dateStr] != null ? histMap[dateStr] : null;
@@ -18451,6 +18510,17 @@ function openSettingsModal() {
           </div>
         </div>
       </button>
+      <!-- 🟦 토스증권 동기화 -->
+      <button onclick="closeModal(); openTossSyncModal();" style="width:100%; padding:14px; border:0.5px solid var(--border-tertiary); background:white; border-radius:var(--radius-md); cursor:pointer; font-family:inherit; text-align:left; margin-bottom:10px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-size:20px;">🟦</span>
+          <div style="flex:1;">
+            <div style="font-size:13px; font-weight:600;">토스증권 기준으로 동기화</div>
+            <div style="font-size:11px; color:var(--text-tertiary); margin-top:1px;">토스 실제 잔고로 수량·평단 맞추기 (조회 전용)</div>
+          </div>
+          <i class="ti ti-refresh" style="color:var(--text-tertiary);"></i>
+        </div>
+      </button>
       <!-- 💾 데이터 백업 -->
       <button onclick="exportBackup()" style="width:100%; padding:14px; border:0.5px solid var(--border-tertiary); background:white; border-radius:var(--radius-md); cursor:pointer; font-family:inherit; text-align:left; margin-bottom:10px;">
         <div style="display:flex; align-items:center; gap:10px;">
@@ -20543,6 +20613,265 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 });
+
+// ===== 토스증권 동기화 모듈 (자동 삽입) =====
+// ============================================================================
+//  토스증권 동기화 모듈  (index.html 내부 삽입용)
+// ----------------------------------------------------------------------------
+//  - 서버리스 함수 /api/toss/holdings 만 호출 (API 키는 서버에만 존재)
+//  - 자동매수 추정 lots는 '실제 보유수량 계산'에 반영하지 않음
+//  - 동기화 전에 [앱 기준 vs 토스 기준] 차이를 먼저 보여주고,
+//    사용자가 "토스 기준으로 동기화"를 눌러 확인해야 반영
+//  - 주문 기능 없음 (조회 전용)
+// ============================================================================
+
+// 앱↔함수 공유 비밀(선택). 설정했다면 여기 같은 값을 넣거나 비워둠.
+// (Vercel 환경변수 APP_SHARED_SECRET을 설정한 경우에만 사용)
+const TOSS_APP_SHARED_SECRET = ''; // 비워두면 헤더 안 보냄
+
+// 토스 보유종목 가져오기 (Cloudflare Worker /toss-holdings 경유)
+const TOSS_WORKER_URL = 'https://life-planner.qorwl503.workers.dev/toss-holdings';
+async function fetchTossHoldings() {
+  const headers = {};
+  if (TOSS_APP_SHARED_SECRET) headers['X-App-Secret'] = TOSS_APP_SHARED_SECRET;
+  // 🔒 로그인한 본인만 호출 가능하도록 Firebase ID 토큰을 헤더에 실어 보냄
+  //    (Worker가 FIREBASE_PROJECT_ID로 이 토큰을 검증)
+  try {
+    const u = window._fb?.auth?.currentUser;
+    if (u && typeof u.getIdToken === 'function') {
+      const idToken = await u.getIdToken();
+      if (idToken) headers['Authorization'] = 'Bearer ' + idToken;
+    }
+  } catch (e) { /* 토큰 못 얻어도 일단 호출 시도 (서버에서 거부) */ }
+  const res = await fetch(TOSS_WORKER_URL, { headers });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || `토스 조회 실패 (${res.status})`);
+  }
+  return data.holdings || [];
+}
+
+// 토스 종목 → 자산 타입 추정 (한국 6자리=국내, 영문=해외)
+function tossInferType(h) {
+  const sym = (h.symbol || '').toUpperCase();
+  const isKR = /^\d{6}$/.test(sym);
+  const isETFName = /ETF|KODEX|TIGER|ACE|KBSTAR|SOL|RISE|PLUS/i.test(h.name || '');
+  if (isKR) return isETFName ? '국내ETF' : '국내주식';
+  // 영문 티커
+  return isETFName || /QQQ|SPY|VOO|SCHD|VTI|SPLG/i.test(sym) ? '해외ETF' : '미국주식';
+}
+
+// 앱 기준 '실제 보유'와 토스 기준을 비교 → 차이 목록 생성
+//  ⚠️ 자동매수 추정 lot은 제외하고 '확정분'만 앱 기준 수량으로 삼는다.
+function buildTossDiff(tossHoldings) {
+  const rows = [];
+  tossHoldings.forEach(h => {
+    const type = tossInferType(h);
+    const matched = findMatchingAsset({ name: h.name, type, ticker: h.symbol });
+
+    // 앱 현재 수량/평단 (매칭된 자산 기준; 자동매수 추정 포함된 현재 표시값)
+    const appQty = matched ? (Number(matched.qty) || 0) : 0;
+    const appPrice = matched ? (Number(matched.price) || 0) : 0;
+
+    const tossQty = Number(h.quantity) || 0;
+    const tossEval = Number(h.evalAmount) || 0;
+
+    rows.push({
+      symbol: h.symbol,
+      name: h.name || h.symbol,
+      type,
+      matchedId: matched ? matched.id : null,
+      appQty,
+      appPrice,
+      tossQty,
+      tossAvgPrice: Number(h.avgPrice) || 0,
+      tossEval,
+      currency: h.currency || 'KRW',
+      qtyDiff: parseFloat((tossQty - appQty).toFixed(4)),
+      isNew: !matched,
+    });
+  });
+  return rows;
+}
+
+// 토스 기준으로 자산 확정 — 자동매수 추정 lot을 버리고 실제 보유로 단일 lot 교체
+//  (캡처 보정과 동일한 패턴: '실제 보유'를 기준점으로 확정, 이후 자동매수는 그 위에 쌓임)
+function applyTossSync(diffRows) {
+  const today = todayKey();
+  let updated = 0, created = 0;
+
+  diffRows.forEach(row => {
+    if (!row._approved) return; // 사용자가 체크한 항목만 반영
+
+    const tossQty = Number(row.tossQty) || 0;
+    if (tossQty <= 0) return;
+
+    // 토스 평단(원화 환산) — 미국 종목이면 평가금액/수량으로 원화 평단 역산이 더 정확
+    let avgKRW = 0;
+    if (row.currency === 'USD' && row.tossEval > 0) {
+      avgKRW = Math.round(row.tossEval / tossQty); // 평가금액 기반 원화 환산
+    } else {
+      avgKRW = Math.round(Number(row.tossAvgPrice) || 0);
+    }
+    const exactCost = row.tossEval > 0 ? Math.round(row.tossEval) : Math.round(tossQty * avgKRW);
+
+    let asset = row.matchedId ? assets.find(a => a.id === row.matchedId) : null;
+
+    if (!asset) {
+      // 신규 자산 생성
+      asset = {
+        id: Date.now() + Math.random(),
+        type: row.type,
+        name: row.name,
+        qty: 0, price: 0,
+        ticker: row.symbol || '',
+        memo: '',
+        lots: [],
+      };
+      assets.push(asset);
+      created++;
+    } else {
+      updated++;
+    }
+
+    // 🔧 자동매수 추정 lot 전부 제거하고, 토스 확정분을 단일 기준 lot으로 교체
+    asset.ticker = asset.ticker || row.symbol || '';
+    asset.priceCurrency = 'KRW';
+    if (asset.avgBuyRate) delete asset.avgBuyRate;
+    asset.lots = [{
+      id: Date.now() + Math.random(),
+      source: `🟦 토스 동기화 ${today}`,
+      qty: tossQty,
+      price: avgKRW,
+      date: today,
+      autoBuy: false,
+      fixedId: null,
+      exactAmount: exactCost,   // 토스 실제 평가금액 보존
+      isCaptureBase: true,      // 기준점 — 이후 자동매수는 이 위에 쌓임
+      note: `토스증권 잔고 기준 확정 (${today})`,
+    }];
+    asset.assetBaseDate = today; // 자동매수는 이 날짜 이후만 더함
+    asset.ocrSnapshot = {
+      date: today,
+      evalAmount: row.tossEval > 0 ? Math.round(row.tossEval) : null,
+      profitPct: null,
+      profitAmount: null,
+      source: 'toss',
+    };
+
+    recalcAssetFromLots(asset);
+
+    // 연결된 자동매수의 lastBuyDate를 오늘로 동기화 (중복 방지)
+    try {
+      const capIso = new Date(today + 'T23:59:59').toISOString();
+      (budget?.fixed || []).forEach(fx => {
+        if (!fx.assetInfo) return;
+        const sameTicker = fx.assetInfo.ticker && asset.ticker &&
+          fx.assetInfo.ticker.toUpperCase() === asset.ticker.toUpperCase();
+        const sameName = fx.assetInfo.name && asset.name && fx.assetInfo.name === asset.name;
+        if (sameTicker || sameName) fx.lastBuyDate = capIso;
+      });
+    } catch (e) { /* noop */ }
+  });
+
+  saveData(true); // 즉시 저장 (localStorage + Firestore 동시, 디바운스 없이)
+  return { updated, created };
+}
+
+// ---- UI: 토스 동기화 모달 (차이 비교 → 확인 후 반영) ----
+async function openTossSyncModal() {
+  showToast('🟦 토스 잔고 불러오는 중...');
+  let holdings;
+  try {
+    holdings = await fetchTossHoldings();
+  } catch (e) {
+    showToast('토스 조회 실패: ' + e.message);
+    alert('토스증권 잔고를 불러오지 못했어요.\n\n' + e.message +
+      '\n\n· Vercel 배포 + 환경변수(TOSS_APP_KEY/SECRET) 설정이 되어 있어야 합니다.\n' +
+      '· 토스 계좌에 보유종목이 없으면 빈 결과가 옵니다.');
+    return;
+  }
+
+  if (!holdings.length) {
+    alert('토스증권 계좌에 보유종목이 없어요.\n(키움·한투 등 다른 증권사 종목은 토스 API로 조회되지 않습니다.)');
+    return;
+  }
+
+  const diff = buildTossDiff(holdings);
+  window._tossDiff = diff;
+
+  const fmt = (n) => (n == null ? '-' : Number(n).toLocaleString());
+  const rowsHtml = diff.map((r, i) => {
+    const diffColor = r.qtyDiff === 0 ? 'var(--text-secondary)'
+      : (r.qtyDiff > 0 ? '#0D9488' : '#DC2626');
+    const diffLabel = r.qtyDiff === 0 ? '일치'
+      : (r.qtyDiff > 0 ? `+${r.qtyDiff}` : `${r.qtyDiff}`);
+    const newBadge = r.isNew ? ' <span style="font-size:10px; color:#0D9488;">(신규)</span>' : '';
+    return `
+      <label style="display:flex; align-items:center; gap:10px; padding:10px 8px; border-bottom:1px solid var(--border); cursor:pointer;">
+        <input type="checkbox" ${r.qtyDiff !== 0 || r.isNew ? 'checked' : ''}
+          onchange="window._tossDiff[${i}]._approved = this.checked"
+          style="width:18px; height:18px; flex-shrink:0;" />
+        <div style="flex:1; min-width:0;">
+          <div style="font-weight:600; font-size:13px;">${r.name}${newBadge}</div>
+          <div style="font-size:11px; color:var(--text-secondary);">
+            앱 ${fmt(r.appQty)}주 → 토스 ${fmt(r.tossQty)}주
+          </div>
+        </div>
+        <div style="text-align:right; font-size:13px; font-weight:700; color:${diffColor};">
+          ${diffLabel}
+        </div>
+      </label>`;
+  }).join('');
+
+  // 기본: 차이 있는 항목만 _approved = true
+  diff.forEach(r => { r._approved = (r.qtyDiff !== 0 || r.isNew); });
+
+  const modalHtml = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div style="padding:16px;">
+        <h3 style="margin:0 0 4px; font-size:17px;">🟦 토스 기준으로 동기화</h3>
+        <p style="margin:0 0 12px; font-size:12px; color:var(--text-secondary); line-height:1.5;">
+          토스증권 실제 잔고와 앱 수량을 비교했어요. 반영할 항목을 확인하세요.
+          체크한 종목은 <b>토스 실제 보유수량·평단</b>으로 교체되고,
+          자동매수 추정분은 정리됩니다 (이후 자동매수는 다시 위에 쌓임).
+        </p>
+        <div style="border:1px solid var(--border); border-radius:10px; overflow:hidden; max-height:50vh; overflow-y:auto;">
+          ${rowsHtml}
+        </div>
+        <div style="display:flex; gap:8px; margin-top:14px;">
+          <button onclick="closeModal()" style="flex:1; padding:12px; border:1px solid var(--border); background:var(--bg-secondary); border-radius:10px; font-weight:600; font-family:inherit;">취소</button>
+          <button onclick="confirmTossSync()" style="flex:1; padding:12px; border:none; background:#0D9488; color:#fff; border-radius:10px; font-weight:700; font-family:inherit;">동기화 반영</button>
+        </div>
+      </div>
+    </div>`;
+
+  modal.innerHTML = modalHtml;
+  modal.classList.add('show');
+}
+
+function confirmTossSync() {
+  const diff = window._tossDiff || [];
+  const approved = diff.filter(r => r._approved);
+  if (!approved.length) {
+    showToast('반영할 항목을 선택하세요');
+    return;
+  }
+  const { updated, created } = applyTossSync(diff);
+  closeModal();
+  delete window._tossDiff;
+  let msg = '';
+  if (updated) msg += `🟦 ${updated}건 동기화`;
+  if (created) msg += (msg ? ', ' : '') + `✨ ${created}건 신규`;
+  showToast(msg || '동기화 완료');
+  if (typeof refreshAllAssetPrices === 'function') {
+    refreshAllAssetPrices().then(() => renderAsset()).catch(() => renderAsset());
+  } else {
+    renderAsset();
+  }
+}
+
 </script>
 
 </body>
