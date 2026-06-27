@@ -10732,6 +10732,35 @@ function openAssetReviewModal(items) {
     };
   });
 
+  // 🔧 사용자가 'OCR 항목을 어느 기존 자산에 연결할지' 직접 고를 때 호출
+  //    selVal: '' → 새 자산, 'skip' → 건너뛰기, 그 외 → 자산 id
+  window._setAssetReviewTarget = (i, selVal) => {
+    const it = window._assetReviewItems[i];
+    if (!it) return;
+    if (selVal === '') {
+      it._existingId = null;
+      it._action = 'new';
+    } else if (selVal === 'skip') {
+      it._existingId = null;
+      it._action = 'skip';
+    } else {
+      const target = assets.find(a => String(a.id) === String(selVal));
+      if (target) {
+        it._existingId = target.id;
+        // 자동매수 연동 자산이면 보정, 아니면 합산을 기본으로 (사용자가 버튼으로 또 바꿀 수 있음)
+        const linkedAuto = (budget.fixed || []).some(f =>
+          f.autoBuy && f.assetInfo &&
+          ((f.assetInfo.ticker && target.ticker &&
+            f.assetInfo.ticker.toUpperCase() === target.ticker.toUpperCase()) ||
+           (f.assetInfo.name === target.name && f.assetInfo.type === target.type))
+        );
+        it._action = 'correct'; // 직접 고른 경우 보정이 기본 (가장 흔한 의도)
+        it._userPicked = true;
+      }
+    }
+    window._renderAssetReview();
+  };
+
   window._renderAssetReview = () => {
     const list = window._assetReviewItems.map((it, i) => {
       const q = Number(it.qty) || 0;
@@ -10805,14 +10834,41 @@ function openAssetReviewModal(items) {
               ⚠️ 같은 자산 이미 있음: ${escapeHTML(existing.name)} (${existing.qty || 0}주 평균 ${(existing.price || 0).toLocaleString()}원)${autoNote}
             </div>`;
           })()}
+          <div style="margin-top:8px;">
+            <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:3px;">📎 연결할 자산 (자동 매칭이 틀렸으면 직접 선택)</div>
+            <select onchange="window._setAssetReviewTarget(${i}, this.value)" style="width:100%; padding:8px 6px; border:0.5px solid var(--border-tertiary); border-radius:6px; font-size:12px; font-family:inherit; background:white;">
+              <option value="" ${!it._existingId && it._action !== 'skip' ? 'selected' : ''}>✨ 새 자산으로 추가</option>
+              ${(() => {
+                // 같은 종류 자산을 먼저, 그 다음 나머지 주식류 자산
+                const stockLike = (t) => ['국내주식','미국주식','주식','국내ETF','해외ETF','ETF','펀드','채권','코인'].includes(t);
+                const sameType = assets.filter(a => a.type === it.type);
+                const otherStock = assets.filter(a => a.type !== it.type && stockLike(a.type) && stockLike(it.type));
+                const optionFor = (a) => {
+                  const sel = String(it._existingId) === String(a.id) ? 'selected' : '';
+                  const tk = a.ticker ? ` · ${escapeHTML(a.ticker)}` : '';
+                  const qtyStr = a.qty ? ` (${a.qty}주)` : '';
+                  return `<option value="${a.id}" ${sel}>${escapeHTML(a.name)}${tk}${qtyStr}</option>`;
+                };
+                let opts = '';
+                if (sameType.length) {
+                  opts += `<optgroup label="같은 종류 (${it.type})">${sameType.map(optionFor).join('')}</optgroup>`;
+                }
+                if (otherStock.length) {
+                  opts += `<optgroup label="다른 종류">${otherStock.map(optionFor).join('')}</optgroup>`;
+                }
+                return opts;
+              })()}
+              <option value="skip" ${it._action === 'skip' ? 'selected' : ''}>🚫 이 항목 건너뛰기</option>
+            </select>
+          </div>
           <div style="display:flex; gap:4px; margin-top:6px; flex-wrap:wrap;" id="action-${i}">
-            <button onclick="window._assetReviewItems[${i}]._action='correct'; window._renderAssetReview();" style="flex:1; min-width:46%; padding:7px 5px; border:1px solid ${it._action==='correct'?'#7B61FF':'var(--border-tertiary)'}; background:${it._action==='correct'?'rgba(123,97,255,0.12)':'white'}; color:${it._action==='correct'?'#7B61FF':'var(--text-secondary)'}; border-radius:6px; font-size:11px; font-weight:${it._action==='correct'?'700':'500'}; cursor:pointer; font-family:inherit;">
+            <button onclick="if(!window._assetReviewItems[${i}]._existingId){showToast('먼저 위에서 연결할 자산을 선택하세요');return;} window._assetReviewItems[${i}]._action='correct'; window._renderAssetReview();" style="flex:1; min-width:46%; padding:7px 5px; border:1px solid ${it._action==='correct'?'#7B61FF':'var(--border-tertiary)'}; background:${it._action==='correct'?'rgba(123,97,255,0.12)':'white'}; color:${it._action==='correct'?'#7B61FF':'var(--text-secondary)'}; border-radius:6px; font-size:11px; font-weight:${it._action==='correct'?'700':'500'}; cursor:pointer; font-family:inherit;">
               🎯 보정<br><span style="font-size:9px; opacity:0.7;">캡처값으로 교정</span>
             </button>
-            <button onclick="window._assetReviewItems[${i}]._action='merge'; window._renderAssetReview();" style="flex:1; min-width:46%; padding:7px 5px; border:1px solid ${it._action==='merge'?'var(--text-info)':'var(--border-tertiary)'}; background:${it._action==='merge'?'var(--bg-info)':'white'}; color:${it._action==='merge'?'var(--text-info)':'var(--text-secondary)'}; border-radius:6px; font-size:11px; font-weight:${it._action==='merge'?'600':'500'}; cursor:pointer; font-family:inherit;">
+            <button onclick="if(!window._assetReviewItems[${i}]._existingId){showToast('먼저 위에서 연결할 자산을 선택하세요');return;} window._assetReviewItems[${i}]._action='merge'; window._renderAssetReview();" style="flex:1; min-width:46%; padding:7px 5px; border:1px solid ${it._action==='merge'?'var(--text-info)':'var(--border-tertiary)'}; background:${it._action==='merge'?'var(--bg-info)':'white'}; color:${it._action==='merge'?'var(--text-info)':'var(--text-secondary)'}; border-radius:6px; font-size:11px; font-weight:${it._action==='merge'?'600':'500'}; cursor:pointer; font-family:inherit;">
               🔗 합산<br><span style="font-size:9px; opacity:0.7;">기존에 더하기</span>
             </button>
-            <button onclick="window._assetReviewItems[${i}]._action='new'; window._renderAssetReview();" style="flex:1; min-width:46%; padding:7px 5px; border:1px solid ${it._action==='new'?'var(--text-success)':'var(--border-tertiary)'}; background:${it._action==='new'?'var(--bg-success)':'white'}; color:${it._action==='new'?'var(--text-success)':'var(--text-secondary)'}; border-radius:6px; font-size:11px; font-weight:${it._action==='new'?'600':'500'}; cursor:pointer; font-family:inherit;">
+            <button onclick="window._assetReviewItems[${i}]._existingId=null; window._assetReviewItems[${i}]._action='new'; window._renderAssetReview();" style="flex:1; min-width:46%; padding:7px 5px; border:1px solid ${it._action==='new'?'var(--text-success)':'var(--border-tertiary)'}; background:${it._action==='new'?'var(--bg-success)':'white'}; color:${it._action==='new'?'var(--text-success)':'var(--text-secondary)'}; border-radius:6px; font-size:11px; font-weight:${it._action==='new'?'600':'500'}; cursor:pointer; font-family:inherit;">
               ✨ 신규<br><span style="font-size:9px; opacity:0.7;">별도 자산</span>
             </button>
             <button onclick="window._assetReviewItems[${i}]._action='skip'; window._renderAssetReview();" style="flex:1; min-width:46%; padding:7px 5px; border:1px solid ${it._action==='skip'?'var(--text-danger)':'var(--border-tertiary)'}; background:${it._action==='skip'?'var(--bg-danger)':'white'}; color:${it._action==='skip'?'var(--text-danger)':'var(--text-secondary)'}; border-radius:6px; font-size:11px; font-weight:${it._action==='skip'?'600':'500'}; cursor:pointer; font-family:inherit;">
