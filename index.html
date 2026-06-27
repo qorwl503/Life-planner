@@ -12654,30 +12654,49 @@ function renderAsset() {
   const total = assets.reduce((s, a) => s + assetKrwValue(a), 0);
 
   const byType = {};
+  // 🔧 구버전 타입(주식/ETF)을 신버전으로 정규화해 도넛에서 같은 색 조각이 중복으로 뜨는 것 방지.
+  //    티커로 국내/해외 구분 가능하면 반영, 아니면 대표 타입으로.
+  const normalizeType = (a) => {
+    const t = a.type;
+    if (t === '주식') {
+      const tk = (a.ticker || '').toUpperCase().replace(/\.(KS|KQ)$/, '').trim();
+      if (/^\d{6}$/.test(tk)) return '국내주식';
+      if (/^[A-Z]+$/.test(tk)) return '미국주식';
+      return '미국주식'; // 구분 불가 시 대표
+    }
+    if (t === 'ETF') {
+      const tk = (a.ticker || '').toUpperCase().replace(/\.(KS|KQ)$/, '').trim();
+      if (/^\d{6}$/.test(tk)) return '국내ETF';
+      if (/^[A-Z]+$/.test(tk)) return '해외ETF';
+      return '해외ETF';
+    }
+    return t;
+  };
   assets.forEach(a => {
-    byType[a.type] = (byType[a.type] || 0) + assetKrwValue(a);
+    const t = normalizeType(a);
+    byType[t] = (byType[t] || 0) + assetKrwValue(a);
   });
 
   // 이번 달 자산 스냅샷 자동 저장
   saveAssetSnapshot(total, byType);
 
   const typeColors = {
-    '국내주식':'#8AB4F8',  // 파스텔 파랑
-    '미국주식':'#5B8DEF',  // 진한 파랑
-    '주식':'#8AB4F8',      // (구버전 호환)
-    '국내ETF':'#A78BFA',   // 파스텔 보라
-    '해외ETF':'#C4A0F5',   // 연보라
-    'ETF':'#A78BFA',       // (구버전 호환)
-    '펀드':'#7BC8B5',      // 파스텔 청록
-    '채권':'#9CD3A5',      // 파스텔 초록
-    '금':'#F6C76D',        // 파스텔 골드
-    '달러':'#85D4D6',      // 파스텔 시안
-    '예적금':'#A8E6CF',    // 파스텔 민트
-    '청약':'#FFC9A8',      // 파스텔 살구
-    '현금':'#C9C5D9',      // 파스텔 그레이
-    '부동산':'#F6A8A8',  // 파스텔 핑크
-    '코인':'#FFD66E',    // 파스텔 옐로
-    '기타':'#D5D5D5',    // 라이트 그레이
+    '국내주식':'#4C84F0',  // 파랑
+    '미국주식':'#1E40AF',  // 진한 남색 (파랑과 명도 차이로 구분)
+    '주식':'#4C84F0',      // (구버전 호환 — 국내주식과 동일군)
+    '국내ETF':'#9B5DE5',   // 보라
+    '해외ETF':'#E15FA8',   // 마젠타핑크 (보라와 확실히 구분)
+    'ETF':'#9B5DE5',       // (구버전 호환)
+    '펀드':'#00BB8F',      // 청록
+    '채권':'#8B6F47',      // 브라운 (안정자산 · 다른 색군과 구분)
+    '금':'#F2B705',        // 골드
+    '달러':'#1DA9C9',      // 시안블루
+    '예적금':'#56C271',    // 민트그린
+    '청약':'#FF8C42',      // 오렌지
+    '현금':'#9AA0B5',      // 그레이블루
+    '부동산':'#E8536E',    // 레드핑크
+    '코인':'#FFD11A',      // 옐로
+    '기타':'#B0B0B8',      // 그레이
   };
 
   let html = '';
