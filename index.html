@@ -1390,6 +1390,24 @@ function showLockScreen() {
 }
 
 function setupAppLock() {
+  // 🔧 어떤 파일/사진 선택(input[type=file])이든 열리면 잠금 유예 플래그를 켠다.
+  //    (캡처·백업복원 등 사진첩/파일앱을 잠깐 다녀와도 앱이 잠기지 않게)
+  document.addEventListener('click', (e) => {
+    const t = e.target;
+    // 파일 input을 직접 클릭했거나, .click()으로 트리거되는 경우 모두 커버
+    if (t && t.tagName === 'INPUT' && t.type === 'file') {
+      window._pickingFile = true;
+      setTimeout(() => { window._pickingFile = false; }, 120000);
+    }
+  }, true);
+  // 파일 선택이 완료되면(change) 곧 플래그 해제 (잠금 정상화)
+  document.addEventListener('change', (e) => {
+    const t = e.target;
+    if (t && t.tagName === 'INPUT' && t.type === 'file') {
+      setTimeout(() => { window._pickingFile = false; }, 1500);
+    }
+  }, true);
+
   // 앱 처음 켤 때 잠금
   if (hasAppLock()) showLockScreen();
   // 백그라운드 갔다 돌아오면 잠금
@@ -1397,10 +1415,17 @@ function setupAppLock() {
     if (document.visibilityState === 'hidden' && hasAppLock()) {
       window._wentBackground = Date.now();
     } else if (document.visibilityState === 'visible' && hasAppLock()) {
-      // 10초 이상 백그라운드였으면 잠금 (잠깐 알림 확인 등은 제외)
-      if (window._wentBackground && Date.now() - window._wentBackground > 10000) {
+      // 🔧 사진/파일 선택(캡처) 중 잠깐 빠져나간 거면 잠그지 않음
+      if (window._pickingFile) {
+        window._wentBackground = null;
+        return;
+      }
+      // 🔧 유예 시간을 3분으로 (잠깐 알림 확인·사진 선택 등은 잠그지 않음)
+      const GRACE_MS = 180000; // 3분
+      if (window._wentBackground && Date.now() - window._wentBackground > GRACE_MS) {
         showLockScreen();
       }
+      window._wentBackground = null;
     }
   });
 }
@@ -9620,9 +9645,12 @@ function _doAssetCapturePick() {
     input.accept = 'image/jpeg,image/png,image/heic,image/webp';
     input.multiple = true;
     input.style.display = 'none';
-    input.onchange = function () { processAssetCapture(this); };
+    input.onchange = function () { window._pickingFile = false; processAssetCapture(this); };
     document.body.appendChild(input);
   }
+  // 🔧 사진 선택 중에는 앱 잠금이 걸리지 않도록 플래그
+  window._pickingFile = true;
+  setTimeout(() => { window._pickingFile = false; }, 120000); // 안전장치: 2분 후 자동 해제
   input.click();
 }
 
