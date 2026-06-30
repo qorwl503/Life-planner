@@ -1281,7 +1281,17 @@ let settings = {
   monthlyIncomes: {},            // 월별 수입: { '2026-04': 3000000, '2026-05': 3500000 }
   savingsGoal: 500000,
   riskProfile: 'balanced',
+  defaultFxDiscount: 0,          // 🔧 기본 환전 우대율 % — 종목별 fxDiscount 미설정 시 적용 (미국 주식 수익률 정확도)
 };
+
+// 🔧 종목의 환전 우대율 — 종목별 설정이 있으면 우선, 없으면 전역 기본값.
+//    (안 넣은 미국 종목에 1.75% 스프레드가 다 붙어 수익률이 낮게 나오던 문제 완화)
+function fxDiscountOf(asset) {
+  if (asset && asset.fxDiscount != null && asset.fxDiscount !== '') {
+    return Number(asset.fxDiscount) || 0;
+  }
+  return Number(settings.defaultFxDiscount) || 0;
+}
 
 // 특정 월의 수입 가져오기 (월별 설정 우선, 없으면 기본값)
 function getMonthlyIncome(year, monthIdx) {
@@ -8015,7 +8025,7 @@ async function fixAutoLotsToInteger(assetId) {
       const live = liveAssetData[asset.id];
       if (live?.currency === 'USD' || asset.priceCurrency === 'USD') {
         histIsUSD = true;
-        fxSpreadMul = 1 + 0.0175 * (1 - (Number(asset.fxDiscount) || 0) / 100);
+        fxSpreadMul = 1 + 0.0175 * (1 - fxDiscountOf(asset) / 100);
         fxHistMap = await fetchYahooHistorical('KRW=X');
       }
     } catch (e) { console.warn('보정: 과거 종가 로드 실패', e); }
@@ -8194,7 +8204,7 @@ async function runRecalcAutoBuy(assetId, fixedId) {
       histMap = await fetchYahooHistorical(histTicker);
       if (live?.currency === 'USD') {
         histIsUSD = true;
-        const fxDiscount = Number(asset.fxDiscount) || 0;
+        const fxDiscount = fxDiscountOf(asset);
         fxSpreadMul = 1 + 0.0175 * (1 - fxDiscount / 100);
         fxHistMap = await fetchYahooHistorical('KRW=X');
       }
@@ -8546,7 +8556,7 @@ async function processAutoBuy(fixed) {
       // 미국 종목이면 과거 종가가 달러 → 원화 환산 필요
       if (live?.currency === 'USD') {
         histIsUSD = true;
-        const fxDiscount = Number(asset.fxDiscount) || 0;
+        const fxDiscount = fxDiscountOf(asset);
         fxSpreadMul = 1 + 0.0175 * (1 - fxDiscount / 100);
         // 🔧 핵심: 각 매수일의 '그 날 환율'을 쓰기 위해 과거 원/달러 환율 1년치 로드
         fxHistMap = await fetchYahooHistorical('KRW=X');
@@ -15668,7 +15678,7 @@ async function fetchAssetLive(asset) {
     // 환전 우대율 적용 (자산별 fxDiscount)
     // 매수 환율 = 시장환율 × (1 + 스프레드 × (1 - 우대율/100))
     // 일반 스프레드: 1.75% (증권사 평균)
-    const fxDiscount = Number(asset.fxDiscount) || 0;
+    const fxDiscount = fxDiscountOf(asset);
     const baseSpread = 0.0175; // 1.75%
     const effectiveSpread = baseSpread * (1 - fxDiscount / 100);
     const buyRate = marketRate * (1 + effectiveSpread);
@@ -18979,6 +18989,15 @@ function openAssetCoachSettings() {
           <button class="chip ${settings.riskProfile==='aggressive'?'active':''}" data-r="aggressive" style="flex:1;">공격형</button>
         </div>
       </div>
+
+      <div class="field">
+        <div class="field-label">💱 기본 환전 우대율 % <span style="font-size:10px; color:var(--text-tertiary);">(미국 주식 공통)</span></div>
+        <input type="number" id="set-fx-discount" value="${settings.defaultFxDiscount || ''}" min="0" max="100" step="0.1" placeholder="예: 95 (토스 환율 우대)" />
+        <div style="font-size:11px; color:var(--text-tertiary); margin-top:4px; line-height:1.5;">
+          미국 종목 매입원가 환율에 적용돼요. 종목별로 따로 넣은 우대율이 있으면 그게 우선.<br>
+          토스 환율 무료/우대면 90~100, 모르면 비워두세요(우대 0% = 스프레드 1.75% 적용).
+        </div>
+      </div>
     </div>
   `;
   modal.classList.add('show');
@@ -18996,6 +19015,11 @@ function saveSettings() {
   settings.monthlyIncome = Number(document.getElementById('set-income').value) || 0;
   settings.savingsGoal = Number(document.getElementById('set-saving').value) || 0;
   settings.riskProfile = document.querySelector('#risk-grid .chip.active').dataset.r;
+  const fxd = document.getElementById('set-fx-discount');
+  if (fxd) settings.defaultFxDiscount = Math.max(0, Math.min(100, Number(fxd.value) || 0));
+  // 🔧 우대율 바꾸면 라이브 시세 캐시 무효화 → 다음 렌더에서 새 환율로 재평가
+  liveAssetData = {};
+  window._lastAssetRefresh = 0;
   saveData();
   showToast('저장됨');
   closeModal();
