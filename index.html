@@ -6795,7 +6795,7 @@ function saveFixed() {
     ? new Date(startDateInput + 'T00:00:00').toISOString()
     : new Date().toISOString();
 
-  // 소수점 매매 옵션
+  // 소수점 매매 옵션: 사용자가 체크한 값만 따른다.
   const fractional = !!document.getElementById('fx-fractional')?.checked;
   const feeRate = Number(document.getElementById('fx-feerate')?.value) || 0;
 
@@ -8875,8 +8875,40 @@ function moveBudgetRemainToCash(year, month, remaining) {
     }
   }
 
-  // '가계부 현금' 전용 자산 찾기 (없으면 생성)
+  // 기존 현금 자산이 있으면 거기에 붙이고, 없을 때만 전용 현금 자산을 만든다.
+  // 기존 자산의 원래 잔액은 _budgetCashBasePrice로 보존하고 월별 잔액만 덧붙인다.
+  const remainTotal = (asset) => Object.values(asset?._monthlyRemains || {})
+    .reduce((s, v) => s + (Number(v) || 0), 0);
+  const mergeRemains = (target, source) => {
+    if (!source?._monthlyRemains) return;
+    if (!target._monthlyRemains) target._monthlyRemains = {};
+    Object.entries(source._monthlyRemains).forEach(([k, v]) => {
+      target._monthlyRemains[k] = Math.max(Number(target._monthlyRemains[k]) || 0, Number(v) || 0);
+    });
+  };
+
   let cashAsset = assets.find(a => a.type === '현금' && a._budgetCash === true);
+  const userCashAsset = assets.find(a =>
+    a.type === '현금' &&
+    a !== cashAsset &&
+    !a._budgetCash &&
+    !String(a.name || '').includes('가계부 잔액')
+  );
+
+  if (cashAsset && userCashAsset) {
+    if (userCashAsset._budgetCashBasePrice == null) {
+      userCashAsset._budgetCashBasePrice = Math.max(0, Number(userCashAsset.price) || 0);
+    }
+    mergeRemains(userCashAsset, cashAsset);
+    assets = assets.filter(a => a !== cashAsset);
+    cashAsset = userCashAsset;
+  } else if (!cashAsset && userCashAsset) {
+    cashAsset = userCashAsset;
+    if (cashAsset._budgetCashBasePrice == null) {
+      cashAsset._budgetCashBasePrice = Math.max(0, (Number(cashAsset.price) || 0) - remainTotal(cashAsset));
+    }
+  }
+
   if (!cashAsset) {
     cashAsset = {
       id: Date.now(),
@@ -8885,13 +8917,18 @@ function moveBudgetRemainToCash(year, month, remaining) {
       ticker: '',
       qty: 1,
       price: 0,
+      _budgetCashBasePrice: 0,
       _budgetCash: true,
       _monthlyRemains: {}, // { '2026-05': 320000, ... } 월별 이월 내역
       note: '가계부에서 넘어온 월별 잔액 합계',
     };
     assets.push(cashAsset);
   }
+  cashAsset._budgetCash = true;
   if (!cashAsset._monthlyRemains) cashAsset._monthlyRemains = {};
+  if (cashAsset._budgetCashBasePrice == null) {
+    cashAsset._budgetCashBasePrice = Math.max(0, (Number(cashAsset.price) || 0) - remainTotal(cashAsset));
+  }
 
   const prev = Number(cashAsset._monthlyRemains[monthKey]) || 0;
   const isUpdate = prev > 0;
@@ -8902,8 +8939,8 @@ function moveBudgetRemainToCash(year, month, remaining) {
 
   // 월별 내역 갱신 후 전체 합산
   cashAsset._monthlyRemains[monthKey] = remaining;
-  const total = Object.values(cashAsset._monthlyRemains).reduce((s, v) => s + (Number(v) || 0), 0);
-  cashAsset.price = total;
+  const total = remainTotal(cashAsset);
+  cashAsset.price = Math.round((Number(cashAsset._budgetCashBasePrice) || 0) + total);
   cashAsset.qty = 1;
 
   saveData();
@@ -15375,8 +15412,8 @@ async function fetchYahooHistorical(ticker) {
     return histPriceCache[ticker].map;
   }
 
-  // 최근 1년치 일별 종가
-  const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=1y`;
+  // 자동매수 재계산은 오래된 회차도 필요하므로 최근 5년치 일별 종가를 사용
+  const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=5y`;
   const proxies = [
     { url: `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(yahooUrl)}`, parse: async (r) => JSON.parse((await r.json()).contents) },
     { url: `https://api.allorigins.win/get?url=${encodeURIComponent(yahooUrl)}`, parse: async (r) => JSON.parse((await r.json()).contents) },
