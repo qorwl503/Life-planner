@@ -20793,15 +20793,26 @@ function setTossProxyUrl(url) {
 }
 
 async function tossProxyFetch(path) {
-  const headers = { 'Accept': 'application/json' };
-  if (currentUser?.getIdToken) {
-    const token = await currentUser.getIdToken();
-    headers.Authorization = `Bearer ${token}`;
+  if (!currentUser?.getIdToken) {
+    throw new Error('토스 동기화는 Firebase 로그인 후 사용할 수 있어요. 로그아웃 후 다시 로그인해 주세요.');
   }
 
-  const res = await fetch(`${getTossProxyUrl()}${path}`, {
-    headers,
+  const makeHeaders = async (forceRefresh = false) => {
+    const token = await currentUser.getIdToken(forceRefresh);
+    return {
+      'Accept': 'application/json',
+      Authorization: `Bearer ${token}`,
+    };
+  };
+
+  let res = await fetch(`${getTossProxyUrl()}${path}`, {
+    headers: await makeHeaders(false),
   });
+  if (res.status === 401) {
+    res = await fetch(`${getTossProxyUrl()}${path}`, {
+      headers: await makeHeaders(true),
+    });
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.ok === false) {
     throw new Error(data.error || `토스 프록시 오류 (${res.status})`);
