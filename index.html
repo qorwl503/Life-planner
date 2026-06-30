@@ -12716,6 +12716,7 @@ function renderAsset() {
     <h1>자산</h1>
     <div class="header-actions">
       <button onclick="manualRefreshPrices()" aria-label="새로고침" id="refresh-btn"><i class="ti ti-refresh"></i></button>
+      <button onclick="openTossSyncModal()" aria-label="토스증권 동기화"><i class="ti ti-building-bank"></i></button>
       <button onclick="openAssetCoachSettings()" aria-label="AI 자산 코치 설정"><i class="ti ti-target"></i></button>
       <button onclick="openAssetAddModal()" aria-label="추가"><i class="ti ti-plus"></i></button>
     </div>
@@ -18301,7 +18302,13 @@ function assetKrwValue(a) {
   const live = liveAssetData[a.id];
   if (live?.hasLive && Number(live.krwValue) > 0) return Number(live.krwValue);
 
-  // 시세가 없을 때: 증권사 캡처 평가금액 우선 (현재 평가액에 가장 가까움)
+  // 시세가 없을 때만: 토스/증권사 스냅샷 평가금액 폴백
+  const brokerSnap = a.brokerSnapshot;
+  if (brokerSnap?.source === 'toss' && Number(brokerSnap.krwValue) > 0) {
+    return Number(brokerSnap.krwValue);
+  }
+
+  // 시세가 없을 때: 증권사 캡처 평가금액 우선
   const snapEval = Number(a.ocrSnapshot?.evalAmount || 0);
   if (snapEval > 0) return snapEval;
   const evalAmount = Number(a.evalAmount || a.currentAmount || a.amount || a.krwValue || 0);
@@ -20770,154 +20777,338 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
-// ===== 토스증권 동기화 모듈 (자동 삽입) =====
-// ============================================================================
-//  토스증권 동기화 모듈  (index.html 내부 삽입용)
-// ----------------------------------------------------------------------------
-//  - 서버리스 함수 /api/toss/holdings 만 호출 (API 키는 서버에만 존재)
-//  - 자동매수 추정 lots는 '실제 보유수량 계산'에 반영하지 않음
-//  - 동기화 전에 [앱 기준 vs 토스 기준] 차이를 먼저 보여주고,
-//    사용자가 "토스 기준으로 동기화"를 눌러 확인해야 반영
-//  - 주문 기능 없음 (조회 전용)
-// ============================================================================
+// ===== 토스증권 Open API 동기화 =====
+// API 키는 index.html에 두지 않고 로컬 프록시(toss-proxy-server.js)에만 둔다.
+const TOSS_PROXY_URL_KEY = 'toss_proxy_url';
+const TOSS_ACCOUNT_SEQ_KEY = 'toss_account_seq';
+const DEFAULT_TOSS_PROXY_URL = 'http://localhost:8787';
 
-// 앱↔함수 공유 비밀(선택). 설정했다면 여기 같은 값을 넣거나 비워둠.
-// (Vercel 환경변수 APP_SHARED_SECRET을 설정한 경우에만 사용)
-const TOSS_APP_SHARED_SECRET = ''; // 비워두면 헤더 안 보냄
-
-// 토스 보유종목 가져오기 (Cloudflare Worker /toss-holdings 경유)
-const TOSS_WORKER_URL = 'https://life-planner.qorwl503.workers.dev/toss-holdings';
-async function fetchTossHoldings() {
-  const headers = {};
-  if (TOSS_APP_SHARED_SECRET) headers['X-App-Secret'] = TOSS_APP_SHARED_SECRET;
-  // 🔒 로그인한 본인만 호출 가능하도록 Firebase ID 토큰을 헤더에 실어 보냄
-  //    (Worker가 FIREBASE_PROJECT_ID로 이 토큰을 검증)
-  try {
-    const u = window._fb?.auth?.currentUser;
-    if (u && typeof u.getIdToken === 'function') {
-      const idToken = await u.getIdToken();
-      if (idToken) headers['Authorization'] = 'Bearer ' + idToken;
-    }
-  } catch (e) { /* 토큰 못 얻어도 일단 호출 시도 (서버에서 거부) */ }
-  const res = await fetch(TOSS_WORKER_URL, { headers });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || !data.ok) {
-    throw new Error(data.error || `토스 조회 실패 (${res.status})`);
-  }
-  return data.holdings || [];
+function getTossProxyUrl() {
+  return (localStorage.getItem(TOSS_PROXY_URL_KEY) || DEFAULT_TOSS_PROXY_URL).replace(/\/+$/, '');
 }
 
-// 토스 종목 → 자산 타입 추정 (한국 6자리=국내, 영문=해외)
+function setTossProxyUrl(url) {
+  const clean = String(url || '').trim().replace(/\/+$/, '');
+  localStorage.setItem(TOSS_PROXY_URL_KEY, clean || DEFAULT_TOSS_PROXY_URL);
+}
+
+async function tossProxyFetch(path) {
+  const headers = { 'Accept': 'application/json' };
+  if (currentUser?.getIdToken) {
+    const token = await currentUser.getIdToken();
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${getTossProxyUrl()}${path}`, {
+    headers,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.error || `토스 프록시 오류 (${res.status})`);
+  }
+  return data;
+}
+
+async function fetchTossAccounts() {
+  const data = await tossProxyFetch('/api/toss/accounts');
+  return data.result || data.accounts || [];
+}
+
+function getTossSyncedAssets() {
+  return (assets || []).filter(a => a?.brokerSnapshot?.source === 'toss' || a?.preTossSyncBackup);
+}
+
+function restoreTossSyncAsset(assetId) {
+  const idx = (assets || []).findIndex(a => String(a.id) === String(assetId));
+  if (idx < 0) return false;
+  const asset = assets[idx];
+  const backup = asset.preTossSyncBackup;
+  if (!backup) return false;
+
+  if (backup.createdByToss) {
+    assets.splice(idx, 1);
+    return true;
+  }
+
+  if (backup.type) asset.type = backup.type;
+  if (backup.name) asset.name = backup.name;
+  if (backup.ticker != null) asset.ticker = backup.ticker;
+  asset.qty = backup.qty;
+  asset.price = backup.price;
+  if (backup.evalAmount != null) asset.evalAmount = backup.evalAmount;
+  else delete asset.evalAmount;
+  if (backup.priceCurrency) asset.priceCurrency = backup.priceCurrency;
+  else delete asset.priceCurrency;
+  asset.lots = Array.isArray(backup.lots) ? JSON.parse(JSON.stringify(backup.lots)) : [];
+  if (backup.ocrSnapshot) asset.ocrSnapshot = JSON.parse(JSON.stringify(backup.ocrSnapshot));
+  else delete asset.ocrSnapshot;
+  if (backup.brokerSnapshot) asset.brokerSnapshot = JSON.parse(JSON.stringify(backup.brokerSnapshot));
+  else delete asset.brokerSnapshot;
+  delete asset.preTossSyncBackup;
+  recalcAssetFromLots(asset);
+  return true;
+}
+
+function openTossUndoModal() {
+  const synced = getTossSyncedAssets();
+  if (!synced.length) {
+    showToast('되돌릴 토스 동기화 기록이 없어요');
+    return;
+  }
+
+  const rows = synced.map(a => {
+    const snap = a.brokerSnapshot || {};
+    const backup = a.preTossSyncBackup;
+    const syncedAt = snap.syncedAt || backup?.syncedAt || '';
+    const dt = syncedAt ? new Date(syncedAt) : null;
+    const time = dt && !isNaN(dt.getTime())
+      ? `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`
+      : '동기화 시각 없음';
+    const canUndo = !!backup;
+    return `
+      <div style="padding:11px 0; border-bottom:0.5px solid var(--border-tertiary); display:flex; gap:10px; align-items:center;">
+        <div style="flex:1; min-width:0;">
+          <div style="font-size:13px; font-weight:700;">${escapeHTML(a.name || a.ticker || '이름없음')}</div>
+          <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">${escapeHTML(a.ticker || '')} · ${time}</div>
+        </div>
+        <button onclick="undoTossSync(${jsString(a.id)})" ${canUndo ? '' : 'disabled'}
+          style="padding:7px 10px; border:0.5px solid ${canUndo ? 'var(--text-danger)' : 'var(--border-tertiary)'}; background:white; color:${canUndo ? 'var(--text-danger)' : 'var(--text-tertiary)'}; border-radius:8px; font-size:11px; font-weight:700; cursor:${canUndo ? 'pointer' : 'default'}; font-family:inherit;">
+          되돌리기
+        </button>
+      </div>`;
+  }).join('');
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="openTossSyncModal()">뒤로</button>
+        <h2>토스 동기화 되돌리기</h2>
+        <span></span>
+      </div>
+      <div style="padding:10px 12px; background:var(--bg-warning); border-radius:10px; margin-bottom:12px; font-size:11px; color:var(--text-warning); line-height:1.6;">
+        동기화 직전 매수기록이 남아 있는 종목만 되돌릴 수 있어요. 되돌리기 전 현재 상태도 복원 지점으로 저장됩니다.
+      </div>
+      <div style="max-height:55vh; overflow-y:auto;">${rows}</div>
+    </div>`;
+  modal.classList.add('show');
+}
+
+function undoTossSync(assetId) {
+  if (!confirm('이 종목을 토스 동기화 직전 상태로 되돌릴까요?')) return;
+  if (typeof autoBackupBeforeRestore === 'function') autoBackupBeforeRestore();
+  const ok = restoreTossSyncAsset(assetId);
+  if (!ok) {
+    showToast('되돌릴 백업을 찾지 못했어요');
+    return;
+  }
+  saveData(true);
+  showToast('토스 동기화를 되돌렸어요');
+  openTossUndoModal();
+  if (currentTab === 'asset') renderAsset();
+}
+
+function renderTossAccountOptions(accounts, selectedSeq) {
+  return (accounts || []).map(a => {
+    const seq = String(a.accountSeq ?? '');
+    const type = a.accountType ? ` · ${a.accountType}` : '';
+    const accountNo = a.accountNo ? `${String(a.accountNo).slice(0, 4)}****${String(a.accountNo).slice(-3)}` : '계좌번호 없음';
+    return `<option value="${escapeAttr(seq)}" ${String(selectedSeq) === seq ? 'selected' : ''}>${escapeHTML(accountNo)}${escapeHTML(type)} · seq ${escapeHTML(seq)}</option>`;
+  }).join('');
+}
+
+async function loadTossAccountsIntoSelect() {
+  const url = document.getElementById('toss-proxy-url')?.value || DEFAULT_TOSS_PROXY_URL;
+  const status = document.getElementById('toss-sync-status');
+  const wrap = document.getElementById('toss-account-picker');
+  setTossProxyUrl(url);
+  if (status) status.innerHTML = `<div style="text-align:center;">계좌 목록 불러오는 중...</div>`;
+  try {
+    const accounts = await fetchTossAccounts();
+    if (!accounts.length) throw new Error('조회 가능한 토스증권 계좌가 없습니다.');
+    window._tossAccounts = accounts;
+    const saved = localStorage.getItem(TOSS_ACCOUNT_SEQ_KEY) || String(accounts[0].accountSeq ?? '');
+    if (wrap) {
+      wrap.innerHTML = `
+        <div class="field-label">계좌 선택</div>
+        <select id="toss-account-select" onchange="localStorage.setItem('${TOSS_ACCOUNT_SEQ_KEY}', this.value)"
+          style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit;">
+          ${renderTossAccountOptions(accounts, saved)}
+        </select>`;
+    }
+    if (!localStorage.getItem(TOSS_ACCOUNT_SEQ_KEY)) localStorage.setItem(TOSS_ACCOUNT_SEQ_KEY, saved);
+    if (status) status.innerHTML = `<div style="color:var(--text-success);">계좌 ${accounts.length}개를 찾았어요. 선택 후 잔고를 불러오세요.</div>`;
+  } catch (e) {
+    if (status) status.innerHTML = `<div style="padding:12px; background:var(--bg-danger); color:var(--text-danger); border-radius:10px;">${escapeHTML(e.message)}</div>`;
+  }
+}
+
+async function fetchTossExchangeRate() {
+  const data = await tossProxyFetch('/api/toss/exchange-rate?baseCurrency=USD&quoteCurrency=KRW');
+  return Number(data.result?.rate || data.rate || 0) || 0;
+}
+
+async function fetchTossHoldings(accountSeq) {
+  const data = await tossProxyFetch(`/api/toss/holdings?accountSeq=${encodeURIComponent(accountSeq)}`);
+  return data.result || data.holdings || null;
+}
+
+function tossNum(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
 function tossInferType(h) {
   const sym = (h.symbol || '').toUpperCase();
-  const isKR = /^\d{6}$/.test(sym);
-  const isETFName = /ETF|KODEX|TIGER|ACE|KBSTAR|SOL|RISE|PLUS/i.test(h.name || '');
+  const isKR = h.marketCountry === 'KR' || /^\d{6}$/.test(sym);
+  const isETFName = /ETF|KODEX|TIGER|ACE|KBSTAR|SOL|RISE|PLUS|QQQ|SPY|VOO|VTI|SCHD|SPLG/i.test(`${h.name || ''} ${sym}`);
   if (isKR) return isETFName ? '국내ETF' : '국내주식';
-  // 영문 티커
-  return isETFName || /QQQ|SPY|VOO|SCHD|VTI|SPLG/i.test(sym) ? '해외ETF' : '미국주식';
+  return isETFName ? '해외ETF' : '미국주식';
 }
 
-// 앱 기준 '실제 보유'와 토스 기준을 비교 → 차이 목록 생성
-//  ⚠️ 자동매수 추정 lot은 제외하고 '확정분'만 앱 기준 수량으로 삼는다.
-function buildTossDiff(tossHoldings) {
-  const rows = [];
-  tossHoldings.forEach(h => {
+function tossMoneyToKrw(amount, currency, usdKrw) {
+  const n = tossNum(amount);
+  if ((currency || 'KRW').toUpperCase() === 'USD') return Math.round(n * usdKrw);
+  return Math.round(n);
+}
+
+function buildTossDiff(holdingsOverview, accountSeq, usdKrw) {
+  const items = holdingsOverview?.items || [];
+  return items.map(h => {
     const type = tossInferType(h);
     const matched = findMatchingAsset({ name: h.name, type, ticker: h.symbol });
+    const currency = (h.currency || 'KRW').toUpperCase();
+    const qty = tossNum(h.quantity);
+    const avgPrice = tossNum(h.averagePurchasePrice);
+    const purchaseAmount = tossNum(h.marketValue?.purchaseAmount);
+    const marketAmount = tossNum(h.marketValue?.amount);
+    const marketAfterCost = tossNum(h.marketValue?.amountAfterCost);
+    const profitAmount = tossNum(h.profitLoss?.amount);
+    const dailyProfitAmount = tossNum(h.dailyProfitLoss?.amount);
+    const avgKrw = currency === 'USD' ? Math.round(avgPrice * usdKrw) : Math.round(avgPrice);
+    const krwValue = tossMoneyToKrw(marketAmount, currency, usdKrw);
+    const appQty = matched ? tossNum(matched.qty) : 0;
 
-    // 앱 현재 수량/평단 (매칭된 자산 기준; 자동매수 추정 포함된 현재 표시값)
-    const appQty = matched ? (Number(matched.qty) || 0) : 0;
-    const appPrice = matched ? (Number(matched.price) || 0) : 0;
-
-    const tossQty = Number(h.quantity) || 0;
-    const tossEval = Number(h.evalAmount) || 0;
-
-    rows.push({
+    return {
+      accountSeq,
       symbol: h.symbol,
       name: h.name || h.symbol,
       type,
       matchedId: matched ? matched.id : null,
       appQty,
-      appPrice,
-      tossQty,
-      tossAvgPrice: Number(h.avgPrice) || 0,
-      tossEval,
-      currency: h.currency || 'KRW',
-      qtyDiff: parseFloat((tossQty - appQty).toFixed(4)),
+      tossQty: qty,
+      qtyDiff: parseFloat((qty - appQty).toFixed(4)),
+      currency,
+      avgKrw,
+      purchaseAmountKrw: tossMoneyToKrw(purchaseAmount, currency, usdKrw),
+      krwValue,
+      amountAfterCostKrw: tossMoneyToKrw(marketAfterCost, currency, usdKrw),
+      profitAmountKrw: tossMoneyToKrw(profitAmount, currency, usdKrw),
+      profitRate: tossNum(h.profitLoss?.rate),
+      profitRateAfterCost: tossNum(h.profitLoss?.rateAfterCost),
+      dailyProfitAmountKrw: tossMoneyToKrw(dailyProfitAmount, currency, usdKrw),
+      dailyProfitRate: tossNum(h.dailyProfitLoss?.rate),
+      raw: h,
       isNew: !matched,
-    });
+    };
   });
-  return rows;
 }
 
-// 토스 기준으로 자산 확정 — 자동매수 추정 lot을 버리고 실제 보유로 단일 lot 교체
-//  (캡처 보정과 동일한 패턴: '실제 보유'를 기준점으로 확정, 이후 자동매수는 그 위에 쌓임)
 function applyTossSync(diffRows) {
   const today = todayKey();
-  let updated = 0, created = 0;
+  const syncedAt = new Date().toISOString();
+  const hasApproved = (diffRows || []).some(row => row._approved && Number(row.tossQty) > 0);
+  if (hasApproved && typeof autoBackupBeforeRestore === 'function') {
+    autoBackupBeforeRestore();
+  }
+  let updated = 0;
+  let created = 0;
 
   diffRows.forEach(row => {
-    if (!row._approved) return; // 사용자가 체크한 항목만 반영
-
-    const tossQty = Number(row.tossQty) || 0;
-    if (tossQty <= 0) return;
-
-    // 토스 평단(원화 환산) — 미국 종목이면 평가금액/수량으로 원화 평단 역산이 더 정확
-    let avgKRW = 0;
-    if (row.currency === 'USD' && row.tossEval > 0) {
-      avgKRW = Math.round(row.tossEval / tossQty); // 평가금액 기반 원화 환산
-    } else {
-      avgKRW = Math.round(Number(row.tossAvgPrice) || 0);
-    }
-    const exactCost = row.tossEval > 0 ? Math.round(row.tossEval) : Math.round(tossQty * avgKRW);
+    if (!row._approved || row.tossQty <= 0) return;
 
     let asset = row.matchedId ? assets.find(a => a.id === row.matchedId) : null;
-
     if (!asset) {
-      // 신규 자산 생성
       asset = {
         id: Date.now() + Math.random(),
         type: row.type,
         name: row.name,
-        qty: 0, price: 0,
         ticker: row.symbol || '',
+        qty: 0,
+        price: 0,
         memo: '',
         lots: [],
+      };
+      asset.preTossSyncBackup = {
+        syncedAt,
+        createdByToss: true,
       };
       assets.push(asset);
       created++;
     } else {
+      asset.preTossSyncBackup = {
+        syncedAt,
+        type: asset.type,
+        name: asset.name,
+        ticker: asset.ticker,
+        qty: asset.qty,
+        price: asset.price,
+        evalAmount: asset.evalAmount,
+        priceCurrency: asset.priceCurrency || null,
+        lots: Array.isArray(asset.lots) ? JSON.parse(JSON.stringify(asset.lots)) : [],
+        ocrSnapshot: asset.ocrSnapshot ? JSON.parse(JSON.stringify(asset.ocrSnapshot)) : null,
+        brokerSnapshot: asset.brokerSnapshot ? JSON.parse(JSON.stringify(asset.brokerSnapshot)) : null,
+      };
       updated++;
     }
 
-    // 🔧 자동매수 추정 lot 전부 제거하고, 토스 확정분을 단일 기준 lot으로 교체
-    asset.ticker = asset.ticker || row.symbol || '';
+    asset.type = asset.type || row.type;
+    asset.name = asset.name || row.name;
+    asset.ticker = row.symbol || asset.ticker || '';
     asset.priceCurrency = 'KRW';
     if (asset.avgBuyRate) delete asset.avgBuyRate;
+
     asset.lots = [{
       id: Date.now() + Math.random(),
-      source: `🟦 토스 동기화 ${today}`,
-      qty: tossQty,
-      price: avgKRW,
+      source: `토스 동기화 ${today}`,
+      qty: row.tossQty,
+      price: row.avgKrw,
       date: today,
       autoBuy: false,
       fixedId: null,
-      exactAmount: exactCost,   // 토스 실제 평가금액 보존
-      isCaptureBase: true,      // 기준점 — 이후 자동매수는 이 위에 쌓임
+      exactAmount: row.purchaseAmountKrw || Math.round(row.tossQty * row.avgKrw),
+      isCaptureBase: true,
       note: `토스증권 잔고 기준 확정 (${today})`,
     }];
-    asset.assetBaseDate = today; // 자동매수는 이 날짜 이후만 더함
+    asset.assetBaseDate = today;
     asset.ocrSnapshot = {
       date: today,
-      evalAmount: row.tossEval > 0 ? Math.round(row.tossEval) : null,
-      profitPct: null,
-      profitAmount: null,
+      evalAmount: row.krwValue || null,
+      profitPct: row.profitRate ? row.profitRate * 100 : null,
+      profitAmount: row.profitAmountKrw || null,
       source: 'toss',
+    };
+    asset.brokerSnapshot = {
+      source: 'toss',
+      accountSeq: row.accountSeq,
+      syncedAt,
+      symbol: row.symbol,
+      currency: row.currency,
+      quantity: row.tossQty,
+      averagePurchasePriceKrw: row.avgKrw,
+      purchaseAmountKrw: row.purchaseAmountKrw,
+      krwValue: row.krwValue,
+      amountAfterCostKrw: row.amountAfterCostKrw,
+      profitAmountKrw: row.profitAmountKrw,
+      profitRate: row.profitRate,
+      profitRateAfterCost: row.profitRateAfterCost,
+      dailyProfitAmountKrw: row.dailyProfitAmountKrw,
+      dailyProfitRate: row.dailyProfitRate,
     };
 
     recalcAssetFromLots(asset);
+    if (asset.brokerSnapshot?.krwValue) asset.evalAmount = asset.brokerSnapshot.krwValue;
 
-    // 연결된 자동매수의 lastBuyDate를 오늘로 동기화 (중복 방지)
     try {
       const capIso = new Date(today + 'T23:59:59').toISOString();
       (budget?.fixed || []).forEach(fx => {
@@ -20927,105 +21118,157 @@ function applyTossSync(diffRows) {
         const sameName = fx.assetInfo.name && asset.name && fx.assetInfo.name === asset.name;
         if (sameTicker || sameName) fx.lastBuyDate = capIso;
       });
-    } catch (e) { /* noop */ }
+    } catch (e) {}
   });
 
-  saveData(true); // 즉시 저장 (localStorage + Firestore 동시, 디바운스 없이)
+  saveData(true);
   return { updated, created };
 }
 
-// ---- UI: 토스 동기화 모달 (차이 비교 → 확인 후 반영) ----
-async function openTossSyncModal() {
-  showToast('🟦 토스 잔고 불러오는 중...');
-  let holdings;
+function openTossSyncModal() {
+  const savedAccount = localStorage.getItem(TOSS_ACCOUNT_SEQ_KEY) || '';
+  const syncedCount = getTossSyncedAssets().filter(a => a.preTossSyncBackup).length;
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+        <h2>토스증권 동기화</h2>
+        <span></span>
+      </div>
+      <div style="padding:10px 12px; background:var(--bg-info); border-radius:10px; margin-bottom:14px; font-size:11px; color:var(--text-info); line-height:1.6;">
+        API 키는 앱에 저장하지 않고 프록시 서버가 보관합니다. 모바일에서는 HTTPS Worker 주소를 넣고 Firebase 로그인 상태로 조회해요.
+      </div>
+      <div class="field">
+        <div class="field-label">프록시 주소</div>
+        <input type="text" id="toss-proxy-url" value="${escapeAttr(getTossProxyUrl())}" placeholder="https://myplanner-toss-proxy.workers.dev" />
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px;">PC 테스트는 localhost, 모바일/PWA는 Cloudflare Worker 같은 HTTPS 주소를 사용하세요.</div>
+      </div>
+      <div class="field" id="toss-account-picker">
+        <div class="field-label">계좌 선택</div>
+        <div style="display:flex; gap:6px;">
+          <input type="number" id="toss-account-seq" value="${escapeAttr(savedAccount)}" placeholder="계좌 목록을 불러오거나 seq 입력" style="flex:1;" />
+          <button type="button" onclick="loadTossAccountsIntoSelect()" style="padding:0 12px; border:0.5px solid var(--border-tertiary); background:white; border-radius:9px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">목록</button>
+        </div>
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px;">처음이면 목록 버튼을 눌러 계좌를 선택하세요.</div>
+      </div>
+      <button onclick="loadTossSyncPreview()" style="width:100%; padding:13px; border:none; background:#0D9488; color:white; border-radius:10px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">
+        토스 잔고 불러오기
+      </button>
+      ${syncedCount > 0 ? `
+        <button onclick="openTossUndoModal()" style="width:100%; padding:12px; border:0.5px solid var(--text-danger); background:white; color:var(--text-danger); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit; margin-top:8px;">
+          최근 토스 동기화 되돌리기 (${syncedCount}개)
+        </button>
+      ` : ''}
+      <div id="toss-sync-status" style="margin-top:12px; font-size:12px; color:var(--text-secondary); line-height:1.6;"></div>
+    </div>`;
+  modal.classList.add('show');
+  if (window._tossAccounts && window._tossAccounts.length) {
+    const wrap = document.getElementById('toss-account-picker');
+    if (wrap) {
+      wrap.innerHTML = `
+        <div class="field-label">계좌 선택</div>
+        <select id="toss-account-select" onchange="localStorage.setItem('${TOSS_ACCOUNT_SEQ_KEY}', this.value)"
+          style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit;">
+          ${renderTossAccountOptions(window._tossAccounts, savedAccount)}
+        </select>`;
+    }
+  }
+}
+
+async function loadTossSyncPreview() {
+  const url = document.getElementById('toss-proxy-url')?.value || DEFAULT_TOSS_PROXY_URL;
+  const accountInput = document.getElementById('toss-account-select')?.value || document.getElementById('toss-account-seq')?.value || '';
+  const status = document.getElementById('toss-sync-status');
+  setTossProxyUrl(url);
+  if (accountInput) localStorage.setItem(TOSS_ACCOUNT_SEQ_KEY, accountInput);
+  if (status) status.innerHTML = `<div style="text-align:center;">토스 계좌 확인 중...</div>`;
+
   try {
-    holdings = await fetchTossHoldings();
+    const accounts = await fetchTossAccounts();
+    if (!accounts.length) throw new Error('조회 가능한 토스증권 계좌가 없습니다.');
+
+    const accountSeq = accountInput || localStorage.getItem(TOSS_ACCOUNT_SEQ_KEY) || accounts[0].accountSeq;
+    localStorage.setItem(TOSS_ACCOUNT_SEQ_KEY, accountSeq);
+
+    if (status) status.innerHTML = `<div style="text-align:center;">보유종목과 환율 확인 중...</div>`;
+    const [holdingsOverview, usdKrw] = await Promise.all([
+      fetchTossHoldings(accountSeq),
+      fetchTossExchangeRate().catch(() => 0),
+    ]);
+    const fxRate = usdKrw || await getUSDKRW();
+    const diff = buildTossDiff(holdingsOverview, accountSeq, fxRate);
+    if (!diff.length) throw new Error('토스증권 계좌에 보유 주식이 없습니다.');
+
+    diff.forEach(r => { r._approved = (r.qtyDiff !== 0 || r.isNew); });
+    window._tossDiff = diff;
+    renderTossSyncPreview(diff, holdingsOverview, fxRate);
   } catch (e) {
-    showToast('토스 조회 실패: ' + e.message);
-    alert('토스증권 잔고를 불러오지 못했어요.\n\n' + e.message +
-      '\n\n· Vercel 배포 + 환경변수(TOSS_APP_KEY/SECRET) 설정이 되어 있어야 합니다.\n' +
-      '· 토스 계좌에 보유종목이 없으면 빈 결과가 옵니다.');
-    return;
+    if (status) {
+      status.innerHTML = `<div style="padding:12px; background:var(--bg-danger); color:var(--text-danger); border-radius:10px;">${escapeHTML(e.message)}<br><span style="font-size:11px; opacity:0.8;">프록시 서버가 켜져 있고 환경변수에 토스 client_id/client_secret이 설정되어 있는지 확인하세요.</span></div>`;
+    }
+    showToast('토스 조회 실패');
   }
+}
 
-  if (!holdings.length) {
-    alert('토스증권 계좌에 보유종목이 없어요.\n(키움·한투 등 다른 증권사 종목은 토스 API로 조회되지 않습니다.)');
-    return;
-  }
-
-  const diff = buildTossDiff(holdings);
-  window._tossDiff = diff;
-
-  const fmt = (n) => (n == null ? '-' : Number(n).toLocaleString());
+function renderTossSyncPreview(diff, holdingsOverview, usdKrw) {
+  const fmtMoney = (n) => `${Math.round(Number(n) || 0).toLocaleString()}원`;
+  const fmtQty = (n) => Number(n || 0).toFixed(4).replace(/\.?0+$/, '');
+  const summaryRate = tossNum(holdingsOverview?.profitLoss?.rate) * 100;
   const rowsHtml = diff.map((r, i) => {
-    const diffColor = r.qtyDiff === 0 ? 'var(--text-secondary)'
-      : (r.qtyDiff > 0 ? '#0D9488' : '#DC2626');
-    const diffLabel = r.qtyDiff === 0 ? '일치'
-      : (r.qtyDiff > 0 ? `+${r.qtyDiff}` : `${r.qtyDiff}`);
-    const newBadge = r.isNew ? ' <span style="font-size:10px; color:#0D9488;">(신규)</span>' : '';
+    const diffColor = r.qtyDiff === 0 ? 'var(--text-secondary)' : (r.qtyDiff > 0 ? '#0D9488' : '#DC2626');
+    const diffLabel = r.qtyDiff === 0 ? '일치' : (r.qtyDiff > 0 ? `+${fmtQty(r.qtyDiff)}` : fmtQty(r.qtyDiff));
+    const badge = r.isNew ? `<span style="font-size:10px; color:#0D9488; margin-left:4px;">신규</span>` : '';
     return `
-      <label style="display:flex; align-items:center; gap:10px; padding:10px 8px; border-bottom:1px solid var(--border); cursor:pointer;">
-        <input type="checkbox" ${r.qtyDiff !== 0 || r.isNew ? 'checked' : ''}
-          onchange="window._tossDiff[${i}]._approved = this.checked"
-          style="width:18px; height:18px; flex-shrink:0;" />
+      <label style="display:flex; align-items:flex-start; gap:10px; padding:11px 8px; border-bottom:0.5px solid var(--border-tertiary); cursor:pointer;">
+        <input type="checkbox" ${r._approved ? 'checked' : ''} onchange="window._tossDiff[${i}]._approved = this.checked" style="width:18px; height:18px; flex-shrink:0; margin-top:2px;" />
         <div style="flex:1; min-width:0;">
-          <div style="font-weight:600; font-size:13px;">${r.name}${newBadge}</div>
-          <div style="font-size:11px; color:var(--text-secondary);">
-            앱 ${fmt(r.appQty)}주 → 토스 ${fmt(r.tossQty)}주
-          </div>
+          <div style="font-size:13px; font-weight:700;">${escapeHTML(r.name)}${badge}</div>
+          <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">${escapeHTML(r.symbol)} · ${escapeHTML(r.type)} · ${r.currency}</div>
+          <div style="font-size:11px; color:var(--text-secondary); margin-top:3px;">앱 ${fmtQty(r.appQty)}주 → 토스 ${fmtQty(r.tossQty)}주 · ${fmtMoney(r.krwValue)}</div>
         </div>
-        <div style="text-align:right; font-size:13px; font-weight:700; color:${diffColor};">
-          ${diffLabel}
-        </div>
+        <div style="text-align:right; color:${diffColor}; font-size:13px; font-weight:800; min-width:52px;">${diffLabel}</div>
       </label>`;
   }).join('');
 
-  // 기본: 차이 있는 항목만 _approved = true
-  diff.forEach(r => { r._approved = (r.qtyDiff !== 0 || r.isNew); });
-
-  const modalHtml = `
+  modal.innerHTML = `
     <div class="modal">
       <div class="modal-handle"></div>
-      <div style="padding:16px;">
-        <h3 style="margin:0 0 4px; font-size:17px;">🟦 토스 기준으로 동기화</h3>
-        <p style="margin:0 0 12px; font-size:12px; color:var(--text-secondary); line-height:1.5;">
-          토스증권 실제 잔고와 앱 수량을 비교했어요. 반영할 항목을 확인하세요.
-          체크한 종목은 <b>토스 실제 보유수량·평단</b>으로 교체되고,
-          자동매수 추정분은 정리됩니다 (이후 자동매수는 다시 위에 쌓임).
-        </p>
-        <div style="border:1px solid var(--border); border-radius:10px; overflow:hidden; max-height:50vh; overflow-y:auto;">
-          ${rowsHtml}
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="openTossSyncModal()">뒤로</button>
+        <h2>토스 잔고 확인</h2>
+        <button class="modal-save" onclick="confirmTossSync()">반영</button>
+      </div>
+      <div style="padding:12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:12px;">
+        <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:5px;">
+          <span style="color:var(--text-tertiary);">보유 종목</span><b>${diff.length}개</b>
         </div>
-        <div style="display:flex; gap:8px; margin-top:14px;">
-          <button onclick="closeModal()" style="flex:1; padding:12px; border:1px solid var(--border); background:var(--bg-secondary); border-radius:10px; font-weight:600; font-family:inherit;">취소</button>
-          <button onclick="confirmTossSync()" style="flex:1; padding:12px; border:none; background:#0D9488; color:#fff; border-radius:10px; font-weight:700; font-family:inherit;">동기화 반영</button>
+        <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:5px;">
+          <span style="color:var(--text-tertiary);">전체 수익률</span><b style="color:${summaryRate >= 0 ? 'var(--text-danger)' : 'var(--text-info)'};">${summaryRate >= 0 ? '+' : ''}${summaryRate.toFixed(2)}%</b>
         </div>
+        <div style="font-size:10px; color:var(--text-tertiary); text-align:right;">USD/KRW ${Math.round(usdKrw).toLocaleString()}</div>
+      </div>
+      <div style="border:0.5px solid var(--border-tertiary); border-radius:10px; overflow:hidden; max-height:52vh; overflow-y:auto;">
+        ${rowsHtml}
+      </div>
+      <div style="font-size:10px; color:var(--text-tertiary); line-height:1.5; margin-top:10px;">
+        체크한 종목은 토스 기준 수량·평단·평가금액으로 보정됩니다. 주문은 실행하지 않는 조회 전용 동기화입니다.
       </div>
     </div>`;
-
-  modal.innerHTML = modalHtml;
   modal.classList.add('show');
 }
 
 function confirmTossSync() {
   const diff = window._tossDiff || [];
-  const approved = diff.filter(r => r._approved);
-  if (!approved.length) {
+  if (!diff.some(r => r._approved)) {
     showToast('반영할 항목을 선택하세요');
     return;
   }
   const { updated, created } = applyTossSync(diff);
-  closeModal();
   delete window._tossDiff;
-  let msg = '';
-  if (updated) msg += `🟦 ${updated}건 동기화`;
-  if (created) msg += (msg ? ', ' : '') + `✨ ${created}건 신규`;
-  showToast(msg || '동기화 완료');
-  if (typeof refreshAllAssetPrices === 'function') {
-    refreshAllAssetPrices().then(() => renderAsset()).catch(() => renderAsset());
-  } else {
-    renderAsset();
-  }
+  closeModal();
+  showToast(`토스 동기화 완료 · 수정 ${updated}개 · 신규 ${created}개`);
+  renderAsset();
 }
 
 </script>
