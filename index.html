@@ -12899,23 +12899,25 @@ function renderAsset() {
   // 이번 달 자산 스냅샷 자동 저장
   saveAssetSnapshot(total, byType);
 
+  // 🔧 색 재조정 — 노랑·주홍이 섞여 헷갈리던 것 정리. 따뜻한 색은 '금(골드)' 하나만 남기고
+  //    청약은 딥틸로 이동. 전체적으로 채도를 맞춰 조합이 차분하게.
   const typeColors = {
-    '국내주식':'#4C84F0',  // 파랑
-    '미국주식':'#1E40AF',  // 진한 남색 (파랑과 명도 차이로 구분)
-    '주식':'#4C84F0',      // (구버전 호환 — 국내주식과 동일군)
-    '국내ETF':'#9B5DE5',   // 보라
-    '해외ETF':'#E15FA8',   // 마젠타핑크 (보라와 확실히 구분)
-    'ETF':'#9B5DE5',       // (구버전 호환)
-    '펀드':'#00BB8F',      // 청록
-    '채권':'#8B6F47',      // 브라운 (안정자산 · 다른 색군과 구분)
-    '금':'#F2B705',        // 골드
-    '달러':'#1DA9C9',      // 시안블루
-    '예적금':'#56C271',    // 민트그린
-    '청약':'#FF8C42',      // 오렌지
-    '현금':'#9AA0B5',      // 그레이블루
-    '부동산':'#E8536E',    // 레드핑크
-    '코인':'#FFD11A',      // 옐로
-    '기타':'#B0B0B8',      // 그레이
+    '국내주식':'#4574E0',  // 블루
+    '미국주식':'#1F3C88',  // 네이비 (블루와 명도 차이)
+    '주식':'#4574E0',      // (구버전 호환 — 국내주식과 동일군)
+    '국내ETF':'#7B5BE6',   // 바이올렛
+    '해외ETF':'#D4508C',   // 로즈핑크
+    'ETF':'#7B5BE6',       // (구버전 호환)
+    '펀드':'#2FA47C',      // 그린틸
+    '채권':'#96714A',      // 브라운
+    '금':'#E9A800',        // 골드 — 유일한 노랑 계열
+    '달러':'#35A6C4',      // 시안
+    '예적금':'#63B85C',    // 그린
+    '청약':'#12867F',      // 딥틸 (주황 → 이동, 금과 완전 분리)
+    '현금':'#98A1B3',      // 그레이
+    '부동산':'#DE5A6B',    // 코럴레드
+    '코인':'#FF7043',      // 딥오렌지
+    '기타':'#B4B4BC',      // 그레이
   };
 
   let html = '';
@@ -12941,14 +12943,15 @@ function renderAsset() {
     entries.forEach(([type, val]) => {
       const pct = val / total;
       const dashLength = circumference * pct;
-      const dashOffset = circumference - dashLength;
+      // 🔧 조각 사이 흰 간격 — 인접 색이 비슷해도 경계가 보이게 (아주 작은 조각은 간격 생략)
+      const gap = entries.length > 1 ? Math.min(2.5, dashLength * 0.25) : 0;
       const rotation = cumPct * 360;
       segments += `<circle
         cx="${cx}" cy="${cy}" r="${r}"
         fill="none"
         stroke="${typeColors[type] || 'var(--text-tertiary)'}"
         stroke-width="${strokeWidth}"
-        stroke-dasharray="${dashLength} ${circumference}"
+        stroke-dasharray="${Math.max(0.5, dashLength - gap)} ${circumference}"
         transform="rotate(${rotation - 90} ${cx} ${cy})"
       />`;
       cumPct += pct;
@@ -12963,7 +12966,7 @@ function renderAsset() {
           <div style="position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; pointer-events:none;">
             <div style="font-size:11px; color:var(--text-tertiary);">총 자산</div>
             <div style="font-size:16px; font-weight:600; margin-top:2px;">${total >= 100000000 ? (total/100000000).toFixed(1)+'억' : (total/10000).toFixed(0)+'만'}</div>
-            <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${total.toLocaleString()}원</div>
+            <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${Math.round(total).toLocaleString()}원</div>
           </div>
         </div>
         <div style="flex:1; min-width:0;">
@@ -12973,7 +12976,7 @@ function renderAsset() {
               <span style="width:10px; height:10px; border-radius:2px; background:${typeColors[type] || 'var(--text-tertiary)'}; flex-shrink:0;"></span>
               <div style="flex:1; min-width:0;">
                 <div style="font-size:12px; font-weight:500;">${type}</div>
-                <div style="font-size:11px; color:var(--text-tertiary);">${val.toLocaleString()}원</div>
+                <div style="font-size:11px; color:var(--text-tertiary);">${Math.round(val).toLocaleString()}원</div>
               </div>
               <div style="font-size:13px; font-weight:600;">${pctStr}%</div>
             </div>`;
