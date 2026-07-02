@@ -1121,6 +1121,7 @@ function saveData(immediate = false) {
       try {
         const { doc, setDoc, db } = window._fb;
         await setDoc(doc(db, 'users', currentUser.uid), _cleanForFirebase());
+        window._lastSavedAt = Date.now(); // 🔧 다른 기기 변경 감지 기준
         showSyncStatus();
       } catch (e) {
         console.error('즉시 저장 실패:', e);
@@ -1139,6 +1140,7 @@ function saveData(immediate = false) {
     try {
       const { doc, setDoc, db } = window._fb;
       await setDoc(doc(db, 'users', currentUser.uid), _cleanForFirebase());
+      window._lastSavedAt = Date.now(); // 🔧 다른 기기 변경 감지 기준
       showSyncStatus();
     } catch (e) {
       console.error('저장 실패:', e);
@@ -1198,9 +1200,12 @@ function compactAutoLots() {
 
   assets.forEach(asset => {
     if (!asset.lots || asset.lots.length < 30) return;
+    // 🔧 납입형(청약 등)은 압축 금지 — 청약 회차 = lot 개수라서 합치면 회차가 왜곡됨
+    if (['청약', '예적금', '현금', '부동산'].includes(asset.type)) return;
 
-    const oldAuto = asset.lots.filter(l => l.autoBuy && (l.date || '') < cutoff);
-    const keep = asset.lots.filter(l => !(l.autoBuy && (l.date || '') < cutoff));
+    // 🔧 캡처 기준점(isCaptureBase) lot은 절대 압축 대상에 안 들어가게 (autoBuy=false지만 명시적 보호)
+    const oldAuto = asset.lots.filter(l => l.autoBuy && !l.isCaptureBase && (l.date || '') < cutoff);
+    const keep = asset.lots.filter(l => !(l.autoBuy && !l.isCaptureBase && (l.date || '') < cutoff));
     if (oldAuto.length < 2) return;
 
     // 연도별로 묶기
@@ -1213,19 +1218,25 @@ function compactAutoLots() {
 
     Object.entries(byYear).forEach(([yr, lots]) => {
       const totalQty = lots.reduce((s, l) => s + Number(l.qty || 0), 0);
-      const totalCost = lots.reduce((s, l) => s + Number(l.qty || 0) * Number(l.price || 0), 0);
+      // 🔧 exactAmount(증권사 실제 체결금액)가 있는 lot은 그 값을 우선 — 원가 오차 0 유지
+      const totalCost = lots.reduce((s, l) => {
+        const exact = Number(l.exactAmount ?? 0);
+        return s + (exact > 0 ? exact : Number(l.qty || 0) * Number(l.price || 0));
+      }, 0);
       keep.push({
         id: Date.now() + Math.random(),
         source: `${yr}년 자동매수 (${lots.length}회 합산)`,
         qty: totalQty,
-        price: totalQty > 0 ? totalCost / totalQty : 0,
+        price: totalQty > 0 ? Math.round(totalCost / totalQty) : 0,
         date: `${yr}-12-31`,
         autoBuy: true,
+        exactAmount: Math.round(totalCost), // 합산 원가 정확 보존
         note: `${lots.length}건 압축됨`,
       });
     });
 
     asset.lots = keep;
+    recalcAssetFromLots(asset); // 압축 후 수량·평단 재계산 (정합성 보장)
   });
 }
 
@@ -1244,14 +1255,75 @@ async function loadFromFirebase(uid) {
   return snap.exists() ? snap.data() : { __empty: true };
 }
 
+// 🔧 다른 기기에서 저장한 최신 데이터 자동 반영
+//    시나리오: PC를 켜둔 채 폰에서 입력 → PC로 돌아오면 옛 화면 그대로 → 그 상태로 수정하면
+//    폰 입력분이 덮어써짐. 앱으로 돌아올 때 클라우드가 더 최신이면 당겨와서 방지.
+let _lastCloudCheckAt = Date.now();
+async function refreshFromCloudIfStale() {
+  if (!currentUser || !window._fb) return;
+  if (window._cloudLoadPending || window._cloudLoadFailed) return;
+  // 5분 이내에 확인했으면 생략 (읽기 비용 절약)
+  if (Date.now() - _lastCloudCheckAt < 5 * 60 * 1000) return;
+  // 모달 입력 중엔 건너뜀 (작성 중인 내용 날아감 방지) — 다음 복귀 때 다시 시도
+  const modalEl = document.getElementById('modal');
+  if (modalEl && modalEl.classList.contains('show')) return;
+  _lastCloudCheckAt = Date.now();
+  try {
+    const cloud = await loadFromFirebase(currentUser.uid);
+    if (!cloud || cloud.__empty) return;
+    const cloudAt = Number(cloud.updatedAt) || 0;
+    const mineAt = Number(window._lastSavedAt) || 0;
+    if (cloudAt > mineAt) {
+      applyData(cloud);
+      saveLocal();
+      window._lastSavedAt = cloudAt; // 이 시점까지는 반영됨
+      if (typeof render === 'function') { try { render(); } catch (e) {} }
+      console.log('🔄 다른 기기 변경분 반영됨');
+    }
+  } catch (e) { console.warn('클라우드 최신 확인 실패:', e.message); }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') refreshFromCloudIfStale();
+});
+
 // ====== 초기 데이터 ======
-const todayDate = new Date();
-const currentYear = todayDate.getFullYear();
-const currentMonth = todayDate.getMonth(); // 0-11
-const today = todayDate.getDate();
+// 🔧 const → let: 자정을 넘겨도 앱을 안 끄고 쓰는 경우(PWA 장시간 유지) '오늘'을 갱신하기 위함
+let todayDate = new Date();
+let currentYear = todayDate.getFullYear();
+let currentMonth = todayDate.getMonth(); // 0-11
+let today = todayDate.getDate();
 // 캘린더가 보고 있는 월 (네비게이션용 - 처음엔 현재 월)
 let viewYear = currentYear;
 let viewMonth = currentMonth;
+
+// 🔧 날짜 변경 감지 — 자정을 넘기거나 다음날 앱으로 돌아오면 '오늘'을 갱신하고 다시 그림
+function refreshTodayIfChanged() {
+  const now = new Date();
+  if (now.getFullYear() === currentYear && now.getMonth() === currentMonth && now.getDate() === today) return;
+
+  const wasViewingCurrent = (viewYear === currentYear && viewMonth === currentMonth);
+  const monthChanged = (now.getFullYear() !== currentYear || now.getMonth() !== currentMonth);
+  todayDate = now;
+  currentYear = now.getFullYear();
+  currentMonth = now.getMonth();
+  today = now.getDate();
+  // 현재 월을 보고 있었다면 새 '오늘'의 월로 따라감 (과거/미래 월을 보는 중이면 유지)
+  if (wasViewingCurrent) { viewYear = currentYear; viewMonth = currentMonth; }
+  console.log(`📅 날짜 변경 감지 → 오늘 = ${currentYear}-${currentMonth+1}-${today}`);
+  // 월이 바뀌었으면 고정지출 납부 리셋 등 월초 처리도 수행
+  if (monthChanged && typeof archiveLastMonthIfNeeded === 'function') {
+    try { archiveLastMonthIfNeeded(); } catch (e) {}
+  }
+  // 모달 입력 중이면 화면 갱신은 건너뜀 (입력 날아감 방지) — 날짜 변수는 이미 갱신됨
+  const modalEl = document.getElementById('modal');
+  if (!(modalEl && modalEl.classList.contains('show')) && typeof render === 'function') {
+    try { render(); } catch (e) {}
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') refreshTodayIfChanged();
+});
+setInterval(refreshTodayIfChanged, 60 * 1000); // 켜둔 채 자정 넘김 대비 (1분마다 가벼운 비교 1회)
 const dayLabels = ['일','월','화','수','목','금','토'];
 const monthLabels = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
 
@@ -3143,24 +3215,32 @@ function getChallengeStreak(c) {
   return streak;
 }
 
-// 챌린지 최근 7일 미니 기록 (요일 + 성공/실패/미체크, 클릭으로 토글)
+// 챌린지 이번 주(일~토) 미니 기록 — 🔧 '이번 주 N/M회' 계산과 같은 주 창을 고정 순서로 표시
+//    (예전엔 '오늘 기준 지난 7일'을 굴려서 요일 순서가 매번 달라 헷갈렸음)
 function renderChallengeMiniWeek(c, accent) {
   const checks = c.checks || {};
   const base = new Date(currentYear, currentMonth, today, 0, 0, 0, 0);
+  const weekStart = new Date(base);
+  weekStart.setDate(base.getDate() - base.getDay()); // 이번 주 일요일
+  const startD = c.startDate ? new Date(c.startDate + 'T00:00:00') : null;
   const dows = ['일','월','화','수','목','금','토'];
   let cells = '';
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(base);
-    d.setDate(base.getDate() - i);
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(weekStart);
+    d.setDate(weekStart.getDate() + i);
     const k = dateKey(d.getFullYear(), d.getMonth(), d.getDate());
     const v = checks[k];
-    const isToday = i === 0;
+    const isToday = d.getTime() === base.getTime();
+    const isFuture = d > base;
+    const beforeStart = startD && d < startD; // 챌린지 시작 전 날짜
     let mark = '', bg = 'rgba(255,255,255,0.6)', color = 'var(--text-tertiary)';
     if (v === true) { mark = '✓'; bg = accent; color = 'white'; }
     else if (v === 'fail') { mark = '✕'; bg = '#E06666'; color = 'white'; }
-    cells += `<button onclick="toggleChallengeDate(${c.id}, '${k}')" style="flex:1; min-width:0; border:none; background:transparent; font-family:inherit; cursor:pointer; padding:0;">
+    const dim = (isFuture || beforeStart) ? 'opacity:0.35;' : '';
+    const clickable = !isFuture && !beforeStart;
+    cells += `<button ${clickable ? `onclick="toggleChallengeDate(${c.id}, '${k}')"` : 'disabled'} style="flex:1; min-width:0; border:none; background:transparent; font-family:inherit; cursor:${clickable ? 'pointer' : 'default'}; padding:0; ${dim}">
       <div style="width:25px; height:25px; margin:0 auto 3px; border-radius:50%; background:${bg}; color:${color}; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; ${isToday ? 'box-shadow:0 0 0 2px var(--text-primary);' : ''}">${mark}</div>
-      <div style="font-size:9px; color:var(--text-tertiary);">${isToday ? '오늘' : dows[d.getDay()]}</div>
+      <div style="font-size:9px; color:${isToday ? 'var(--text-primary)' : 'var(--text-tertiary)'}; font-weight:${isToday ? '700' : '400'};">${isToday ? '오늘' : dows[i]}</div>
     </button>`;
   }
   return `<div style="display:flex; gap:4px; padding:9px 7px; border-radius:11px; background:rgba(255,255,255,0.4); margin-top:10px;">${cells}</div>`;
@@ -3175,7 +3255,7 @@ function renderChallengeCard(c) {
   const msPerDay = 24 * 60 * 60 * 1000;
   let daysPassed = Math.floor((todayD - startDate) / msPerDay) + 1;
   if (daysPassed < 1) daysPassed = 1; // 시작일이 미래라도 최소 1일로 표시
-  const totalDays = c.totalDays;
+  const totalDays = Math.max(1, Number(c.totalDays) || 0); // 🔧 0/누락이어도 NaN 진행률 방지
 
   const checkedDays = Object.keys(c.checks || {}).filter(k => c.checks[k] === true).length;
 
@@ -3195,7 +3275,7 @@ function renderChallengeCard(c) {
     progressPct = Math.min(100, (successes / totalDays) * 100);
     progressText = `${successes} / ${totalDays}일 성공`;
   } else if (c.type === 'count') {
-    progressPct = Math.min(100, (checkedDays / c.targetCount) * 100);
+    progressPct = Math.min(100, (checkedDays / Math.max(1, Number(c.targetCount) || 0)) * 100);
     if (c.perWeek) {
       // 🔧 주 N회 챌린지 — 이번 주 달성 현황도 함께 표시
       const now = new Date();
@@ -6397,39 +6477,46 @@ ${lastMonthInfo}
   </div>`;
 }
 
-// 매월 1일에 자동으로 지난달 기록 백업
+// 매월 1일 처리 — 🔧 지출은 절대 비우지 않음 (월별 조회는 dateKey 필터가 담당).
+//    지난달 '요약'만 history에 남기고(AI 코치용), 고정지출 납부 체크만 리셋.
 function archiveLastMonthIfNeeded() {
   const lastArchiveKey = budget.lastArchive;
   const thisMonthKey = `${currentYear}-${currentMonth+1}`;
 
   if (lastArchiveKey === thisMonthKey) return; // 이미 이번 달은 처리됨
 
-  // 처음 사용자거나 새 달이 시작됐을 때
-  if (lastArchiveKey && lastArchiveKey !== thisMonthKey && budget.expenses.length > 0) {
-    // 이전 달 데이터를 history에 저장
+  if (lastArchiveKey && lastArchiveKey !== thisMonthKey) {
+    // 지난달 요약 계산 — dateKey 기준으로 '지난달 것만' (전체 아님)
+    const prev = new Date(currentYear, currentMonth - 1, 1);
+    const prevPrefix = `${prev.getFullYear()}-${String(prev.getMonth()+1).padStart(2,'0')}`;
     const byCategory = {};
     let total = 0;
     budget.expenses.forEach(e => {
+      if (!e.dateKey || !e.dateKey.startsWith(prevPrefix)) return;
+      if (e.type === 'income') return; // 입금은 지출 요약에서 제외
       byCategory[e.cat] = (byCategory[e.cat] || 0) + Number(e.amt);
       total += Number(e.amt);
     });
 
     if (!budget.history) budget.history = [];
-    budget.history.push({
-      month: lastArchiveKey,
-      total,
-      byCategory,
-      expenses: budget.expenses
-    });
+    // 같은 달 요약이 이미 있으면 갱신, 없으면 추가 (expenses 원본은 담지 않음 — 중복 저장 방지)
+    const summary = { month: prevPrefix, total, byCategory };
+    const existIdx = budget.history.findIndex(h => h.month === prevPrefix);
+    if (existIdx >= 0) budget.history[existIdx] = summary;
+    else budget.history.push(summary);
+    if (budget.history.length > 12) budget.history = budget.history.slice(-12);
 
-    // 최근 6개월만 유지
-    if (budget.history.length > 6) {
-      budget.history = budget.history.slice(-6);
-    }
-
-    // 이번달 지출 초기화 (고정지출 paid는 모두 false로)
-    budget.expenses = [];
+    // 새 달 시작: 고정지출 납부 체크만 리셋 (지출 내역은 그대로 보존!)
     budget.fixed.forEach(f => { f.paid = false; });
+
+    // 🔧 저장 용량 보호: 12개월 지난 지출만 정리 (최근 1년치 월별 조회는 항상 가능)
+    const cutoff = new Date(currentYear, currentMonth - 12, 1);
+    const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth()+1).padStart(2,'0')}-01`;
+    const before = budget.expenses.length;
+    budget.expenses = budget.expenses.filter(e => !e.dateKey || e.dateKey >= cutoffKey);
+    if (before !== budget.expenses.length) {
+      console.log(`🧹 12개월 지난 지출 ${before - budget.expenses.length}건 정리`);
+    }
   }
 
   budget.lastArchive = thisMonthKey;
@@ -20727,6 +20814,7 @@ function initAuth() {
           window._cloudLoadPending = false;
         } else if (cloudData) {
           applyData(cloudData);
+          window._lastSavedAt = Number(cloudData.updatedAt) || Date.now(); // 🔧 이 시점까지 클라우드와 동일
           window._cloudLoadPending = false;
           saveLocal();
         } else {
