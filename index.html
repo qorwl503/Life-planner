@@ -19486,9 +19486,12 @@ function openAssetAddModal() {
 
       <div class="field">
         <div class="field-label">자산 종류</div>
+        <!-- 🔧 자산 수정·가계부 투자와 동일한 12종으로 통일 (구버전 주식/ETF+지역토글 → 국내/미국 분리) -->
         <div class="cat-grid" id="atype-grid">
-          <button class="cat-btn active" data-t="주식"><i class="ti ti-chart-line"></i><span>주식</span></button>
-          <button class="cat-btn" data-t="ETF"><i class="ti ti-chart-area-line"></i><span>ETF</span></button>
+          <button class="cat-btn active" data-t="국내주식"><i class="ti ti-chart-line"></i><span>국내주식</span></button>
+          <button class="cat-btn" data-t="미국주식"><i class="ti ti-chart-line"></i><span>미국주식</span></button>
+          <button class="cat-btn" data-t="국내ETF"><i class="ti ti-chart-area-line"></i><span>국내ETF</span></button>
+          <button class="cat-btn" data-t="해외ETF"><i class="ti ti-chart-area-line"></i><span>해외ETF</span></button>
           <button class="cat-btn" data-t="펀드"><i class="ti ti-chart-pie"></i><span>펀드</span></button>
           <button class="cat-btn" data-t="채권"><i class="ti ti-certificate"></i><span>채권</span></button>
           <button class="cat-btn" data-t="금"><i class="ti ti-coin"></i><span>금</span></button>
@@ -19497,7 +19500,6 @@ function openAssetAddModal() {
           <button class="cat-btn" data-t="청약"><i class="ti ti-home-plus"></i><span>청약</span></button>
           <button class="cat-btn" data-t="현금"><i class="ti ti-cash"></i><span>현금</span></button>
           <button class="cat-btn" data-t="부동산"><i class="ti ti-building"></i><span>부동산</span></button>
-          <button class="cat-btn" data-t="기타"><i class="ti ti-dots"></i><span>기타</span></button>
         </div>
       </div>
 
@@ -19516,7 +19518,7 @@ function openAssetAddModal() {
         renderAssetFormFields(b.dataset.t);
       });
     });
-    renderAssetFormFields('주식'); // 기본
+    renderAssetFormFields('국내주식'); // 기본
   }, 50);
 }
 
@@ -19533,10 +19535,14 @@ function renderAssetFormFields(type) {
     </div>
   `;
 
-  // 타입별 분기
-  if (type === '주식' || type === 'ETF' || type === '펀드' || type === '채권') {
-    // 지역 (주식/ETF/펀드/채권)
-    html += `
+  // 타입별 분기 — 🔧 신버전 12종 지원 (국내주식/미국주식/국내ETF/해외ETF는 지역이 종류에 포함)
+  const stockLikeSet = ['주식','국내주식','미국주식','ETF','국내ETF','해외ETF','펀드','채권'];
+  const isUSType = type === '미국주식' || type === '해외ETF';
+  const isKRType = type === '국내주식' || type === '국내ETF';
+  if (stockLikeSet.includes(type)) {
+    // 지역 토글은 구버전 통합 타입(주식/ETF)과 펀드/채권에만 — 신버전 4종은 종류가 곧 지역
+    if (!isUSType && !isKRType) {
+      html += `
       <div class="field">
         <div class="field-label">지역 구분</div>
         <div style="display:flex; gap:6px;" id="aregion-grid">
@@ -19545,12 +19551,18 @@ function renderAssetFormFields(type) {
         </div>
       </div>
     `;
+    }
 
     // 티커 + 수량/가격
+    const tickerPh = isUSType ? '예: AAPL, SPY, QQQ'
+      : isKRType ? '예: 005930, 360750'
+      : type === 'ETF' ? '예: SPY, 360750.KS'
+      : type === '펀드' ? '비워두면 수동 입력'
+      : '예: 005930.KS, AAPL';
     html += `
       <div class="field">
         <div class="field-label">티커 심볼 (실시간 시세 자동 갱신)</div>
-        <input type="text" id="a-ticker" placeholder="${type === 'ETF' ? '예: SPY, 360750.KS' : type === '펀드' ? '비워두면 수동 입력' : '예: 005930.KS, AAPL'}" />
+        <input type="text" id="a-ticker" placeholder="${tickerPh}" />
       </div>
       <div class="field" style="display:flex; gap:8px;">
         <div style="flex:1;">
@@ -19566,8 +19578,8 @@ function renderAssetFormFields(type) {
       <div class="field" id="a-price-currency-row">
         <div class="field-label">매입가 통화 <span style="font-size:10px; color:var(--text-tertiary);">(미국 주식은 달러)</span></div>
         <div style="display:flex; gap:4px;" id="a-price-currency">
-          <button type="button" class="chip active" data-cur="KRW">원화 (원)</button>
-          <button type="button" class="chip" data-cur="USD">달러 ($)</button>
+          <button type="button" class="chip ${isUSType ? '' : 'active'}" data-cur="KRW">원화 (원)</button>
+          <button type="button" class="chip ${isUSType ? 'active' : ''}" data-cur="USD">달러 ($)</button>
         </div>
       </div>
       <div class="field" id="a-avgrate-row" style="display:none;">
@@ -19788,6 +19800,12 @@ function renderAssetFormFields(type) {
       if (avgRow) avgRow.style.display = b.dataset.cur === 'USD' ? 'block' : 'none';
     });
   });
+  // 🔧 초기 상태 반영 — 미국주식/해외ETF는 달러가 기본 선택이라 환율 칸을 바로 표시
+  {
+    const activeCur = document.querySelector('#a-price-currency .chip.active');
+    const avgRow = document.getElementById('a-avgrate-row');
+    if (activeCur && avgRow) avgRow.style.display = activeCur.dataset.cur === 'USD' ? 'block' : 'none';
+  }
 }
 
 function getNamePlaceholder(type) {
@@ -19845,7 +19863,10 @@ function saveAsset() {
   const qty = Number(document.getElementById('a-qty')?.value) || 1;
   const price = Number(document.getElementById('a-price')?.value);
   const note = document.getElementById('a-note')?.value?.trim() || '';
-  const region = document.querySelector('#aregion-grid .chip.active')?.dataset.r || '국내';
+  // 🔧 신버전 타입(국내/미국 분리)은 종류가 곧 지역 — 토글이 없으므로 타입에서 유도
+  const region = (type === '미국주식' || type === '해외ETF') ? '해외'
+    : (type === '국내주식' || type === '국내ETF') ? '국내'
+    : (document.querySelector('#aregion-grid .chip.active')?.dataset.r || '국내');
   // 🔧 매입가 통화 (원화/달러) - 없으면 원화 기본
   const priceCurrency = document.querySelector('#a-price-currency .chip.active')?.dataset.cur || 'KRW';
   // 🔧 평균 매입 환율 (달러 단가로 입력했을 때만 의미 있음)
