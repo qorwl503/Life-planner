@@ -2236,8 +2236,9 @@ function renderCalendar() {
     if (dayExpenses.length > 0 || hasFixedToday) dots.push('m');
     const dayTodos = todos.filter(t => t.dateKey === k);
     if (dayTodos.length > 0) dots.push('t');
-    // 챌린지 점 - 시작일 ~ 종료일 사이만 표시
+    // 챌린지 점 - 시작일 ~ 종료일 사이만 표시 (완료/실패한 챌린지는 제외)
     const activeChs = challenges.filter(c => {
+      if (c.completed || c.failed) return false; // 🔧 끝난 챌린지는 캘린더에서 숨김
       if (!c.startDate || !c.totalDays) return false;
       if (k < c.startDate) return false; // 시작 전
       // 종료일 계산 (시작일 + totalDays - 1)
@@ -2317,6 +2318,7 @@ function renderCalendar() {
       const dayTodos = todos.filter(t => t.dateKey === dKey);
       const dayExpenses = budget.expenses.filter(e => e.dateKey === dKey);
       const dayChs = challenges.filter(c => {
+        if (c.completed || c.failed) return false; // 🔧 끝난 챌린지는 캘린더에서 숨김
         if (!c.startDate || !c.totalDays) return false;
         if (dKey < c.startDate) return false;
         const start = new Date(c.startDate + 'T00:00:00');
@@ -2513,8 +2515,9 @@ function getEventsForDay(d) {
     });
   });
 
-  // 챌린지 (시작일 ~ 종료일 사이, 시간대 안전)
+  // 챌린지 (시작일 ~ 종료일 사이, 시간대 안전 · 완료/실패한 챌린지는 제외)
   challenges.forEach(c => {
+    if (c.completed || c.failed) return; // 🔧 끝난 챌린지는 캘린더에서 숨김
     if (!c.startDate || !c.totalDays) return;
     if (k < c.startDate) return; // 시작 전
 
@@ -7765,10 +7768,10 @@ function recalcAssetFromLots(asset) {
   }
 }
 
-// 자산에 lot 추가 헬퍼
+// 자산에 lot 추가 헬퍼 — 🔧 만든 lot을 반환 (가계부 지출 ↔ 매수기록 연동용)
 function addAssetLot(asset, lot) {
   if (!asset.lots) asset.lots = [];
-  asset.lots.push({
+  const newLot = {
     id: Date.now() + Math.random(),
     source: lot.source || '수동 입력',
     qty: Number(lot.qty) || 0,
@@ -7780,8 +7783,10 @@ function addAssetLot(asset, lot) {
     fixedId: lot.fixedId || null, // 🔧 어떤 자동매수(고정지출)가 만든 lot인지 - 이름 변경에 강함
     exactAmount: (lot.exactAmount != null && Number(lot.exactAmount) > 0) ? Number(lot.exactAmount) : null, // 🔧 증권사 실제 체결금액 (반올림 오차 0)
     note: lot.note || '',
-  });
+  };
+  asset.lots.push(newLot);
   recalcAssetFromLots(asset);
+  return newLot;
 }
 
 // ===== Lot 관리 함수 =====
@@ -9928,8 +9933,25 @@ function saveExpenseEdit(id) {
   }
   e.memo = newMemo;
 
+  // 🔧 이 지출로 만든 자산 매수기록(lot)이 있으면 금액·날짜도 같이 갱신 (가계부 ↔ 자산 정합성)
+  let lotSynced = false;
+  if (e.linkedLotId) {
+    for (const a of assets) {
+      const lot = (a.lots || []).find(l => String(l.id) === String(e.linkedLotId));
+      if (lot) {
+        lot.exactAmount = Math.round(newAmt);
+        const q = Number(lot.qty) || 0;
+        if (q > 0) lot.price = newAmt / q;
+        if (newDate) lot.date = newDate;
+        recalcAssetFromLots(a);
+        lotSynced = true;
+        break;
+      }
+    }
+  }
+
   saveData();
-  showToast('수정됨');
+  showToast(lotSynced ? '수정됨 (자산 매수기록도 갱신)' : '수정됨');
   closeModal();
   render();
 }
@@ -9938,11 +9960,41 @@ function deleteExpense(id) {
   const e = budget.expenses.find(x => x.id === id);
   if (!e) return;
 
-  // 투자 카테고리면 → 연결된 자산도 함께 처리
+  // 🔧 1순위: 이 지출과 정확히 연결된 매수기록(lot)이 있으면 그 lot만 정밀 삭제
+  //    (예전 이름 매칭 방식은 자동매수·캡처 lot이 있는 자산까지 통째로 지울 수 있었음)
+  if (e.linkedLotId) {
+    let targetAsset = null, targetLot = null;
+    for (const a of assets) {
+      const lot = (a.lots || []).find(l => String(l.id) === String(e.linkedLotId));
+      if (lot) { targetAsset = a; targetLot = lot; break; }
+    }
+    if (targetAsset && targetLot) {
+      const remainingLots = targetAsset.lots.length - 1;
+      const assetEmpty = remainingLots === 0;
+      let msg = `"${e.memo || e.cat}" ${Number(e.amt).toLocaleString()}원을 삭제할까요?\n\n연결된 매수기록(${targetAsset.name})도 함께 삭제돼요.`;
+      if (assetEmpty) msg += `\n\n⚠️ 마지막 매수기록이라 자산 "${targetAsset.name}"도 함께 삭제됩니다.`;
+      if (!confirm(msg)) return;
+
+      budget.expenses = budget.expenses.filter(x => x.id !== id);
+      targetAsset.lots = targetAsset.lots.filter(l => String(l.id) !== String(e.linkedLotId));
+      if (assetEmpty) {
+        assets = assets.filter(a => a.id !== targetAsset.id);
+      } else {
+        recalcAssetFromLots(targetAsset);
+      }
+      saveData();
+      showToast(assetEmpty ? `삭제됨 (자산 "${targetAsset.name}" 포함)` : '삭제됨 (매수기록 포함)');
+      closeModal();
+      render();
+      return;
+    }
+    // 연결 lot을 못 찾으면 (캡처 보정으로 lot이 교체된 경우 등) → 지출만 삭제로 진행
+  }
+
+  // 2순위(옛 데이터 호환): 이름 매칭 — 단, 자산 통삭제는 '가계부에서만 만든 자산'일 때만
   const investCategories = ['투자', '주식', '국내주식', '미국주식', 'ETF', '국내ETF', '해외ETF', '펀드', '채권', '금', '달러', '예적금', '청약', '현금', '부동산'];
   const isInvestExpense = e.type !== 'income' && investCategories.includes(e.cat);
 
-  // 연결된 자산 찾기 - linkedAssetName 또는 memo
   let linkedAsset = null;
   if (isInvestExpense) {
     const key = e.linkedAssetName || e.memo;
@@ -9962,13 +10014,18 @@ function deleteExpense(id) {
     ).length;
   }
 
+  // 🔧 자산 통삭제 안전장치: 자동매수·캡처·수동 lot이 하나라도 있으면 자산은 절대 안 지움
+  const onlyFromBudget = linkedAsset
+    ? (linkedAsset.lots || []).every(l => (l.source || '').includes('가계부'))
+    : false;
+
   let msg = `"${e.memo || e.cat}" ${Number(e.amt).toLocaleString()}원을 삭제할까요?`;
   let willDeleteAsset = false;
-  if (linkedAsset && otherExpensesForAsset === 0) {
+  if (linkedAsset && otherExpensesForAsset === 0 && onlyFromBudget) {
     msg += `\n\n⚠️ 마지막 매수 기록입니다. 연결된 자산 "${linkedAsset.name}" (${linkedAsset.type})도 함께 삭제됩니다.`;
     willDeleteAsset = true;
-  } else if (linkedAsset && otherExpensesForAsset > 0) {
-    msg += `\n\n(자산 "${linkedAsset.name}"는 다른 매수 기록이 ${otherExpensesForAsset}개 남아있어 유지됩니다)`;
+  } else if (linkedAsset) {
+    msg += `\n\n(자산 "${linkedAsset.name}"는 유지됩니다)`;
   }
 
   if (!confirm(msg)) return;
@@ -12147,6 +12204,16 @@ function saveExpense() {
   let assetAdded = false;
   if (investCats.includes(cat)) {
     const invName = document.getElementById('inv-name')?.value?.trim() || '';
+    // 🔧 자산명이 비면 예전엔 '조용히' 자산 연동을 건너뛰어서 연동 안 되는 것처럼 보였음
+    //    → 명확히 알리고 선택하게 (취소하면 돌아가서 자산명을 채울 수 있게 방금 넣은 지출도 되돌림)
+    if (!invName) {
+      const goOn = confirm(`⚠️ 자산명이 비어 있어요.\n\n자산명을 입력해야 자산탭에 자동으로 추가돼요.\n\n확인: 가계부에만 기록 (자산 연동 안 함)\n취소: 돌아가서 자산명 입력`);
+      if (!goOn) {
+        budget.expenses.pop(); // 방금 넣은 지출 롤백
+        document.getElementById('inv-name')?.focus();
+        return;
+      }
+    }
     if (invName) {
       // 메모가 비어있으면 자산 이름을 메모로 (양방향 동기화 키)
       const lastExp = budget.expenses[budget.expenses.length - 1];
@@ -12184,16 +12251,19 @@ function saveExpense() {
       const existing = findMatchingAsset({ name: invName, type: cat, ticker });
 
       if (existing) {
-        // lots 시스템으로 추가
-        addAssetLot(existing, {
+        // lots 시스템으로 추가 — 🔧 exactAmount로 입력 금액 그대로 보존 + 지출과 연결
+        const newLot = addAssetLot(existing, {
           source: `📝 가계부 ${today}`,
           qty,
           price: Math.round(price),
           date: today,
           fxDiscount: existing.fxDiscount || null,
           autoBuy: false,
+          exactAmount: Math.round(amt),
           note: '가계부에서 추가',
         });
+        lastExp.linkedLotId = newLot.id;
+        lastExp.linkedAssetId = existing.id;
         // 🔧 청약 회차는 recalcAssetFromLots가 lot 개수로 계산 → 직접 ++ 안 함 (이중 카운트 방지)
         if (ticker && !existing.ticker) existing.ticker = ticker;
         showToast(`${cat} ${amt.toLocaleString()}원 추가 (${invName})`);
@@ -12215,14 +12285,17 @@ function saveExpense() {
           newAsset.rounds = 1;
         }
         assets.push(newAsset);
-        addAssetLot(newAsset, {
+        const newLot = addAssetLot(newAsset, {
           source: `📝 가계부 ${today}`,
           qty,
           price: Math.round(price),
           date: today,
           autoBuy: false,
+          exactAmount: Math.round(amt),
           note: '가계부 첫 입력',
         });
+        lastExp.linkedLotId = newLot.id;
+        lastExp.linkedAssetId = newAsset.id;
         showToast(`${cat} ${amt.toLocaleString()}원 저장 (${invName} 자산 추가됨)`);
       }
       assetAdded = true;
@@ -14038,12 +14111,22 @@ function renderAssetTrendCard() {
   const changePct = firstTotal > 0 ? (change / firstTotal * 100) : 0;
   const isUp = change >= 0;
 
+  // 🔧 '지난달 대비'를 메인으로 — 기준 없는 변화율이 헷갈리던 것 해소
+  const prevTotal = totals[totals.length - 2];
+  const monthChange = lastTotal - prevTotal;
+  const monthPct = prevTotal > 0 ? (monthChange / prevTotal * 100) : 0;
+  const monthUp = monthChange >= 0;
+  const fmtMan = (n) => `${n >= 0 ? '+' : '-'}${Math.abs(Math.round(n / 10000)).toLocaleString()}만`;
+
   return `
     <div style="background:white; border:0.5px solid var(--border-tertiary); border-radius:14px; padding:16px; margin-bottom:14px;">
-      <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
         <div style="font-size:13px; font-weight:600;">📈 자산 변화 추이</div>
-        <div style="font-size:11px; color:${isUp ? 'var(--text-success)' : 'var(--text-danger)'}; font-weight:600;">
-          ${isUp ? '+' : ''}${(change/10000).toFixed(0)}만 (${isUp ? '+' : ''}${changePct.toFixed(1)}%)
+        <div style="text-align:right;">
+          <div style="font-size:12px; color:${monthUp ? 'var(--text-success)' : 'var(--text-danger)'}; font-weight:700;">
+            ${fmtMan(monthChange)}원 (${monthUp ? '+' : ''}${monthPct.toFixed(1)}%)
+          </div>
+          <div style="font-size:9px; color:var(--text-tertiary); margin-top:1px;">지난달 대비</div>
         </div>
       </div>
 
@@ -14069,6 +14152,14 @@ function renderAssetTrendCard() {
         }).join('')}
       </svg>
 
+      <!-- 🔧 기간 전체 요약 — 시작·끝 금액을 명시해 변화가 한눈에 -->
+      <div style="margin-top:8px; padding:8px 10px; background:var(--bg-secondary); border-radius:8px; font-size:10px; color:var(--text-secondary); display:flex; justify-content:space-between; align-items:center;">
+        <span>최근 ${recent.length}개월</span>
+        <span>${(firstTotal/10000).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,',')}만 → <b>${(lastTotal/10000).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,',')}만</b>
+          <span style="color:${isUp ? 'var(--text-success)' : 'var(--text-danger)'}; font-weight:600;">(${fmtMan(change)} · ${isUp ? '+' : ''}${changePct.toFixed(1)}%)</span>
+        </span>
+      </div>
+
       <!-- 종류별 비율 변화 (최신 vs 이전달) -->
       ${recent.length >= 2 ? renderAssetTypeChange(snaps[recent[recent.length-2]].byType, snaps[recent[recent.length-1]].byType) : ''}
     </div>
@@ -14090,7 +14181,8 @@ function renderAssetTypeChange(prevByType, currByType) {
     const currPct = currTotal > 0 ? (curr / currTotal * 100) : 0;
     const prevPct = prevTotal > 0 ? (prev / prevTotal * 100) : 0;
     const diff = currPct - prevPct;
-    items.push({ type: t, currPct, diff, curr });
+    const amtDiff = curr - prev; // 🔧 지난달 대비 금액 변화 (원)
+    items.push({ type: t, currPct, diff, curr, amtDiff });
   });
   items.sort((a, b) => b.curr - a.curr);
 
@@ -14103,10 +14195,13 @@ function renderAssetTypeChange(prevByType, currByType) {
 
   return `
     <div style="margin-top:14px; padding-top:12px; border-top:0.5px solid var(--border-tertiary);">
-      <div style="font-size:11px; color:var(--text-tertiary); margin-bottom:8px;">지난달 대비 비율 변화</div>
+      <div style="font-size:11px; color:var(--text-tertiary); margin-bottom:8px;">지난달 대비 종류별 변화 <span style="font-size:9px; opacity:0.8;">(현재 비중 · 금액 증감)</span></div>
       ${items.slice(0, 6).map(it => {
-        const diffStr = it.diff >= 0.1 ? `+${it.diff.toFixed(1)}%p` : it.diff <= -0.1 ? `${it.diff.toFixed(1)}%p` : '';
-        const diffColor = it.diff > 0.1 ? 'var(--text-success)' : it.diff < -0.1 ? 'var(--text-danger)' : 'var(--text-tertiary)';
+        const man = it.amtDiff / 10000;
+        const diffStr = Math.abs(man) >= 1
+          ? `${man >= 0 ? '+' : '-'}${Math.abs(Math.round(man)).toLocaleString()}만`
+          : '';
+        const diffColor = man >= 1 ? 'var(--text-success)' : man <= -1 ? 'var(--text-danger)' : 'var(--text-tertiary)';
         const barColor = barColors[it.type] || '#A78BFA';
         return `
           <div style="display:flex; align-items:center; gap:8px; padding:4px 0; font-size:11px;">
@@ -14118,7 +14213,7 @@ function renderAssetTypeChange(prevByType, currByType) {
               <div style="height:100%; width:${it.currPct}%; background:${barColor};"></div>
             </div>
             <span style="width:42px; text-align:right; font-weight:500;">${fmtPct(it.currPct / 100)}%</span>
-            <span style="width:48px; text-align:right; color:${diffColor}; font-size:11px;">${diffStr}</span>
+            <span style="width:52px; text-align:right; color:${diffColor}; font-size:11px; font-weight:600;">${diffStr}</span>
           </div>
         `;
       }).join('')}
