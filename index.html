@@ -10296,10 +10296,15 @@ async function processAssetCapture(input) {
 
 ⚠️ 중요 지침:
 - 화면에 종목명·수량·금액 비슷한 게 보이면 일단 추출할 것 (애매해도 최선을 다해 추출)
-- 종목명만 있고 수량을 모르겠으면 qty는 1, price는 0으로라도 넣을 것
 - 빈 배열로 포기하지 말 것 — 자산 화면이면 반드시 뭔가 추출
 - ETF는 type="ETF" (주식 X), 금은 단위 g로 환산
 - 응답은 JSON만, 다른 설명 글 금지
+
+📌 잘린 표 처리 (키움 등 표가 가로/세로로 잘린 캡처 — 매우 중요):
+- 표가 가로 스크롤이라 '보유수량' 열 자체가 화면에 없으면 → **qty를 생략** (절대 1로 채우지 말 것 — 다른 캡처와 병합할 때 진짜 수량을 덮어씀)
+- '평가금액' 열이 안 보이면 → evalAmount 생략. **화면에 실제로 보이는 필드만** 넣기
+- 화면 위/아래에 반쯤 잘린 행은 종목명·숫자가 확실히 읽힐 때만 포함, 애매하면 제외
+- 단, 수량 열이 '있는데' 값이 안 보이는 게 아니라 화면 전체에 수량 개념이 없는 단일 자산 화면(예금 잔액 등)이면 qty=1 허용
 
 💡 price는 "1주당(단위당) 단가":
 - 평가금액(총액)과 수량만 있으면 → price = 평가금액 ÷ 수량
@@ -10401,9 +10406,10 @@ async function processAssetCapture(input) {
   clearGlobalOverlay();
   closeModal();
 
-  // 🔧 같은 종목이 여러 줄로 잡히는 경우(증권사가 정수 매매분 / 소수점 자동적립분을
-  //    별도 행으로 표시) → 버리지 말고 수량·금액을 '합산'해서 하나로 묶는다.
-  //    평단 = 총매입금액 / 총수량 (가중평균). 평가금액·손익도 합산.
+  // 🔧 같은 종목 병합 — 2단계로 분리 (여러 장 캡처 시 수량이 두 배로 뻥튀기되던 버그 수정)
+  //    1단계: '같은 이미지 안'의 같은 종목 = 증권사가 정수분/소수점분을 두 줄로 표시 → 합산
+  //    2단계: '다른 이미지 간'의 같은 종목 = 같은 화면을 나눠 찍은 중복(가로 스크롤·잘림) → 합산 금지,
+  //           정보가 더 많은 쪽을 기준으로 빈 필드만 보완 (예: A컷엔 수량, B컷엔 평가금액)
   const mergeKey = (it) => {
     const tk = (it.ticker || '').toString().toUpperCase().trim();
     if (tk) return 'T:' + tk;
@@ -10411,22 +10417,23 @@ async function processAssetCapture(input) {
   };
   const pickStr = (a, b) => (a && String(a).trim()) ? a : b;
   const num = (v) => { const n = Number(v); return isFinite(n) ? n : 0; };
-  const mergedMap = {};
+
+  // ===== 1단계: 이미지 내 합산 =====
+  const perImageMap = {};
   for (const it of allItems) {
-    const k = mergeKey(it);
-    if (!mergedMap[k]) {
-      // 누적용 내부 필드(_qtySum, _costSum)로 시작
+    const k = (it._sourceImg || '') + '||' + mergeKey(it);
+    if (!perImageMap[k]) {
       const q = num(it.qty), p = num(it.price);
-      mergedMap[k] = {
+      perImageMap[k] = {
         ...it,
         _qtySum: q,
-        _costSum: q * p,             // 매입금액 누적 (수량×단가)
+        _costSum: q * p,
         _evalSum: num(it.evalAmount),
         _profitSum: num(it.profitAmount),
       };
       continue;
     }
-    const cur = mergedMap[k];
+    const cur = perImageMap[k];
     const q = num(it.qty), p = num(it.price);
     cur._qtySum   += q;
     cur._costSum  += q * p;
@@ -10438,28 +10445,63 @@ async function processAssetCapture(input) {
     cur.priceCurrency = pickStr(cur.priceCurrency, it.priceCurrency);
     if (!num(cur.avgBuyRate) && num(it.avgBuyRate)) cur.avgBuyRate = it.avgBuyRate;
   }
-  const mergedItems = Object.values(mergedMap).map(m => {
+  const stage1 = Object.values(perImageMap).map(m => {
     const totQty = m._qtySum;
     const avg = totQty > 0 ? m._costSum / totQty : num(m.price);
-    // 🔧 달러(USD) 단가는 소수점을 보존해야 한다 (예: $349.68 → 350으로 뭉개지면 안 됨).
-    //    원화(KRW) 단가만 정수 반올림. 통화 미상이면 소수점이 의미 있을 수 있으니 보존.
+    // 🔧 달러(USD) 단가는 소수점 보존 (예: $349.68 → 350으로 뭉개지면 안 됨). 원화만 정수 반올림.
     const isUsd = (m.priceCurrency === 'USD');
     const roundedAvg = isUsd ? parseFloat(avg.toFixed(4)) : Math.round(avg);
     const out = {
       ...m,
       qty: parseFloat(totQty.toFixed(4)),
-      price: roundedAvg,                            // 가중평균 평단 (USD는 소수점 보존)
+      price: roundedAvg,
       evalAmount: m._evalSum > 0 ? Math.round(m._evalSum) : m.evalAmount,
       profitAmount: m._profitSum !== 0 ? Math.round(m._profitSum) : m.profitAmount,
     };
-    // 합산된 평가금액·매입원금에서 수익률 재계산 (행마다 따로였던 %를 통합)
     const cost = m._costSum;
     if (m._evalSum > 0 && cost > 0) out.profitPct = ((m._evalSum - cost) / cost) * 100;
     delete out._qtySum; delete out._costSum; delete out._evalSum; delete out._profitSum;
     return out;
   });
+
+  // ===== 2단계: 이미지 간 중복 보완 (합산 없음) =====
+  const fieldScore = (x) =>
+    (num(x.qty) > 0 ? 1 : 0) + (num(x.price) > 0 ? 1 : 0) + (num(x.evalAmount) > 0 ? 1 : 0) +
+    (x.profitPct != null ? 1 : 0) + (x.ticker ? 1 : 0);
+  const crossMap = {};
+  let dupCount = 0;
+  for (const it of stage1) {
+    const k = mergeKey(it);
+    if (!crossMap[k]) { crossMap[k] = it; continue; }
+    dupCount++;
+    const cur = crossMap[k];
+    // 정보가 더 많은 쪽을 기준으로
+    const base = fieldScore(it) > fieldScore(cur) ? { ...it } : { ...cur };
+    const other = fieldScore(it) > fieldScore(cur) ? cur : it;
+    // 빈 필드만 다른 캡처 값으로 채움 (수량·평가금액이 서로 다른 열 캡처에 나뉜 경우)
+    if (!(num(base.qty) > 0) && num(other.qty) > 0) base.qty = other.qty;
+    // 🔧 qty=1은 '수량 열이 안 보여 임의로 채운 값'일 가능성 — 다른 캡처에 소수점 수량이 있으면 그쪽 신뢰
+    if (num(base.qty) === 1 && num(other.qty) > 0 && !Number.isInteger(num(other.qty))) base.qty = other.qty;
+    if (!(num(base.price) > 0) && num(other.price) > 0) {
+      base.price = other.price;
+      base.priceCurrency = base.priceCurrency || other.priceCurrency;
+    }
+    if (!(num(base.evalAmount) > 0) && num(other.evalAmount) > 0) base.evalAmount = other.evalAmount;
+    if (base.profitPct == null && other.profitPct != null) base.profitPct = other.profitPct;
+    if ((base.profitAmount == null || !isFinite(Number(base.profitAmount))) && other.profitAmount != null) base.profitAmount = other.profitAmount;
+    base.ticker        = pickStr(base.ticker, other.ticker);
+    base.name          = pickStr(base.name, other.name);
+    base.type          = pickStr(base.type, other.type);
+    base.priceCurrency = pickStr(base.priceCurrency, other.priceCurrency);
+    if (!num(base.avgBuyRate) && num(other.avgBuyRate)) base.avgBuyRate = other.avgBuyRate;
+    crossMap[k] = base;
+  }
+  const mergedItems = Object.values(crossMap);
+  if (dupCount > 0) {
+    console.log(`🔗 여러 캡처 중복 종목 ${dupCount}건 → 합산 없이 정보 보완으로 병합 (수량 뻥튀기 방지)`);
+  }
   if (mergedItems.length < allItems.length) {
-    console.log(`🔗 같은 종목 여러 줄 합산: ${allItems.length}개 → ${mergedItems.length}개 (정수+소수점 보유분 합침)`);
+    console.log(`🔗 병합 결과: ${allItems.length}개 행 → ${mergedItems.length}개 종목`);
   }
 
   showToast(`✅ ${files.length}장에서 ${mergedItems.length}개 자산 추출됨`);
