@@ -7856,6 +7856,16 @@ function addManualLot(assetId, lotIdToEdit) {
         <input type="text" id="lot-note" value="${escapeAttr(existingLot?.note || '')}" placeholder="추가 메모" />
       </div>
 
+      ${!isEdit && ['주식','국내주식','미국주식','ETF','국내ETF','해외ETF','펀드','채권','금','달러'].includes(asset.type) ? `
+      <label style="display:flex; align-items:flex-start; gap:10px; padding:11px 12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:12px; cursor:pointer;">
+        <input type="checkbox" id="lot-to-expense" checked style="width:18px; height:18px; flex-shrink:0; margin-top:1px; cursor:pointer;" />
+        <div>
+          <div style="font-size:12px; font-weight:600;">💸 가계부 변동지출에도 기록</div>
+          <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px; line-height:1.5;">매수일 날짜로 투자 지출이 자동 기재돼요. 기존 보유분을 옮겨 적는 거면 체크 해제.</div>
+        </div>
+      </label>
+      ` : ''}
+
       <div id="lot-total-preview" style="padding:10px; background:var(--bg-secondary); border-radius:8px; text-align:center; font-size:11px; line-height:1.6;">
         <span id="lot-total-val">계산된 1주당 단가: 0원</span>
       </div>
@@ -7943,19 +7953,47 @@ function saveLot(assetId, lotIdToEdit) {
         // 🔧 정확한 체결금액 보존 (수량×단가 반올림 오차 방지)
         exactAmount: Math.round(totalAmount),
       };
+      // 🔧 이 매수기록으로 만든 가계부 지출이 있으면 금액·날짜도 같이 갱신 (이중 관리 제거)
+      const linkedExp = (budget.expenses || []).find(e => String(e.linkedLotId) === String(lotIdToEdit));
+      if (linkedExp) {
+        linkedExp.amt = Math.round(totalAmount);
+        linkedExp.dateKey = date;
+        linkedExp.memo = `${asset.name} 매수`;
+        showToast('수정됨 (가계부 지출도 갱신)');
+      } else {
+        showToast('수정됨');
+      }
     }
-    showToast('수정됨');
   } else {
     // 추가
+    const newLotId = Date.now() + Math.random();
     asset.lots.push({
-      id: Date.now() + Math.random(),
+      id: newLotId,
       source, qty, price, date,
       fxDiscount,
       autoBuy: false,
       exactAmount: Math.round(totalAmount),
       note,
     });
-    showToast('매수 기록 추가됨');
+    // 🔧 자산→가계부 연동: 체크돼 있으면 매수일 날짜로 투자 지출 자동 기재
+    //    (자산탭 따로, 가계부 따로 이중 입력하던 불편 해소. cat=자산종류 → 생활비 아닌 '투자'로 분류됨)
+    const toExpense = document.getElementById('lot-to-expense');
+    if (toExpense && toExpense.checked && Math.round(totalAmount) > 0) {
+      budget.expenses = budget.expenses || [];
+      budget.expenses.push({
+        id: Date.now() + Math.random(),
+        amt: Math.round(totalAmount),
+        cat: asset.type,
+        memo: `${asset.name} 매수`,
+        dateKey: date,
+        type: 'expense',
+        linkedAssetName: asset.name,
+        linkedLotId: newLotId, // 🔧 매수기록과 연결 — 수정/삭제 시 같이 처리
+      });
+      showToast(`매수 기록 + 가계부 지출 ${Math.round(totalAmount).toLocaleString()}원 기록됨`);
+    } else {
+      showToast('매수 기록 추가됨');
+    }
   }
 
   recalcAssetFromLots(asset);
@@ -7973,9 +8011,13 @@ function deleteLot(assetId, lotId) {
   const asset = assets.find(a => a.id === assetId);
   if (!asset || !asset.lots) return;
   asset.lots = asset.lots.filter(l => String(l.id) !== String(lotId));
+  // 🔧 이 매수기록으로 만든 가계부 지출도 같이 삭제 (짝 잃은 지출 방지)
+  const before = (budget.expenses || []).length;
+  budget.expenses = (budget.expenses || []).filter(e => String(e.linkedLotId) !== String(lotId));
+  const removedExp = before - budget.expenses.length;
   recalcAssetFromLots(asset);
   saveData();
-  showToast('삭제됨');
+  showToast(removedExp > 0 ? '삭제됨 (연동된 가계부 지출도 삭제)' : '삭제됨');
   closeModal();
   setTimeout(() => editAsset(assetId), 50);
 }
@@ -9337,6 +9379,208 @@ function calcCancel() {
   delete window._calcCurrentExpr;
 }
 
+// ===== 📈 매수 체결내역 캡처 — 가계부 지출 + 자산 매수기록 '한 번에' 입력 =====
+//    증권사 주문/체결내역 화면을 캡처하면: 종목·수량·체결금액·날짜를 읽어
+//    ① 자산탭에 매수기록(lot) 추가 ② 가계부에 투자 지출 기재 (서로 연동됨)
+async function processTradeCapture(input) {
+  const files = Array.isArray(input) ? input : Array.from(input?.files || []);
+  if (files.length === 0) return;
+  if (!window.GEMINI_API_KEY) { showToast('AI 키 먼저 설정해주세요'); return; }
+
+  showToast('체결내역 분석 중...');
+  const allTrades = [];
+  let lastErr = '';
+
+  for (const file of files) {
+    try {
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const mimeType = file.type || 'image/jpeg';
+
+      const prompt = `증권사 앱의 주문내역/체결내역/거래내역 화면에서 '매수 체결' 건들만 추출해 JSON 반환.
+
+각 항목: {name, ticker, type, qty, totalKrw, date}
+- name: 종목명 (화면 그대로)
+- ticker: 6자리 숫자(국내) 또는 영문(미국). 안 보이면 ""
+- type: 국내주식|미국주식|국내ETF|해외ETF|펀드|채권|금|달러 중 하나
+  · 티커 6자리 숫자면 국내, 영문이면 해외 · TIGER/KODEX 등 한국 상장 ETF는 국내ETF
+- qty: 체결 수량 (소수점 그대로, 반올림 금지)
+- totalKrw: 체결금액 '원화' 총액 (수수료 포함 값이 보이면 그 값). 달러 금액만 보이고 원화가 없으면 이 필드 생략
+- date: 체결일 YYYY-MM-DD (연도가 안 보이면 올해로)
+
+규칙:
+- '매수 체결'만. 매도/취소/미체결/예약 건은 제외
+- 같은 종목 여러 건이면 각각 추출 (합치지 말 것)
+- 응답은 JSON만: {"trades":[{...}]}
+- 정말 못 읽으면 {"trades":[],"error":"이유"}`;
+
+      const ocrModels = ['gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-flash-latest'];
+      const body = {
+        contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64 } }] }],
+        generationConfig: { temperature: 0.1, maxOutputTokens: 4000 }
+      };
+      let data = null;
+      for (const model of ocrModels) {
+        try {
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${window.GEMINI_API_KEY}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+          });
+          if (res.status === 429 || res.status === 503) { lastErr = `${res.status}: AI 한도/혼잡`; continue; }
+          const d = await res.json();
+          if (!res.ok || d.error) { lastErr = d.error?.message || `HTTP ${res.status}`; continue; }
+          data = d; break;
+        } catch (e) { lastErr = e.message; }
+      }
+      if (!data) throw new Error(lastErr || 'AI 호출 실패');
+
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      let jsonStr = text.trim().replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+      let parsed;
+      try { parsed = JSON.parse(jsonStr); }
+      catch (e) {
+        const m = jsonStr.match(/\{[\s\S]*\}/);
+        if (!m) throw new Error('인식 결과가 비어있어요');
+        parsed = JSON.parse(m[0]);
+      }
+      (parsed.trades || []).forEach(t => allTrades.push(t));
+      if (parsed.error && (!parsed.trades || !parsed.trades.length)) lastErr = parsed.error;
+    } catch (e) {
+      console.warn('체결 캡처 분석 실패:', e.message);
+      lastErr = e.message;
+    }
+  }
+
+  if (allTrades.length === 0) {
+    showToast(lastErr ? `분석 실패: ${lastErr}` : '매수 체결을 찾지 못했어요');
+    return;
+  }
+
+  // 자산 매칭 + 기본값 정리
+  allTrades.forEach(t => {
+    t.qty = Number(t.qty) || 0;
+    t.totalKrw = Math.round(Number(t.totalKrw) || 0);
+    t.date = (typeof t.date === 'string' && t.date.length === 10) ? t.date : todayKey();
+    const matched = findMatchingAsset({ name: t.name, type: t.type, ticker: t.ticker });
+    t._assetId = matched ? matched.id : null;
+    t._assetName = matched ? matched.name : null;
+    t._approved = t.qty > 0 && t.totalKrw > 0;
+  });
+  window._tradeCapture = allTrades;
+  renderTradeCapturePreview();
+}
+
+// 체결 캡처 미리보기 — 수량·금액·날짜를 반영 전에 직접 수정 가능
+function renderTradeCapturePreview() {
+  const trades = window._tradeCapture || [];
+  const rows = trades.map((t, i) => `
+    <div style="padding:12px 10px; border-bottom:0.5px solid var(--border-tertiary);">
+      <label style="display:flex; align-items:center; gap:8px; margin-bottom:8px; cursor:pointer;">
+        <input type="checkbox" ${t._approved ? 'checked' : ''} onchange="window._tradeCapture[${i}]._approved = this.checked" style="width:18px; height:18px; flex-shrink:0;" />
+        <div style="flex:1; min-width:0;">
+          <div style="font-size:13px; font-weight:700;">${escapeHTML(t.name || '?')} <span style="font-size:10px; color:var(--text-tertiary); font-weight:400;">${escapeHTML(t.ticker || '')} · ${escapeHTML(t.type || '')}</span></div>
+          <div style="font-size:10px; color:${t._assetId ? 'var(--text-success)' : 'var(--text-info)'}; margin-top:1px;">
+            ${t._assetId ? `기존 자산 "${escapeHTML(t._assetName)}"에 매수기록 추가` : '새 자산으로 생성'}
+          </div>
+        </div>
+      </label>
+      <div style="display:flex; gap:6px;">
+        <div style="flex:1;">
+          <div style="font-size:9px; color:var(--text-tertiary); margin-bottom:2px;">수량 (주)</div>
+          <input type="number" step="0.0001" value="${t.qty}" onchange="window._tradeCapture[${i}].qty = Number(this.value)||0" style="width:100%; padding:8px; font-size:12px; border:0.5px solid var(--border-tertiary); border-radius:8px;" />
+        </div>
+        <div style="flex:1.4;">
+          <div style="font-size:9px; color:var(--text-tertiary); margin-bottom:2px;">체결금액 (원)</div>
+          <input type="number" value="${t.totalKrw}" onchange="window._tradeCapture[${i}].totalKrw = Math.round(Number(this.value)||0)" style="width:100%; padding:8px; font-size:12px; border:0.5px solid var(--border-tertiary); border-radius:8px;" />
+        </div>
+        <div style="flex:1.3;">
+          <div style="font-size:9px; color:var(--text-tertiary); margin-bottom:2px;">체결일</div>
+          <input type="date" value="${t.date}" onchange="window._tradeCapture[${i}].date = this.value" style="width:100%; padding:8px; font-size:11px; border:0.5px solid var(--border-tertiary); border-radius:8px; font-family:inherit;" />
+        </div>
+      </div>
+    </div>`).join('');
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">취소</button>
+        <h2>매수 체결 확인</h2>
+        <button class="modal-save" onclick="confirmTradeCapture()">반영</button>
+      </div>
+      <div style="padding:10px 12px; background:var(--bg-info); border-radius:10px; margin-bottom:10px; font-size:11px; color:var(--text-info); line-height:1.6;">
+        체크한 건은 <b>자산탭 매수기록 + 가계부 투자 지출</b>에 동시에 기록돼요. 숫자가 다르면 여기서 바로 고치세요.
+      </div>
+      <div style="border:0.5px solid var(--border-tertiary); border-radius:10px; overflow:hidden; max-height:56vh; overflow-y:auto;">
+        ${rows}
+      </div>
+    </div>`;
+  modal.classList.add('show');
+}
+
+function confirmTradeCapture() {
+  const trades = (window._tradeCapture || []).filter(t => t._approved);
+  if (trades.length === 0) { showToast('반영할 건을 선택하세요'); return; }
+
+  let lotCount = 0, expCount = 0, newAssetCount = 0;
+  trades.forEach(t => {
+    if (!(t.qty > 0) || !(t.totalKrw > 0)) return;
+
+    // ① 자산 찾기/생성
+    let asset = t._assetId ? assets.find(a => a.id === t._assetId) : null;
+    if (!asset) {
+      asset = {
+        id: Date.now() + Math.random(),
+        type: t.type || '국내주식',
+        name: t.name,
+        ticker: t.ticker || '',
+        qty: 0, price: 0, note: '체결 캡처로 생성', lots: [],
+      };
+      assets.push(asset);
+      newAssetCount++;
+    }
+
+    // ② 매수기록(lot) 추가 — 총 체결금액 기준 (증권사와 오차 0)
+    if (!asset.lots) asset.lots = [];
+    const newLotId = Date.now() + Math.random();
+    asset.lots.push({
+      id: newLotId,
+      source: '📈 체결 캡처',
+      qty: t.qty,
+      price: t.totalKrw / t.qty,
+      date: t.date,
+      autoBuy: false,
+      exactAmount: t.totalKrw,
+      note: `체결내역 캡처 (${t.date})`,
+    });
+    recalcAssetFromLots(asset);
+    lotCount++;
+
+    // ③ 가계부 투자 지출 기재 (매수기록과 연동 — 수정/삭제 시 같이 처리됨)
+    budget.expenses = budget.expenses || [];
+    budget.expenses.push({
+      id: Date.now() + Math.random(),
+      amt: t.totalKrw,
+      cat: asset.type,
+      memo: `${asset.name} 매수`,
+      dateKey: t.date,
+      type: 'expense',
+      linkedAssetName: asset.name,
+      linkedLotId: newLotId,
+    });
+    expCount++;
+  });
+
+  delete window._tradeCapture;
+  saveData(true);
+  closeModal();
+  showToast(`✅ 매수 ${lotCount}건 반영 (자산${newAssetCount > 0 ? ` 신규 ${newAssetCount}개` : ''} + 가계부 지출 ${expCount}건)`);
+  render();
+}
+
 function openExpenseModal(forDateKey) {
   // forDateKey: YYYY-MM-DD string 또는 빈값
   const defaultDate = (typeof forDateKey === 'string' && forDateKey.length === 10)
@@ -9366,6 +9610,11 @@ function openExpenseModal(forDateKey) {
       <button onclick="pasteImageForOCR()" style="width:100%; margin-bottom:8px; padding:11px; border:1.5px dashed var(--text-info); background:rgba(70,140,255,0.04); color:var(--text-info); border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px;">
         <i class="ti ti-clipboard" style="font-size:14px;"></i>
         📋 캡처 이미지 붙여넣기 (저장 없이)
+      </button>
+      <input type="file" id="trade-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processTradeCapture(this)" />
+      <button onclick="document.getElementById('trade-capture-input').click()" style="width:100%; margin-bottom:8px; padding:11px; border:1.5px dashed #0D9488; background:rgba(13,148,136,0.05); color:#0D9488; border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px;">
+        <i class="ti ti-chart-candle" style="font-size:14px;"></i>
+        📈 매수 체결내역 캡처 (지출 + 자산 동시 기록)
       </button>
       <div id="card-capture-status" style="margin-top:-8px; margin-bottom:10px; font-size:11px; color:var(--text-tertiary); text-align:center; line-height:1.4; display:none;"></div>
 
