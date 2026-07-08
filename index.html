@@ -1608,6 +1608,40 @@ function todoGroup(dateKeyStr) {
   return 'later';
 }
 
+// 🔧 기간 일정 지원 — 할일이 특정 날짜에 '걸쳐 있는지' (여행 등 시작~종료 기간)
+function todoOnDay(t, dayK) {
+  if (!t || !dayK) return false;
+  if (t.dateKey === dayK) return true;
+  return !!(t.endDateKey && t.dateKey && t.dateKey <= dayK && dayK <= t.endDateKey);
+}
+
+// 🔧 기간 일정 지원 — 그룹 분류 (기간 중이면 past가 아니라 today로)
+function todoGroupOf(t) {
+  if (!t) return 'today';
+  if (t.endDateKey && t.dateKey) {
+    const tk = todayKey();
+    if (t.dateKey <= tk && tk <= t.endDateKey) return 'today'; // 기간 진행 중
+    if (t.endDateKey < tk) return 'past';                       // 기간 종료
+    return todoGroup(t.dateKey);                                // 기간 시작 전
+  }
+  return todoGroup(t.dateKey);
+}
+
+// 🔧 기간 일정 라벨 — "7/10 ~ 7/14 (5일)" / 진행 중이면 "3일차/5일"
+function periodLabel(t) {
+  if (!t.endDateKey || !t.dateKey) return '';
+  const [sy, sm, sd] = t.dateKey.split('-').map(Number);
+  const [ey, em, ed] = t.endDateKey.split('-').map(Number);
+  const days = Math.round((new Date(ey, em-1, ed) - new Date(sy, sm-1, sd)) / 86400000) + 1;
+  const tk = todayKey();
+  if (t.dateKey <= tk && tk <= t.endDateKey) {
+    const [ty, tm, td] = tk.split('-').map(Number);
+    const dayN = Math.round((new Date(ty, tm-1, td) - new Date(sy, sm-1, sd)) / 86400000) + 1;
+    return `${sm}/${sd}~${em}/${ed} · ${dayN}일차/${days}일`;
+  }
+  return `${sm}/${sd}~${em}/${ed} (${days}일)`;
+}
+
 // 한국식 날짜 라벨 ("5월 12일 (화)")
 function dateLabel(dateKeyStr) {
   if (!dateKeyStr) return '';
@@ -2234,7 +2268,7 @@ function renderCalendar() {
       return eff === d;
     });
     if (dayExpenses.length > 0 || hasFixedToday) dots.push('m');
-    const dayTodos = todos.filter(t => t.dateKey === k);
+    const dayTodos = todos.filter(t => todoOnDay(t, k)); // 🔧 기간 일정은 기간 내 모든 날에 점 표시
     if (dayTodos.length > 0) dots.push('t');
     // 챌린지 점 - 시작일 ~ 종료일 사이만 표시 (완료/실패한 챌린지는 제외)
     const activeChs = challenges.filter(c => {
@@ -2315,7 +2349,7 @@ function renderCalendar() {
 
       // 이 날의 데이터
       const dayWorkout = workoutLog[dKey]?.done;
-      const dayTodos = todos.filter(t => t.dateKey === dKey);
+      const dayTodos = todos.filter(t => todoOnDay(t, dKey)); // 🔧 기간 일정 포함
       const dayExpenses = budget.expenses.filter(e => e.dateKey === dKey);
       const dayChs = challenges.filter(c => {
         if (c.completed || c.failed) return false; // 🔧 끝난 챌린지는 캘린더에서 숨김
@@ -2456,12 +2490,21 @@ function getEventsForDay(d) {
   const events = [];
   const k = dayKey(d);
 
-  // 할일
-  todos.filter(t => t.dateKey === k).forEach(t => {
+  // 할일 — 🔧 기간 일정(여행 등)은 기간 내 모든 날짜에 표시 (몇일차인지 함께)
+  todos.filter(t => todoOnDay(t, k)).forEach(t => {
+    let sub = t.tag;
+    if (t.endDateKey && t.dateKey) {
+      const [sy, sm, sd] = t.dateKey.split('-').map(Number);
+      const [ey, em, ed] = t.endDateKey.split('-').map(Number);
+      const [ky, km, kd] = k.split('-').map(Number);
+      const total = Math.round((new Date(ey, em-1, ed) - new Date(sy, sm-1, sd)) / 86400000) + 1;
+      const dayN = Math.round((new Date(ky, km-1, kd) - new Date(sy, sm-1, sd)) / 86400000) + 1;
+      sub = `${t.tag} · ${dayN}일차/${total}일`;
+    }
     events.push({
       type: 'todo',
       title: t.title,
-      sub: t.tag,
+      sub,
       done: t.done,
       todoId: t.id,
       amount: t.money
@@ -2813,10 +2856,10 @@ function renderTodo() {
 
   // 할일 통계 계산 - 세분화
   const todayK = todayKey();
-  const todayTodos = todos.filter(t => t.dateKey === todayK);
+  const todayTodos = todos.filter(t => todoOnDay(t, todayK)); // 🔧 기간 일정(여행 등) 진행 중이면 오늘에 포함
   const todayDone = todayTodos.filter(t => t.done).length;
 
-  const pastTodos = todos.filter(t => todoGroup(t.dateKey) === 'past' && !t.done);
+  const pastTodos = todos.filter(t => todoGroupOf(t) === 'past' && !t.done); // 🔧 기간 진행 중이면 밀린 일정 아님
   const pastDoneAll = todos.filter(t => t.dateKey && t.dateKey < todayK && t.done);
 
   // 본인이 선택한 주 (todoWeekOffset 기준)
@@ -2936,8 +2979,8 @@ function renderTodo() {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
     const dK = dateKey(d.getFullYear(), d.getMonth(), d.getDate());
-    const dayTodos = todos.filter(t => t.dateKey === dK && !t.done);
-    const dayDone = todos.filter(t => t.dateKey === dK && t.done);
+    const dayTodos = todos.filter(t => todoOnDay(t, dK) && !t.done); // 🔧 기간 일정은 기간 내 모든 날에 표시
+    const dayDone = todos.filter(t => todoOnDay(t, dK) && t.done);
     const isToday = dK === todayK;
     const isWeekend = i === 0 || i === 6; // 일 또는 토
     const isPast = dK < todayK;
@@ -3072,7 +3115,7 @@ function renderTodo() {
 // 🔧 밀린 할일 일괄 처리
 function bulkMovePastTodos() {
   const today = todayKey();
-  const past = todos.filter(t => todoGroup(t.dateKey) === 'past' && !t.done);
+  const past = todos.filter(t => todoGroupOf(t) === 'past' && !t.done);
   if (past.length === 0) return;
   if (!confirm(`밀린 일 ${past.length}개를 모두 오늘 날짜로 옮길까요?`)) return;
   past.forEach(t => { t.dateKey = today; });
@@ -3081,7 +3124,7 @@ function bulkMovePastTodos() {
   renderTodo();
 }
 function bulkDonePastTodos() {
-  const past = todos.filter(t => todoGroup(t.dateKey) === 'past' && !t.done);
+  const past = todos.filter(t => todoGroupOf(t) === 'past' && !t.done);
   if (past.length === 0) return;
   if (!confirm(`밀린 일 ${past.length}개를 모두 완료 처리할까요?`)) return;
   past.forEach(t => { t.done = true; t.completedAt = Date.now(); });
@@ -3090,7 +3133,7 @@ function bulkDonePastTodos() {
   renderTodo();
 }
 function bulkDeletePastTodos() {
-  const past = todos.filter(t => todoGroup(t.dateKey) === 'past' && !t.done);
+  const past = todos.filter(t => todoGroupOf(t) === 'past' && !t.done);
   if (past.length === 0) return;
   if (!confirm(`밀린 일 ${past.length}개를 모두 삭제할까요? 되돌릴 수 없어요.`)) return;
   const ids = new Set(past.map(t => t.id));
@@ -3109,7 +3152,8 @@ function renderTodoRow(t) {
       <div class="todo-title">${t.time ? `<span style="color:var(--text-info); font-weight:700; margin-right:5px;">${escapeHTML(t.time)}</span>` : ''}${escapeHTML(t.title)}</div>
       <div class="todo-meta">
         <span class="tag">${escapeHTML(t.tag)}</span>
-        ${t.dateKey ? `<span class="meta-mini" style="font-size:11px;"><i class="ti ti-calendar" style="font-size:11px;"></i> ${dateLabel(t.dateKey)}</span>` : ''}
+        ${t.endDateKey ? `<span class="meta-mini" style="font-size:11px; color:#7D6FC9; font-weight:600;"><i class="ti ti-calendar-event" style="font-size:11px;"></i> ${periodLabel(t)}</span>`
+          : t.dateKey ? `<span class="meta-mini" style="font-size:11px;"><i class="ti ti-calendar" style="font-size:11px;"></i> ${dateLabel(t.dateKey)}</span>` : ''}
         ${t.due ? `<span class="meta-mini">~ ${escapeHTML(t.due)}</span>` : ''}
         ${t.money ? `<span class="meta-money"><i class="ti ti-wallet" style="font-size:11px;"></i> ${escapeHTML(t.money)}</span>` : ''}
       </div>
@@ -12373,7 +12417,7 @@ function openTodoModal(forDateKey, editTodoObj) {
       </div>
 
       <div class="field">
-        <div class="field-label">📅 날짜</div>
+        <div class="field-label">📅 날짜${isEdit && editTodoObj.endDateKey ? ' (시작일)' : ''}</div>
         <input type="date" id="todo-date" value="${defaultDate}" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit;" />
         <div style="display:flex; gap:6px; margin-top:8px; flex-wrap:wrap;">
           <button type="button" class="chip" onclick="setTodoDate('today')">오늘</button>
@@ -12381,6 +12425,18 @@ function openTodoModal(forDateKey, editTodoObj) {
           <button type="button" class="chip" onclick="setTodoDate('week')">일주일 후</button>
           <button type="button" class="chip" onclick="setTodoDate('month')">한달 후</button>
         </div>
+      </div>
+
+      <!-- 🔧 기간 일정 (여행·출장 등 여러 날에 걸친 스케줄) -->
+      <div class="row-flex" style="margin-bottom:10px;">
+        <div class="lb"><i class="ti ti-calendar-event"></i>기간 일정 <span style="font-size:10px; color:var(--text-tertiary);">(여행·출장 등)</span></div>
+        <div class="toggle ${isEdit && editTodoObj.endDateKey ? 'on' : ''}" id="todo-period-toggle"
+          onclick="this.classList.toggle('on'); document.getElementById('todo-end-row').style.display = this.classList.contains('on') ? 'block' : 'none';"><div class="knob"></div></div>
+      </div>
+      <div class="field" id="todo-end-row" style="display:${isEdit && editTodoObj.endDateKey ? 'block' : 'none'};">
+        <div class="field-label">📅 종료일</div>
+        <input type="date" id="todo-end-date" value="${isEdit && editTodoObj.endDateKey ? editTodoObj.endDateKey : ''}" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit;" />
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px;">기간 중 매일 할일탭·캘린더에 표시돼요 (예: 여행 3일차/5일)</div>
       </div>
 
       <div class="field">
@@ -12423,7 +12479,7 @@ function openTodoModal(forDateKey, editTodoObj) {
 
       <div class="row-flex">
         <div class="lb"><i class="ti ti-flag"></i>중요 표시</div>
-        <div class="toggle ${isEdit && editTodoObj.flag ? 'on' : ''}" onclick="this.classList.toggle('on')"><div class="knob"></div></div>
+        <div class="toggle ${isEdit && editTodoObj.flag ? 'on' : ''}" id="todo-flag-toggle" onclick="this.classList.toggle('on')"><div class="knob"></div></div>
       </div>
 
       ${isEdit ? `
@@ -12461,9 +12517,19 @@ function saveTodo(editId) {
   if (!title) { showToast('내용을 입력해주세요'); return; }
   const dateKeyVal = document.getElementById('todo-date').value || todayKey();
   const tag = document.querySelector('#tag-grid .chip.active')?.dataset.tag || '업무';
-  const flag = modal.querySelector('.toggle').classList.contains('on');
+  // 🔧 기간 토글 추가로 .toggle이 2개 — 중요 표시는 반드시 id로 참조
+  const flag = document.getElementById('todo-flag-toggle')?.classList.contains('on') || false;
   const time = document.getElementById('todo-time')?.value || '';
   const memo = document.getElementById('todo-memo')?.value.trim() || '';
+
+  // 🔧 기간 일정 (여행 등): 토글 켜짐 + 종료일이 시작일 이후일 때만 저장
+  const periodOn = document.getElementById('todo-period-toggle')?.classList.contains('on');
+  let endDateKeyVal = '';
+  if (periodOn) {
+    endDateKeyVal = document.getElementById('todo-end-date')?.value || '';
+    if (!endDateKeyVal) { showToast('기간 일정은 종료일을 입력해주세요'); return; }
+    if (endDateKeyVal <= dateKeyVal) { showToast('종료일은 시작일 다음날 이후여야 해요'); return; }
+  }
 
   if (editId) {
     // 수정
@@ -12475,11 +12541,13 @@ function saveTodo(editId) {
       t.flag = flag;
       t.time = time;
       t.memo = memo;
+      if (endDateKeyVal) t.endDateKey = endDateKeyVal;
+      else delete t.endDateKey; // 토글 끄면 일반 할일로
     }
     showToast('수정됨');
   } else {
     // 새로 추가
-    todos.unshift({
+    const newTodo = {
       id: Date.now(),
       title,
       tag,
@@ -12488,8 +12556,10 @@ function saveTodo(editId) {
       time,
       memo,
       done: false,
-    });
-    showToast(`"${title}" 추가됨`);
+    };
+    if (endDateKeyVal) newTodo.endDateKey = endDateKeyVal;
+    todos.unshift(newTodo);
+    showToast(endDateKeyVal ? `"${title}" 기간 일정 추가됨 (${periodLabel(newTodo)})` : `"${title}" 추가됨`);
   }
   saveData();
   closeModal();
