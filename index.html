@@ -3209,7 +3209,53 @@ function delTodo(id, e) {
 }
 
 // ========== 챌린지 ==========
+// 🔧 자동 마감 — 목표를 달성했거나 설정한 기간이 끝난 챌린지는 진행 목록에서 자동으로 내림
+//    (예전엔 completed 플래그를 세워주는 곳이 없어서 100% 달성해도, 기간이 지나도 계속 남아있었음)
+function finalizeEndedChallenges() {
+  const tk = todayKey();
+  let changed = false;
+  (challenges || []).forEach(c => {
+    if (c.completed || c.failed) return;
+    if (!c.startDate) return;
+    const totalDays = Math.max(1, Number(c.totalDays) || 0);
+    const start = new Date(c.startDate + 'T00:00:00');
+    const end = new Date(start);
+    end.setDate(start.getDate() + totalDays - 1);
+    const endK = dateKey(end.getFullYear(), end.getMonth(), end.getDate());
+    const checkedDays = Object.keys(c.checks || {}).filter(k => c.checks[k] === true).length;
+
+    // 목표 달성 판정 (진행 중에도 목표 채우면 즉시 완료)
+    let done = false;
+    if (c.type === 'count') done = checkedDays >= Math.max(1, Number(c.targetCount) || 0);
+    else if (c.type === 'forbidden') done = false; // 금지형은 기간이 끝나야 성공 확정
+    else done = checkedDays >= totalDays;
+
+    const periodOver = endK < tk; // 종료일이 어제 이전 = 기간 끝남
+
+    if (done) {
+      c.completed = true;
+      c.completedAt = c.completedAt || Date.now();
+      changed = true;
+      console.log(`🏁 챌린지 완료 처리: ${c.title}`);
+    } else if (periodOver) {
+      const violations = Object.values(c.checks || {}).filter(v => v === 'fail').length;
+      if (c.type === 'forbidden' && violations === 0) {
+        c.completed = true; // 금지형: 기간 내 위반 없음 = 성공
+        c.completedAt = c.completedAt || Date.now();
+      } else {
+        c.failed = true; // 기간 종료 + 목표 미달
+        c.endedAt = Date.now();
+      }
+      changed = true;
+      console.log(`⏱️ 챌린지 기간 종료 처리: ${c.title} (${c.completed ? '성공' : '미달'})`);
+    }
+  });
+  if (changed) saveData();
+}
+
 function renderChallengeSection() {
+  finalizeEndedChallenges(); // 🔧 렌더 전에 끝난 챌린지 정리
+
   let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin: 4px 0 10px;">
     <span style="font-size:14px; font-weight:600;">🎯 챌린지</span>
     <button onclick="openChallengeModal()" style="border:none; background:transparent; font-size:12px; color:var(--text-info); cursor:pointer; font-family:inherit; font-weight:500;">+ 추가</button>
@@ -3217,6 +3263,7 @@ function renderChallengeSection() {
 
   const activeC = challenges.filter(c => !c.completed && !c.failed);
   const completedC = challenges.filter(c => c.completed);
+  const failedC = challenges.filter(c => c.failed && !c.completed);
 
   if (activeC.length === 0 && completedC.length === 0) {
     html += `<div style="padding:20px; background:linear-gradient(135deg, #1A1A1A 0%, #2D2D2D 100%); border-radius:12px; color:white; margin-bottom:14px;">
@@ -3241,6 +3288,12 @@ function renderChallengeSection() {
     html += `<div style="margin-top:14px; padding:10px 12px; background:var(--bg-secondary); border-radius:var(--radius-md); cursor:pointer; display:flex; align-items:center; justify-content:space-between;" onclick="showCompletedChallenges()">
       <span style="font-size:11px; color:var(--text-secondary);">🏆 명예의 전당 — 해낸 챌린지 ${completedC.length}개</span>
       <i class="ti ti-chevron-right" style="font-size:14px; color:var(--text-tertiary);"></i>
+    </div>`;
+  }
+
+  if (failedC.length > 0) {
+    html += `<div style="margin-top:6px; padding:8px 12px; background:var(--bg-secondary); border-radius:var(--radius-md); font-size:10px; color:var(--text-tertiary);">
+      ⏱️ 기간이 끝나 종료된 챌린지 ${failedC.length}개 (진행 목록에서 내려감)
     </div>`;
   }
 
@@ -9457,6 +9510,10 @@ async function processTradeCapture(input) {
 
       const prompt = `증권사 앱의 주문내역/체결내역/거래내역 화면에서 '매수 체결' 건들만 추출해 JSON 반환.
 
+🚨 반드시 2단계로 작업하라:
+[1단계] 화면에 보이는 체결 내역을 줄 단위로 그대로 옮겨 적어 "transcript"에 담아라 (숫자는 한 자리씩 정확히).
+[2단계] transcript에 적은 숫자만 사용해 trades를 만들어라 (계산·추정 금지).
+
 각 항목: {name, ticker, type, qty, totalKrw, date}
 - name: 종목명 (화면 그대로)
 - ticker: 6자리 숫자(국내) 또는 영문(미국). 안 보이면 ""
@@ -9469,13 +9526,13 @@ async function processTradeCapture(input) {
 규칙:
 - '매수 체결'만. 매도/취소/미체결/예약 건은 제외
 - 같은 종목 여러 건이면 각각 추출 (합치지 말 것)
-- 응답은 JSON만: {"trades":[{...}]}
-- 정말 못 읽으면 {"trades":[],"error":"이유"}`;
+- 응답은 JSON만: {"transcript":"...","trades":[{...}]}
+- 정말 못 읽으면 {"transcript":"...","trades":[],"error":"이유"}`;
 
       const ocrModels = ['gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-flash-latest'];
       const body = {
         contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64 } }] }],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 4000 }
+        generationConfig: { temperature: 0, maxOutputTokens: 4000 }
       };
       let data = null;
       for (const model of ocrModels) {
@@ -10234,6 +10291,14 @@ async function processAssetCapture(input) {
 
     const prompt = `증권/은행/투자 앱 화면에서 보유 자산을 추출해 JSON 반환.
 
+🚨 반드시 2단계로 작업하라 (숫자 정확도의 핵심):
+[1단계 - 필사] 화면의 표/목록에 보이는 **모든 글자와 숫자를 줄 단위로 그대로 옮겨 적어** "transcript" 필드에 담아라.
+  · 숫자는 한 자리씩 정확히, 소수점·쉼표 포함 그대로 (34.4751 → 34.4751, 앞자리 빼먹기 금지)
+  · 열 순서대로, 종목마다 줄바꿈으로 구분
+[2단계 - 추출] **transcript에 옮겨 적은 숫자만 사용해** items를 만들어라.
+  · transcript에 없는 숫자를 items에 쓰는 것 절대 금지 (계산·추정 금지)
+  · transcript에서 어느 라벨의 숫자인지 확인하고 해당 필드에 배치
+
 각 항목: {type, name, qty, price, currentPrice, purchaseAmount, ticker, priceCurrency, avgBuyRate, evalAmount, profitPct, profitAmount}
 
 📌 매입가/현재가 구분 (매우 중요 — 가장 흔한 오인식. 증권사마다 배치가 다름):
@@ -10346,8 +10411,9 @@ async function processAssetCapture(input) {
 - "원화" 모드 화면: 미국종목 매입가는 USD로, 평가금액은 원화로 → priceCurrency="USD" + evalAmount(원화) 넣기
 - "외화" 모드 화면: 전부 달러 → priceCurrency="USD", **evalAmount는 생략** (달러 평가금액 넣으면 평단 망가짐)
 
-📤 출력 (JSON만, 주석 없이, 안 보이는 필드는 생략):
-{"items":[
+📤 출력 (JSON만, 주석 없이, 안 보이는 필드는 생략 · transcript 필수):
+{"transcript":"화면 표를 줄 단위로 그대로 옮긴 텍스트",
+"items":[
   {"type":"주식","name":"삼성전자","qty":10,"price":70000,"priceCurrency":"KRW","ticker":"005930","evalAmount":720000,"profitPct":2.9,"profitAmount":20000},
   {"type":"ETF","name":"TIGER 미국S&P500","qty":9,"price":27360,"priceCurrency":"KRW","ticker":"360750"},
   {"type":"주식","name":"알파벳 A","qty":1,"price":349.68,"priceCurrency":"USD","ticker":"GOOGL","evalAmount":525119,"profitPct":-2.43,"profitAmount":-13111},
@@ -10362,6 +10428,9 @@ async function processAssetCapture(input) {
 {"items":[],"error":"구체적 이유"}
 
 ⚠️ 중요 지침:
+- **숫자는 절대 계산·추론하지 말 것. 화면에 보이는 숫자를 한 자리씩 그대로 옮겨 적기(필사)만 하라.**
+  · 어떤 필드도 다른 필드에서 나눗셈·곱셈으로 만들지 말 것 (예: 수량 = 매입금액÷단가 금지)
+  · 숫자가 흐릿하거나 잘려서 확신이 없으면 그 **필드를 생략**하라 (틀린 숫자보다 빈 값이 낫다)
 - 화면에 종목명·수량·금액 비슷한 게 보이면 일단 추출할 것 (애매해도 최선을 다해 추출)
 - 빈 배열로 포기하지 말 것 — 자산 화면이면 반드시 뭔가 추출
 - ETF는 type="ETF" (주식 X), 금은 단위 g로 환산
@@ -10381,7 +10450,7 @@ async function processAssetCapture(input) {
     const ocrModels = ['gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-flash-latest'];
     const body = {
       contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64 } }] }],
-      generationConfig: { temperature: 0.1, maxOutputTokens: 8000 }
+      generationConfig: { temperature: 0, maxOutputTokens: 8000 }
     };
 
     // 🔧 모델 폴백: 한도초과(429)/혼잡(503) 시 다음 모델로
@@ -10432,6 +10501,7 @@ async function processAssetCapture(input) {
         throw new Error('인식 결과가 비어있어요. 자산 목록이 보이는 화면을 캡처해주세요');
       }
     }
+    if (parsed.transcript) console.log('📝 OCR 필사본:\n' + parsed.transcript); // 오인식 추적용
     console.log('📊 파싱된 자산:', parsed.items);
     parsed.items?.forEach((it, i) => {
       console.log(`  ${i+1}. ${it.name}: qty=${it.qty} (typeof: ${typeof it.qty}), price=${it.price}`);
@@ -10598,8 +10668,9 @@ async function processAssetCapture(input) {
     console.log(`🔗 병합 결과: ${allItems.length}개 행 → ${mergedItems.length}개 종목`);
   }
 
-  // 🔧 OCR 수학 검증 — AI가 매입가/현재가를 바꿔 읽거나 수량을 역산한 경우 자동 교정
-  //    (키움 두 줄 표에서 매입가 자리에 현재가가 들어가는 오인식이 흔함)
+  // 🔧 OCR 수학 검증 — ⚠️ 자동으로 숫자를 바꾸지 않는다! (캡처에서 읽은 값이 항상 기본)
+  //    불일치가 발견되면 '제안'만 만들어 검토 화면에 표시 → 사용자가 [적용]을 눌러야만 반영.
+  //    (예외: 캡처에 아예 없는 값을 채우는 것만 자동 — 수량/평단이 빈 경우의 복원)
   mergedItems.forEach(it => {
     const p = num(it.price);
     const cp = num(it.currentPrice);
@@ -10607,68 +10678,39 @@ async function processAssetCapture(input) {
     const pa = num(it.purchaseAmount);
     const isUsd = (it.priceCurrency === 'USD');
 
-    // ① 매입가 ↔ 현재가 뒤바뀜 교정: price가 현재가와 사실상 같은데 수익률이 0이 아니면
-    //    → 진짜 매입가 = 현재가 ÷ (1 + 수익률). (수익률 부호와도 자동 일치)
+    // ① 매입가 ↔ 현재가 뒤바뀜 의심 → 제안만 (수정 안 함)
     if (cp > 0 && p > 0 && pct != null && Math.abs(pct) > 0.3) {
       const expectedBuy = cp / (1 + pct / 100);
-      const looksLikeCurrent = Math.abs(p - cp) / cp < 0.01;         // 매입가≈현재가 (뒤바뀜 신호)
+      const looksLikeCurrent = Math.abs(p - cp) / cp < 0.01;
       const farFromExpected = Math.abs(p - expectedBuy) / expectedBuy > 0.02;
       if (looksLikeCurrent && farFromExpected) {
-        const fixed = isUsd ? parseFloat(expectedBuy.toFixed(4)) : Math.round(expectedBuy);
-        console.warn(`🔧 ${it.name}: 매입가(${p})가 현재가와 동일 → 수익률로 역산해 ${fixed}로 교정`);
-        it._rawPrice = p; // 🔧 원본 보존 — 검토 화면에 인식값→교정값 표시
-        it.price = fixed;
-        it._priceFixed = true;
+        it._suggestPrice = isUsd ? parseFloat(expectedBuy.toFixed(4)) : Math.round(expectedBuy);
+        console.warn(`⚠️ ${it.name}: 매입가(${p})가 현재가와 동일한데 수익률≠0 — 제안값 ${it._suggestPrice} (자동 적용 안 함)`);
       }
     }
 
-    // ② 수량 검증: 매입금액이 있으면 수량 × 매입가 ≈ 매입금액이어야 함
-    //    단, '매입가가 검증된 경우'에만 수량을 교정 (틀린 매입가로 멀쩡한 수량을 덮어쓰지 않게)
-    const p2 = num(it.price); // ①에서 교정됐을 수 있으니 다시 읽음
-    if (pa > 0 && p2 > 0) {
-      // 매입가 신뢰 판정: 현재가·수익률과 2% 이내로 맞아떨어지면 신뢰
-      const priceTrusted = (cp > 0 && pct != null)
-        ? Math.abs(p2 - cp / (1 + pct / 100)) / (cp / (1 + pct / 100)) < 0.02
-        : false;
-      const impliedQty = pa / p2;
+    // ② 수량 × 매입가 ≠ 매입금액 → 제안만 (수정 안 함)
+    if (pa > 0 && p > 0) {
+      const impliedQty = pa / p;
       const q = num(it.qty);
-      // 🔧 이중 검증: 교정될 수량이 '평가금액'과도 앞뒤가 맞아야 함 (매입금액 오독으로
-      //    멀쩡한 수량을 망치지 않게). USD면 환산환율이 상식 범위(850~2000원/$)인지 확인.
-      let evalOk = true;
-      if (isUsd && cp > 0 && num(it.evalAmount) > 0 && impliedQty > 0) {
-        const impliedRate = num(it.evalAmount) / (impliedQty * cp);
-        evalOk = impliedRate > 850 && impliedRate < 2000;
-      }
-      if (q > 0 && Math.abs(q * p2 - pa) / pa > 0.03 && impliedQty > 0) {
-        if (priceTrusted && evalOk) {
-          console.warn(`🔧 ${it.name}: 수량(${q}) × 매입가(${p2}) ≠ 매입금액(${pa}) → 수량을 ${impliedQty.toFixed(4)}로 교정`);
-          it._rawQty = q; // 🔧 원본 보존
-          it.qty = parseFloat(impliedQty.toFixed(4));
-          it._qtyFixed = true;
-        } else {
-          // 매입가를 검증할 수 없으면 자동 교정 대신 경고만 (검토 화면에서 직접 수정 가능)
-          console.warn(`⚠️ ${it.name}: 수량×매입가(${(q*p2).toFixed(2)}) ≠ 매입금액(${pa}) — 매입가 미검증이라 자동 교정 보류. 검토 화면에서 확인 필요`);
-        }
+      if (q > 0 && Math.abs(q * p - pa) / pa > 0.03 && impliedQty > 0) {
+        it._suggestQty = parseFloat(impliedQty.toFixed(4));
+        console.warn(`⚠️ ${it.name}: 수량(${q})×매입가(${p}) ≠ 매입금액(${pa}) — 제안값 ${it._suggestQty} (자동 적용 안 함)`);
       } else if (!(q > 0) && impliedQty > 0) {
-        it.qty = parseFloat(impliedQty.toFixed(4)); // 수량을 아예 못 읽었으면 매입금액으로 복원
+        it.qty = parseFloat(impliedQty.toFixed(4)); // 수량을 아예 못 읽은 경우만 채움 (캡처값 덮어쓰기 아님)
       }
     }
-  });
-  // ③ 수익률 부호 교정 — 토스처럼 %엔 부호가 없고 손익 금액에만 있는 화면 대응
-  //    (손익 금액과 수익률의 부호가 다르면 금액 부호를 신뢰)
-  mergedItems.forEach(it => {
+
+    // ③ 수익률 부호가 손익 금액과 반대 → 제안만 (토스 무부호 % 대응)
     const pAmt = (it.profitAmount != null && isFinite(Number(it.profitAmount))) ? Number(it.profitAmount) : null;
-    const pct = (it.profitPct != null && isFinite(Number(it.profitPct))) ? Number(it.profitPct) : null;
     if (pAmt != null && pct != null && pAmt !== 0 && pct !== 0 && Math.sign(pAmt) !== Math.sign(pct)) {
-      console.warn(`🔧 ${it.name}: 수익률 부호(${pct}%)가 손익 금액(${pAmt})과 반대 → ${-pct}%로 교정`);
-      it._rawPct = pct; // 🔧 원본 보존
-      it.profitPct = -pct;
-      it._pctFixed = true;
+      it._suggestPct = -pct;
+      console.warn(`⚠️ ${it.name}: 수익률 부호(${pct}%)가 손익 금액(${pAmt})과 반대 — 제안값 ${-pct}% (자동 적용 안 함)`);
     }
   });
 
-  // ④ 매입가 없는 화면(토스 등) 복원 — 평가금액·수익률·수량으로 원화 평단 역산
-  //    매입원가 = 평가금액 ÷ (1+수익률), 평단 = 원가 ÷ 수량
+  // ④ 매입가가 캡처에 아예 없는 화면(토스 등)만 채움 — 평가금액 ÷ (1+수익률) ÷ 수량
+  //    (있는 값을 바꾸는 게 아니라 빈 값을 채우는 것. 검토 화면에 역산임을 표시)
   mergedItems.forEach(it => {
     const q = num(it.qty);
     const evalAmt = num(it.evalAmount);
@@ -10676,14 +10718,14 @@ async function processAssetCapture(input) {
     if (!(num(it.price) > 0) && q > 0 && evalAmt > 0 && pct != null && pct > -100) {
       const cost = evalAmt / (1 + pct / 100);
       it.price = Math.round(cost / q);
-      it.priceCurrency = 'KRW'; // 원화 평가금액에서 역산했으므로 원화 평단
+      it.priceCurrency = 'KRW';
       it._priceDerived = true;
-      console.log(`🔧 ${it.name}: 매입가 없음 → 평가금액·수익률로 평단 ${it.price.toLocaleString()}원 역산`);
+      console.log(`ℹ️ ${it.name}: 캡처에 매입가 없음 → 평가금액·수익률로 평단 ${it.price.toLocaleString()}원 역산 (검토 화면에 표시)`);
     }
   });
 
-  const fixedCount = mergedItems.filter(it => it._priceFixed || it._qtyFixed || it._pctFixed || it._priceDerived).length;
-  if (fixedCount > 0) showToast(`🔧 ${fixedCount}개 종목 숫자를 자동 교정·복원했어요`);
+  const warnCount = mergedItems.filter(it => it._suggestPrice != null || it._suggestQty != null || it._suggestPct != null).length;
+  if (warnCount > 0) showToast(`⚠️ ${warnCount}개 종목 숫자가 서로 안 맞아요 — 검토 화면에서 확인하세요`);
 
   showToast(`✅ ${files.length}장에서 ${mergedItems.length}개 자산 추출됨`);
   openAssetReviewModal(mergedItems);
@@ -10771,7 +10813,7 @@ async function processAutobuyCapture(input) {
           { text: prompt },
           { inline_data: { mime_type: mimeType, data: base64 } },
         ]}],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 4096 },
+        generationConfig: { temperature: 0, maxOutputTokens: 4096 },
       };
       let txt = '';
       let lastErr = '';
@@ -11270,7 +11312,7 @@ async function processFixedCapture(input) {
             { text: prompt },
             { inline_data: { mime_type: mimeType, data: base64 } },
           ]}],
-          generationConfig: { temperature: 0.1, maxOutputTokens: 2000 },
+          generationConfig: { temperature: 0, maxOutputTokens: 2000 },
         }),
       });
       const data = await res.json();
@@ -11483,13 +11525,16 @@ function openAssetReviewModal(items) {
             <div style="font-size:11px; color:var(--text-secondary); margin-top:4px;">
               = <b>${totalStr}</b>
             </div>
-            ${(it._rawQty != null || it._rawPrice != null || it._rawPct != null) ? `
-            <div style="font-size:10px; color:#B45309; margin-top:4px; padding:6px 8px; background:#FEF7E8; border-radius:6px; line-height:1.5;">
-              🔧 <b>자동 교정됨</b> (수학 검증):
-              ${it._rawQty != null ? ` 수량 ${it._rawQty}→<b>${it.qty}</b>` : ''}
-              ${it._rawPrice != null ? ` 매입가 ${it._rawPrice}→<b>${it.price}</b>` : ''}
-              ${it._rawPct != null ? ` 수익률 ${it._rawPct}%→<b>${it.profitPct}%</b>` : ''}
-              <br>캡처 숫자와 다르면 위 입력칸에서 직접 고치세요.
+            ${(it._suggestQty != null || it._suggestPrice != null || it._suggestPct != null) ? `
+            <div style="font-size:10px; color:#B45309; margin-top:4px; padding:6px 8px; background:#FEF7E8; border-radius:6px; line-height:1.6;">
+              ⚠️ <b>숫자가 서로 안 맞아요</b> (캡처값 그대로 두었어요):
+              ${it._suggestQty != null ? `<br>· 수량 ${it.qty} — 매입금액 기준으론 <b>${it._suggestQty}</b>
+                <button onclick="window._assetReviewItems[${i}].qty=${it._suggestQty}; delete window._assetReviewItems[${i}]._suggestQty; window._renderAssetReview();" style="margin-left:4px; padding:2px 8px; border:none; border-radius:6px; background:#B45309; color:white; font-size:10px; font-weight:600; cursor:pointer; font-family:inherit;">적용</button>` : ''}
+              ${it._suggestPrice != null ? `<br>· 매입가 ${it.price} — 현재가·수익률 기준으론 <b>${it._suggestPrice}</b>
+                <button onclick="window._assetReviewItems[${i}].price=${it._suggestPrice}; delete window._assetReviewItems[${i}]._suggestPrice; window._renderAssetReview();" style="margin-left:4px; padding:2px 8px; border:none; border-radius:6px; background:#B45309; color:white; font-size:10px; font-weight:600; cursor:pointer; font-family:inherit;">적용</button>` : ''}
+              ${it._suggestPct != null ? `<br>· 수익률 ${it.profitPct}% — 손익 금액 부호 기준으론 <b>${it._suggestPct}%</b>
+                <button onclick="window._assetReviewItems[${i}].profitPct=${it._suggestPct}; delete window._assetReviewItems[${i}]._suggestPct; window._renderAssetReview();" style="margin-left:4px; padding:2px 8px; border:none; border-radius:6px; background:#B45309; color:white; font-size:10px; font-weight:600; cursor:pointer; font-family:inherit;">적용</button>` : ''}
+              <br><span style="opacity:0.8;">증권사 화면과 대조해서 맞는 쪽을 선택하세요. 입력칸에서 직접 수정도 가능.</span>
             </div>` : ''}
             ${it._priceDerived ? `
             <div style="font-size:10px; color:var(--text-info); margin-top:4px; padding:6px 8px; background:var(--bg-info); border-radius:6px; line-height:1.5;">
