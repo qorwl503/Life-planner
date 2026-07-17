@@ -7873,6 +7873,25 @@ function recalcAssetFromLots(asset) {
 // 자산에 lot 추가 헬퍼 — 🔧 만든 lot을 반환 (가계부 지출 ↔ 매수기록 연동용)
 function addAssetLot(asset, lot) {
   if (!asset.lots) asset.lots = [];
+
+  // 🔧🔧 [근본 수정 · 청약 리셋 방지] 납입형 자산은 잔액 = 기준잔액(initialBalance) + lot 합계로 계산되는데,
+  //    기준잔액이 확정 안 된 자산에 lot이 추가되면 recalc가 잔액을 'lot 합계만'으로 리셋해버렸음
+  //    (청약이 자동납입 때마다 새로 시작되던 근본 원인).
+  //    → 어떤 경로로 lot이 추가되든, 넣기 '전'에 (현재 표시 잔액 − 기존 lot 합)을 기준잔액으로 자동 확정.
+  if (['청약', '예적금', '현금', '부동산'].includes(asset.type)) {
+    const lotSum = (asset.lots || []).reduce((s, l) => {
+      const exact = Number(l.exactAmount) || 0;
+      return s + (exact > 0 ? exact : (Number(l.qty) || 0) * (Number(l.price) || 0));
+    }, 0);
+    const shown = Number(asset.price) || 0;
+    if (!(Number(asset.initialBalance) > 0) && shown > lotSum) {
+      asset.initialBalance = shown - lotSum;
+      if (asset.type === '청약' && !(Number(asset.initialRounds) > 0)) {
+        asset.initialRounds = Math.max(0, (Number(asset.rounds) || 0) - (asset.lots || []).length);
+      }
+      console.log(`🛡️ ${asset.name} 기준잔액 자동 확정: ${(shown - lotSum).toLocaleString()}원 (리셋 방지)`);
+    }
+  }
   const newLot = {
     id: Date.now() + Math.random(),
     source: lot.source || '수동 입력',
@@ -8352,10 +8371,10 @@ async function recalcAutoBuy(assetId, fixedId) {
         <button class="modal-save" onclick="runRecalcAutoBuy(${assetId}, ${fixedId})">재계산</button>
       </div>
 
-      <div style="padding:10px 12px; background:var(--bg-warning); border-radius:var(--radius-md); margin-bottom:14px; font-size:11px; color:var(--text-warning); line-height:1.6;">
-        ⚠️ <b>${asset.name}</b>의 자동매수 회차를 처음부터 다시 계산해요.<br>
-        현재 수량·평단가가 초기화되고, 시작일부터 오늘까지 회차가 그날 시세로 다시 채워집니다.<br>
-        (수동 입력 기록은 그대로 유지돼요)
+      <div style="padding:10px 12px; background:var(--bg-info); border-radius:var(--radius-md); margin-bottom:14px; font-size:11px; color:var(--text-info); line-height:1.6;">
+        🔄 <b>${asset.name}</b>의 자동매수 회차를 <b>시작일 이후 구간만</b> 다시 계산해요.<br>
+        시작일 이전 기록·수동 입력·캡처 기준점은 <b>그대로 유지</b>되고,<br>
+        시작일~오늘 회차만 그날 시세로 다시 채워집니다. (기존 보유가 사라지지 않아요)
       </div>
 
       <div class="field">
@@ -8395,12 +8414,35 @@ async function runRecalcAutoBuy(assetId, fixedId) {
   closeModal();
   showToast('🔄 재계산 중...');
 
+  // 🔧 [안전장치 1] 재계산은 대량 변경 — 직전 상태를 복원 지점으로 자동 백업
+  if (typeof autoBackupBeforeRestore === 'function') autoBackupBeforeRestore();
+
+  // 🔧 [안전장치 2 · 잔액 보호] 납입형(청약 등): initialBalance가 없으면
+  //    (현재 잔액 − 자동매수 lot 합계)를 기준 잔액으로 먼저 확정 — 재계산해도 기존 납입액이 안 날아감
+  if (['청약', '예적금', '현금', '부동산'].includes(asset.type) && !(Number(asset.initialBalance) > 0)) {
+    const autoSum = (asset.lots || []).filter(l => l.autoBuy).reduce((s, l) => {
+      const exact = Number(l.exactAmount) || 0;
+      return s + (exact > 0 ? exact : (Number(l.qty) || 0) * (Number(l.price) || 0));
+    }, 0);
+    const baseBal = Math.max(0, (Number(asset.price) || 0) - autoSum);
+    if (baseBal > 0) {
+      asset.initialBalance = baseBal;
+      if (asset.type === '청약' && !(Number(asset.initialRounds) > 0)) {
+        asset.initialRounds = Math.max(0, (Number(asset.rounds) || 0) - (asset.lots || []).filter(l => l.autoBuy).length);
+      }
+      console.log(`🛡️ ${asset.name} 재계산 전 기준 잔액 확정: ${baseBal.toLocaleString()}원`);
+    }
+  }
+
   // 자산 초기화
-  // 🔧 이 자동매수가 만든 lot만 제거 — 안 그러면 재계산할 때마다 회차·수량이 누적됨.
-  //    수동 입력 lot이나 다른 자동매수 lot은 보존.
+  // 🔧🔧 [근본 수정] '시작일 이후' 회차만 제거하고 다시 계산 — 시작일 이전 기록은 절대 안 건드림.
+  //    (예전엔 이 자동매수의 모든 기록을 지우고 시작일부터 채워서, 시작일을 늦게 잡으면
+  //     과거 보유가 통째로 사라졌음. 이제 리셋이 구조적으로 불가능)
   if (asset.lots && asset.lots.length > 0) {
     asset.lots = asset.lots.filter(l =>
-      !(l.autoBuy && (l.fixedId != null ? l.fixedId === fixed.id : l.source === `🤖 ${fixed.name}`))
+      !(l.autoBuy && !l.isCaptureBase &&
+        (l.date || '') >= startDateStr &&
+        (l.fixedId != null ? l.fixedId === fixed.id : l.source === `🤖 ${fixed.name}`))
     );
   }
   // 남은 lot(수동·타 자동매수)으로 자산 값 재계산. 없으면 0.
@@ -8485,11 +8527,30 @@ async function runRecalcAutoBuy(assetId, fixedId) {
     }
   }
 
-  console.log(`🔄 ${asset.name} 재계산: ${startDateStr} ~ 오늘, ${occurDates.length}회 발생일 (시세 ${currPrice}원/주)`);
+  // 🔧 [안전장치 3] 캡처/토스 기준점(isCaptureBase·assetBaseDate)이 있으면 그 이전 회차는 재계산 금지
+  //    — 기준 lot에 이미 그 시점까지의 보유분이 들어있어서, 다시 채우면 중복·리셋 사고가 남
+  let baseCut = null;
+  (asset.lots || []).forEach(l => {
+    if (l.isCaptureBase && l.date && (!baseCut || l.date > baseCut)) baseCut = l.date;
+  });
+  if (asset.assetBaseDate && (!baseCut || asset.assetBaseDate > baseCut)) baseCut = asset.assetBaseDate;
+  let effectiveOccur = occurDates;
+  if (baseCut) {
+    effectiveOccur = occurDates.filter(d => dateKey(d.getFullYear(), d.getMonth(), d.getDate()) > baseCut);
+    if (effectiveOccur.length < occurDates.length) {
+      console.log(`🛡️ ${asset.name} 기준점(${baseCut}) 이전 ${occurDates.length - effectiveOccur.length}회는 재계산 제외`);
+    }
+  }
 
-  // 기존 자동매수 lot만 제거 (수동 입력 lot는 유지)
+  console.log(`🔄 ${asset.name} 재계산: ${startDateStr} ~ 오늘, ${effectiveOccur.length}회 발생일 (시세 ${currPrice}원/주)`);
+
+  // 🔧 '이 자동매수'의 '시작일 이후' lot만 제거 (시작일 이전·수동·캡처 기준점·다른 자동매수는 유지)
   if (asset.lots) {
-    asset.lots = asset.lots.filter(lot => !lot.autoBuy);
+    asset.lots = asset.lots.filter(lot =>
+      !(lot.autoBuy && !lot.isCaptureBase &&
+        (lot.date || '') >= startDateStr &&
+        (lot.fixedId != null ? lot.fixedId === fixed.id : lot.source === `🤖 ${fixed.name}`))
+    );
   }
 
   // 모든 발생일에 대해 lot 추가
@@ -8499,7 +8560,7 @@ async function runRecalcAutoBuy(assetId, fixedId) {
   const feeMul = 1 + feeRate / 100;
   let histTickerForAvg = asset.ticker ? asset.ticker.trim() : '';
   if (/^\d{6}$/.test(histTickerForAvg)) histTickerForAvg = histTickerForAvg + '.KS';
-  occurDates.forEach((d) => {
+  effectiveOccur.forEach((d) => {
     const dStr = dateKey(d.getFullYear(), d.getMonth(), d.getDate());
 
     // 🔧 그 회차 날짜의 매입가 — 정기매수는 장중 체결되므로 '그날 평균가' 우선
@@ -8544,7 +8605,7 @@ async function runRecalcAutoBuy(assetId, fixedId) {
   fixed.lastBuyDate = occurDates.length > 0 ? occurDates[occurDates.length - 1].toISOString() : null;
   saveData();
 
-  showToast(`✅ ${occurDates.length}회 재계산 완료 (총 ${asset.qty}주)`);
+  showToast(`✅ ${effectiveOccur.length}회 재계산 완료 (총 ${asset.qty}주)`);
   closeModal();
   renderAsset();
 }
@@ -11879,10 +11940,15 @@ function saveAssetReviewItems() {
         //    합산하면 두 배가 됨. lot을 비우고 잔액을 캡처값으로 덮어쓴다.
         if (['청약','예적금','현금','부동산'].includes(existing.type)) {
           const capBalance = Math.round(qty * price > 0 ? qty * price : price);
+          const curRounds = Number(existing.rounds) || 0; // 🔧 회차 보존 — lots를 비우면 회차가 initialRounds로 떨어지므로 먼저 확정
           existing.lots = []; // 기존 자동납입 lot 제거 — 캡처 잔액에 이미 다 포함됨
           existing.qty = 1;
           existing.price = capBalance;
           existing.initialBalance = capBalance;
+          if (existing.type === '청약') {
+            existing.initialRounds = curRounds;
+            existing.rounds = curRounds;
+          }
           mergedCount++;
         } else {
           addAssetLot(existing, {
@@ -20199,6 +20265,12 @@ function saveAsset() {
   if (isStockLikeType(type)) {
     asset.priceCurrency = priceCurrency;
     if (priceCurrency === 'USD' && avgBuyRate > 0) asset.avgBuyRate = avgBuyRate;
+  }
+  // 🔧 [근본 수정] 납입형은 생성 시점 잔액을 기준잔액으로 즉시 확정
+  //    (안 하면 이후 첫 자동납입/가계부 연동 때 잔액이 lot 합계로 리셋되는 시한폭탄이 됨)
+  if (['청약', '예적금', '현금', '부동산'].includes(type)) {
+    asset.initialBalance = price;
+    if (type === '청약') asset.initialRounds = rounds || 0;
   }
   if (propType) asset.propType = propType;
   if (subType) asset.subType = subType;
