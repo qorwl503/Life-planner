@@ -19152,6 +19152,13 @@ function getAllocationBuckets7() {
 // 자산 1개의 원화 평가액
 //  우선순위: 라이브 시세 > OCR 평가금액 > lots 원가 합 > qty*price
 function assetKrwValue(a) {
+  // 🔧 납입형(청약·예적금·현금·부동산)은 '잔액(price)'이 곧 평가금액 — 시세가 없는 자산이라
+  //    오래된 캡처 스냅샷(evalAmount)이 잔액을 덮어쓰면 안 됨.
+  //    (잔액은 기준잔액+납입 lot 불변식으로 항상 최신 → 이것만 신뢰)
+  if (['청약', '예적금', '현금', '부동산'].includes(a.type)) {
+    return (Number(a.qty) || 1) * (Number(a.price) || 0);
+  }
+
   const live = liveAssetData[a.id];
   if (live?.hasLive && Number(live.krwValue) > 0) return Number(live.krwValue);
 
@@ -20974,6 +20981,11 @@ function updateAsset(id) {
       a.rounds = rounds;
       a.initialRounds = rounds;
     }
+    // 🔧 낡은 캡처/평가 스냅샷 청소 — 납입형은 잔액이 곧 평가금액인데,
+    //    과거 스냅샷(evalAmount 등)이 남아 있으면 상세 화면 등에서 옛 값이 보일 수 있음
+    delete a.evalAmount;
+    delete a.ocrSnapshot;
+    delete a.brokerSnapshot;
   } else {
     a.qty = userInputQty;
     a.price = userInputPrice;
