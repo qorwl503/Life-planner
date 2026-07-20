@@ -10332,6 +10332,7 @@ async function processAssetCapture(input) {
   setStatus('<div style="display:flex; align-items:center; justify-content:center; gap:6px;"><div class="spinner" style="width:12px; height:12px;"></div>분석 준비 중...</div>', '분석 준비 중...');
 
   const allItems = [];
+  const allTranscripts = []; // 🔧 AI 필사본 저장 (검토 화면에서 원문 확인용)
   let successCount = 0;
   let failCount = 0;
   let lastFailReason = ''; // 🔧 마지막 실패 사유
@@ -10571,7 +10572,10 @@ async function processAssetCapture(input) {
         throw new Error('인식 결과가 비어있어요. 자산 목록이 보이는 화면을 캡처해주세요');
       }
     }
-    if (parsed.transcript) console.log('📝 OCR 필사본:\n' + parsed.transcript); // 오인식 추적용
+    if (parsed.transcript) {
+      console.log('📝 OCR 필사본:\n' + parsed.transcript); // 오인식 추적용
+      allTranscripts.push(`[이미지 ${idx + 1}/${files.length}]\n${parsed.transcript}`);
+    }
     console.log('📊 파싱된 자산:', parsed.items);
     parsed.items?.forEach((it, i) => {
       console.log(`  ${i+1}. ${it.name}: qty=${it.qty} (typeof: ${typeof it.qty}), price=${it.price}`);
@@ -10797,6 +10801,7 @@ async function processAssetCapture(input) {
   const warnCount = mergedItems.filter(it => it._suggestPrice != null || it._suggestQty != null || it._suggestPct != null).length;
   if (warnCount > 0) showToast(`⚠️ ${warnCount}개 종목 숫자가 서로 안 맞아요 — 검토 화면에서 확인하세요`);
 
+  window._ocrTranscripts = allTranscripts; // 🔧 검토 화면에서 원문 확인용
   showToast(`✅ ${files.length}장에서 ${mergedItems.length}개 자산 추출됨`);
   openAssetReviewModal(mergedItems);
 
@@ -11729,7 +11734,17 @@ function openAssetReviewModal(items) {
         🔗 <b>합산</b>: 기존에 더하기 · ✨ <b>신규</b>: 새 자산으로
       </div>
 
-      <div id="asset-review-list" style="max-height:60vh; overflow-y:auto;"></div>
+      ${(window._ocrTranscripts && window._ocrTranscripts.length) ? `
+      <details style="margin-bottom:12px; border:0.5px solid var(--border-tertiary); border-radius:8px; overflow:hidden;">
+        <summary style="padding:9px 12px; font-size:11px; color:var(--text-secondary); cursor:pointer; background:var(--bg-secondary); list-style:none;">
+          🔍 AI가 화면을 읽은 원문 보기 <span style="color:var(--text-tertiary);">(숫자가 이상하면 여기서 확인)</span>
+        </summary>
+        <pre style="margin:0; padding:10px 12px; font-size:10px; line-height:1.5; color:var(--text-secondary); white-space:pre-wrap; word-break:break-all; max-height:180px; overflow-y:auto; font-family:monospace;">${escapeHTML(window._ocrTranscripts.join('\n\n'))}</pre>
+        <div style="padding:8px 12px; font-size:10px; color:var(--text-tertiary); background:var(--bg-secondary); line-height:1.5;">위 원문이 실제 화면과 맞는데 아래 숫자가 틀렸다면 → 배치(칸) 오류예요. 원문 자체가 틀렸다면 → 읽기 오류. 이 내용을 알려주시면 정확히 고쳐드려요.</div>
+      </details>
+      ` : ''}
+
+      <div id="asset-review-list" style="max-height:55vh; overflow-y:auto;"></div>
     </div>
   `;
   modal.classList.add('show');
