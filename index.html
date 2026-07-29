@@ -20551,6 +20551,20 @@ function renderAssetFormFields(type) {
     `;
   }
 
+  // 🔧 자산 → 가계부 연동 체크박스
+  //    예전엔 저장 직후 confirm() 팝업으로 물어봐서 놓치기 쉬웠음 → 폼 안에 항상 보이게 (기본 켜짐)
+  const _buyableTypes = ['국내주식','미국주식','국내ETF','해외ETF','주식','ETF','펀드','채권','금','달러','예적금','청약','부동산'];
+  if (_buyableTypes.includes(type)) {
+    html += `
+      <label style="display:flex; align-items:flex-start; gap:10px; padding:11px 12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:12px; cursor:pointer;">
+        <input type="checkbox" id="a-to-expense" checked style="width:18px; height:18px; flex-shrink:0; margin-top:1px; cursor:pointer;" />
+        <div>
+          <div style="font-size:12px; font-weight:600;">💸 가계부 변동지출에도 기록</div>
+          <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px; line-height:1.5;">오늘 새로 산 거면 체크 그대로. 기존 보유분을 옮겨 적는 거면 해제하세요.</div>
+        </div>
+      </label>`;
+  }
+
   // 공통 - 메모
   html += `
     <div class="field">
@@ -20636,7 +20650,7 @@ function getNotePlaceholder(type) {
   return map[type] || '';
 }
 
-function saveAsset() {
+async function saveAsset() {
   const type = document.querySelector('#atype-grid .cat-btn.active')?.dataset.t || '주식';
   const nameEl = document.getElementById('a-name');
   const bankEl = document.getElementById('a-bank');
@@ -20700,27 +20714,40 @@ function saveAsset() {
 
   assets.push(asset);
 
-  // 🔧 자산→변동지출 연동: 방금 산 것이면 가계부 지출에도 기록할지 물어본다.
-  //    (변동지출에서 자산 적으면 연동되는데, 반대(자산→지출)는 안 되던 비대칭 해결.
-  //     기존 보유분 입력일 수도 있으므로 항상 묻고, 동의할 때만 기록 — 지출 부풀림 방지)
+  // 🔧 자산→변동지출 연동 — 폼의 체크박스로 처리 (예전 confirm 팝업은 놓치기 쉬워서 교체)
   const investCats2 = ['주식','국내주식','미국주식','ETF','국내ETF','해외ETF','펀드','채권','금','달러','예적금','청약','부동산'];
-  const buyAmt = Math.round((Number(qty) || 0) * (Number(price) || 0));
-  if (investCats2.includes(type) && buyAmt > 0) {
-    const ok = confirm(`이번에 새로 구매한 거라면 가계부 변동지출에도 ${buyAmt.toLocaleString()}원을 기록할까요?\n\n확인: 지출로 기록 (오늘 새로 산 경우)\n취소: 자산만 추가 (기존 보유분 입력)`);
-    if (ok) {
-      const today2 = todayKey();
+  const toExpenseEl = document.getElementById('a-to-expense');
+  if (investCats2.includes(type) && toExpenseEl && toExpenseEl.checked) {
+    // 🔧 달러 단가 종목은 원화로 환산해야 함 (예전엔 $349를 349원으로 기록하던 버그)
+    let buyAmt = 0;
+    if (isStockLikeType(type) && priceCurrency === 'USD') {
+      let rate = avgBuyRate > 0 ? avgBuyRate : 0;
+      if (!rate) {
+        try { rate = await getUSDKRW(); } catch (e) { rate = 0; }
+      }
+      if (!rate) rate = 1400; // 환율 조회 실패 시 대략값 (검토 후 수정 가능)
+      buyAmt = Math.round((Number(qty) || 0) * (Number(price) || 0) * rate);
+    } else {
+      buyAmt = Math.round((Number(qty) || 0) * (Number(price) || 0));
+    }
+
+    if (buyAmt > 0) {
       budget.expenses = budget.expenses || [];
       budget.expenses.push({
-        id: Date.now() + 2,
+        id: Date.now() + Math.random(),
         amt: buyAmt,
         cat: type,
-        memo: name,
-        dateKey: today2,
-        date: new Date().getDate(),
+        memo: `${name} 매수`,
+        dateKey: todayKey(),
         type: 'expense',
         linkedAssetName: name,
+        linkedAssetId: asset.id,
       });
-      showToast(`${name} 추가 + 변동지출 ${buyAmt.toLocaleString()}원 기록됨`);
+      saveData();
+      showToast(`${name} 추가 + 가계부 지출 ${buyAmt.toLocaleString()}원 기록됨`);
+      closeModal();
+      render(); // 가계부도 갱신되도록 전체 렌더
+      return;
     }
   }
 
