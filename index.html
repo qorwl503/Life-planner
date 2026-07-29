@@ -995,6 +995,11 @@ const STORAGE_KEY = 'life-planner-v5-local'; // 오프라인 캐시용
 const DEPOSIT_TYPES = ['청약', '예적금', '현금', '부동산', '퇴직금'];
 function isDepositAsset(type) { return DEPOSIT_TYPES.includes(type); }
 
+// 🔧 '내 돈이 나가서 사는' 자산 = 가계부 변동지출 연동 대상 (한 곳에서 관리)
+//    제외: 현금(내 돈이 이동만 한 것), 퇴직금(회사가 쌓아주는 돈) → 지출로 잡으면 가계부가 틀어짐
+const EXPENSE_LINK_TYPES = ['국내주식','미국주식','국내ETF','해외ETF','주식','ETF','펀드','채권','금','달러','예적금','청약','부동산','기타'];
+function isExpenseLinkable(type) { return EXPENSE_LINK_TYPES.includes(type); }
+
 function loadLocal() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -1613,16 +1618,71 @@ function todoGroup(dateKeyStr) {
   return 'later';
 }
 
+// 🔁 반복 할일(루틴) — 이 할일이 그 날짜에 반복 발생하는지
+//    repeat: { type: 'daily'|'weekly'|'monthly', dows:[0~6], day:1~31, until:'YYYY-MM-DD'|null }
+//    원본 할일 1건만 저장하고, 각 날짜의 완료 여부는 doneDates에 날짜별로 기록 (데이터 폭증 없음)
+function todoRepeatsOn(t, dayK) {
+  const r = t && t.repeat;
+  if (!r || !r.type || !t.dateKey) return false;
+  if (dayK < t.dateKey) return false;                 // 시작 전
+  if (r.until && dayK > r.until) return false;        // 종료 후
+  const d = new Date(dayK + 'T00:00:00');
+  if (isNaN(d.getTime())) return false;
+
+  if (r.type === 'daily') return true;
+  if (r.type === 'weekly') {
+    const dows = Array.isArray(r.dows) ? r.dows : [];
+    return dows.length === 0 ? true : dows.includes(d.getDay());
+  }
+  if (r.type === 'monthly') {
+    const dim = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    const target = Math.min(Number(r.day) || Number(t.dateKey.slice(8, 10)) || 1, dim);
+    return d.getDate() === target;
+  }
+  return false;
+}
+
+// 반복 할일의 '그 날짜' 완료 여부
+function todoDoneOn(t, dayK) {
+  if (t.repeat) return !!(t.doneDates && t.doneDates[dayK]);
+  return !!t.done;
+}
+
 // 🔧 기간 일정 지원 — 할일이 특정 날짜에 '걸쳐 있는지' (여행 등 시작~종료 기간)
+//    + 반복 할일(루틴)도 함께 판정
 function todoOnDay(t, dayK) {
   if (!t || !dayK) return false;
   if (t.dateKey === dayK) return true;
-  return !!(t.endDateKey && t.dateKey && t.dateKey <= dayK && dayK <= t.endDateKey);
+  if (t.endDateKey && t.dateKey && t.dateKey <= dayK && dayK <= t.endDateKey) return true;
+  return todoRepeatsOn(t, dayK);
+}
+
+// 🔁 반복 규칙을 사람이 읽는 라벨로 ("매주 월·수·금")
+function repeatLabel(t) {
+  const r = t && t.repeat;
+  if (!r || !r.type) return '';
+  const names = ['일','월','화','수','목','금','토'];
+  if (r.type === 'daily') return '매일';
+  if (r.type === 'weekly') {
+    const dows = Array.isArray(r.dows) && r.dows.length ? r.dows : [];
+    return dows.length ? `매주 ${dows.slice().sort().map(i => names[i]).join('·')}` : '매주';
+  }
+  if (r.type === 'monthly') {
+    const day = Number(r.day) || Number((t.dateKey || '').slice(8, 10)) || 1;
+    return `매월 ${day}일`;
+  }
+  return '';
 }
 
 // 🔧 기간 일정 지원 — 그룹 분류 (기간 중이면 past가 아니라 today로)
 function todoGroupOf(t) {
   if (!t) return 'today';
+  // 🔁 반복 할일은 '밀린 일정'으로 쌓이지 않음 (매일/매주 계속 돌아오는 것이므로)
+  if (t.repeat && t.repeat.type) {
+    const tk = todayKey();
+    if (t.repeat.until && t.repeat.until < tk) return 'past'; // 반복 종료됨
+    return todoRepeatsOn(t, tk) ? 'today' : 'week';
+  }
   if (t.endDateKey && t.dateKey) {
     const tk = todayKey();
     if (t.dateKey <= tk && tk <= t.endDateKey) return 'today'; // 기간 진행 중
@@ -2505,12 +2565,14 @@ function getEventsForDay(d) {
       const total = Math.round((new Date(ey, em-1, ed) - new Date(sy, sm-1, sd)) / 86400000) + 1;
       const dayN = Math.round((new Date(ky, km-1, kd) - new Date(sy, sm-1, sd)) / 86400000) + 1;
       sub = `${t.tag} · ${dayN}일차/${total}일`;
+    } else if (t.repeat && t.repeat.type) {
+      sub = `${t.tag} · 🔁 ${repeatLabel(t)}`;
     }
     events.push({
       type: 'todo',
       title: t.title,
       sub,
-      done: t.done,
+      done: todoDoneOn(t, k), // 🔁 반복은 그 날짜의 완료 여부
       todoId: t.id,
       amount: t.money
     });
@@ -2861,8 +2923,8 @@ function renderTodo() {
 
   // 할일 통계 계산 - 세분화
   const todayK = todayKey();
-  const todayTodos = todos.filter(t => todoOnDay(t, todayK)); // 🔧 기간 일정(여행 등) 진행 중이면 오늘에 포함
-  const todayDone = todayTodos.filter(t => t.done).length;
+  const todayTodos = todos.filter(t => todoOnDay(t, todayK)); // 🔧 기간 일정·반복 할일 포함
+  const todayDone = todayTodos.filter(t => todoDoneOn(t, todayK)).length;
 
   const pastTodos = todos.filter(t => todoGroupOf(t) === 'past' && !t.done); // 🔧 기간 진행 중이면 밀린 일정 아님
   const pastDoneAll = todos.filter(t => t.dateKey && t.dateKey < todayK && t.done);
@@ -2984,8 +3046,8 @@ function renderTodo() {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
     const dK = dateKey(d.getFullYear(), d.getMonth(), d.getDate());
-    const dayTodos = todos.filter(t => todoOnDay(t, dK) && !t.done); // 🔧 기간 일정은 기간 내 모든 날에 표시
-    const dayDone = todos.filter(t => todoOnDay(t, dK) && t.done);
+    const dayTodos = todos.filter(t => todoOnDay(t, dK) && !todoDoneOn(t, dK)); // 🔧 기간·반복 일정 포함
+    const dayDone = todos.filter(t => todoOnDay(t, dK) && todoDoneOn(t, dK));
     const isToday = dK === todayK;
     const isWeekend = i === 0 || i === 6; // 일 또는 토
     const isPast = dK < todayK;
@@ -3007,8 +3069,8 @@ function renderTodo() {
     if (dayTodos.length === 0 && dayDone.length === 0) {
       html += `<div style="padding:8px 12px; color:var(--text-tertiary); font-size:11px; opacity:0.6;">${isToday ? '오늘 할일 없음 ✨' : '없음'}</div>`;
     } else {
-      sortTodosByTime(dayTodos).forEach(t => html += renderTodoRow(t));
-      sortTodosByTime(dayDone).forEach(t => html += renderTodoRow(t));
+      sortTodosByTime(dayTodos).forEach(t => html += renderTodoRow(t, dK));
+      sortTodosByTime(dayDone).forEach(t => html += renderTodoRow(t, dK));
     }
   }
 
@@ -3148,16 +3210,20 @@ function bulkDeletePastTodos() {
   renderTodo();
 }
 
-function renderTodoRow(t) {
-  return `<div class="todo-row ${t.done?'done':''}" onclick="editTodo(${t.id})">
-    <div class="todo-check ${t.done?'done':''}" onclick="event.stopPropagation(); toggleTodo(${t.id}, event)">
-      ${t.done ? '<i class="ti ti-check"></i>' : ''}
+function renderTodoRow(t, dayK) {
+  // 🔁 반복 할일은 '그 날짜'의 완료 여부를 따로 본다 (dayK 없으면 원래 날짜/오늘 기준)
+  const dk = dayK || t.dateKey || todayKey();
+  const isDone = todoDoneOn(t, dk);
+  return `<div class="todo-row ${isDone?'done':''}" onclick="editTodo(${t.id})">
+    <div class="todo-check ${isDone?'done':''}" onclick="event.stopPropagation(); toggleTodo(${t.id}, event, '${dk}')">
+      ${isDone ? '<i class="ti ti-check"></i>' : ''}
     </div>
     <div style="flex:1; min-width:0;">
       <div class="todo-title">${t.time ? `<span style="color:var(--text-info); font-weight:700; margin-right:5px;">${escapeHTML(t.time)}</span>` : ''}${escapeHTML(t.title)}</div>
       <div class="todo-meta">
         <span class="tag">${escapeHTML(t.tag)}</span>
-        ${t.endDateKey ? `<span class="meta-mini" style="font-size:11px; color:#7D6FC9; font-weight:600;"><i class="ti ti-calendar-event" style="font-size:11px;"></i> ${periodLabel(t)}</span>`
+        ${t.repeat && t.repeat.type ? `<span class="meta-mini" style="font-size:11px; color:#2D8A6E; font-weight:600;"><i class="ti ti-repeat" style="font-size:11px;"></i> ${repeatLabel(t)}</span>`
+          : t.endDateKey ? `<span class="meta-mini" style="font-size:11px; color:#7D6FC9; font-weight:600;"><i class="ti ti-calendar-event" style="font-size:11px;"></i> ${periodLabel(t)}</span>`
           : t.dateKey ? `<span class="meta-mini" style="font-size:11px;"><i class="ti ti-calendar" style="font-size:11px;"></i> ${dateLabel(t.dateKey)}</span>` : ''}
         ${t.due ? `<span class="meta-mini">~ ${escapeHTML(t.due)}</span>` : ''}
         ${t.money ? `<span class="meta-money"><i class="ti ti-wallet" style="font-size:11px;"></i> ${escapeHTML(t.money)}</span>` : ''}
@@ -3186,10 +3252,26 @@ function editTodo(id) {
   openTodoModal(null, t); // 수정 모드
 }
 
-function toggleTodo(id, e) {
+function toggleTodo(id, e, dayK) {
   if (e) e.stopPropagation();
   const t = todos.find(x => x.id === id);
   if (t) {
+    // 🔁 반복 할일 — 원본은 그대로 두고 '그 날짜'의 완료 여부만 기록 (내일 또 나타나야 하므로)
+    if (t.repeat && t.repeat.type) {
+      const dk = dayK || todayKey();
+      if (!t.doneDates) t.doneDates = {};
+      if (t.doneDates[dk]) {
+        delete t.doneDates[dk];
+        showToast('미완료로 되돌림');
+      } else {
+        t.doneDates[dk] = Date.now();
+        haptic();
+        showToast(`"${t.title}" 완료! 🔁`);
+      }
+      saveData();
+      renderTodo();
+      return;
+    }
     t.done = !t.done;
     if (t.done) {
       t.completedAt = Date.now();
@@ -4237,6 +4319,9 @@ function renderWorkout() {
   }
   html += `</div>`;
 
+  // ⚖️ 체중 기록 카드
+  html += renderWeightCard();
+
   // 오늘 빠른 체크 (현재 월일 때만) - 세그먼트 컨트롤
   if (isWorkoutCurrentMonth()) {
     const todayLog = workoutLog[todayKey()];
@@ -4554,6 +4639,12 @@ function openWorkoutModal(dateKeyStr) {
         </div>
       </div>
 
+      <div class="field">
+        <div class="field-label">⚖️ 체중 (kg) <span style="font-size:10px; color:var(--text-tertiary);">(선택)</span></div>
+        <input type="number" id="w-weight" step="0.1" inputmode="decimal" placeholder="${(() => { const a = getWeightEntries(); return a.length ? a[a.length-1].kg.toFixed(1) : '예: 68.5'; })()}" value="${log.weight || ''}" />
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px;">운동하면서 같이 재면 추이 그래프에 쌓여요.</div>
+      </div>
+
       <div style="padding:10px 12px; background:var(--bg-info); border-radius:var(--radius-md); font-size:11px; color:var(--text-info); line-height:1.5;">
         <i class="ti ti-info-circle" style="font-size:13px; vertical-align:-1px;"></i>
         Apple Fitness/건강 앱에서 활동 칼로리를 확인하고 옮겨 적어주세요. 시간이 흐를수록 본인 데이터가 쌓여서 평균을 자동으로 추천해드릴게요.
@@ -4565,13 +4656,188 @@ function openWorkoutModal(dateKeyStr) {
   modal.classList.add('show');
 }
 
+// ===== ⚖️ 체중 기록 =====
+// workoutLog[날짜].weight 에 저장 — 이미 저장·동기화·백업이 되는 구조라 별도 배선이 필요 없음.
+// (운동 안 한 날도 체중만 기록 가능. done:false 로 남아 운동 통계엔 안 잡힘)
+function getWeightEntries() {
+  return Object.entries(workoutLog || {})
+    .filter(([k, v]) => v && Number(v.weight) > 0)
+    .map(([k, v]) => ({ date: k, kg: Number(v.weight) }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function renderWeightCard() {
+  const all = getWeightEntries();
+  const goal = Number(settings.weightGoal) || 0;
+
+  if (all.length === 0) {
+    return `
+      <div style="background:white; border:0.5px solid var(--border-tertiary); border-radius:14px; padding:14px; margin-bottom:14px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-size:13px; font-weight:600;">⚖️ 체중</span>
+          <button onclick="openWeightModal()" style="border:none; background:var(--bg-info); color:var(--text-info); padding:5px 12px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">+ 기록</button>
+        </div>
+        <div style="font-size:11px; color:var(--text-tertiary); margin-top:8px; line-height:1.6;">
+          체중을 기록하면 변화 추이가 그래프로 보여요.<br>운동 일수와 함께 보면 효과를 확인하기 좋아요.
+        </div>
+      </div>`;
+  }
+
+  const last = all[all.length - 1];
+  const first = all[0];
+  const diffAll = last.kg - first.kg;
+  // 최근 30일 대비
+  const d30 = new Date(); d30.setDate(d30.getDate() - 30);
+  const k30 = dateKey(d30.getFullYear(), d30.getMonth(), d30.getDate());
+  const prior = all.filter(x => x.date <= k30);
+  const base30 = prior.length ? prior[prior.length - 1] : first;
+  const diff30 = last.kg - base30.kg;
+
+  const pts = all.slice(-30);
+  const w = 280, h = 92, padL = 34, padR = 8, padT = 8, padB = 18;
+  const innerW = w - padL - padR, innerH = h - padT - padB;
+  const kgs = pts.map(p => p.kg);
+  let minK = Math.min(...kgs), maxK = Math.max(...kgs);
+  if (goal > 0) { minK = Math.min(minK, goal); maxK = Math.max(maxK, goal); }
+  const range = (maxK - minK) || 1;
+  const xy = pts.map((p, i) => ({
+    x: padL + (pts.length > 1 ? (i / (pts.length - 1)) * innerW : innerW / 2),
+    y: padT + innerH - ((p.kg - minK) / range) * innerH,
+    ...p,
+  }));
+  const line = xy.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+  const area = `M ${xy[0].x.toFixed(1)} ${(padT+innerH).toFixed(1)} ${xy.map(p => `L ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ')} L ${xy[xy.length-1].x.toFixed(1)} ${(padT+innerH).toFixed(1)} Z`;
+  const down = diff30 <= 0;
+  const col = down ? '#2D9B5A' : '#E06666';
+  const goalY = goal > 0 ? (padT + innerH - ((goal - minK) / range) * innerH) : null;
+
+  const fmtD = (n) => `${n > 0 ? '+' : ''}${n.toFixed(1)}kg`;
+
+  return `
+    <div style="background:white; border:0.5px solid var(--border-tertiary); border-radius:14px; padding:14px; margin-bottom:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <span style="font-size:13px; font-weight:600;">⚖️ 체중</span>
+        <button onclick="openWeightModal()" style="border:none; background:var(--bg-info); color:var(--text-info); padding:5px 12px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">+ 기록</button>
+      </div>
+
+      <div style="display:flex; align-items:baseline; gap:9px; margin-bottom:4px;">
+        <span style="font-size:26px; font-weight:800; letter-spacing:-0.5px;">${last.kg.toFixed(1)}<span style="font-size:13px; font-weight:600; color:var(--text-tertiary);">kg</span></span>
+        <span style="font-size:12px; font-weight:700; color:${col};">${fmtD(diff30)}</span>
+        <span style="font-size:10px; color:var(--text-tertiary);">30일 대비</span>
+      </div>
+      <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:8px;">
+        최초 ${first.kg.toFixed(1)}kg → 현재 ${last.kg.toFixed(1)}kg (${fmtD(diffAll)}) · ${last.date} 측정
+        ${goal > 0 ? ` · 목표 ${goal.toFixed(1)}kg까지 ${Math.abs(last.kg - goal).toFixed(1)}kg` : ''}
+      </div>
+
+      ${pts.length >= 2 ? `
+      <svg width="100%" viewBox="0 0 ${w} ${h}" style="display:block;">
+        <text x="${padL-4}" y="${padT+4}" font-size="8" fill="#999" text-anchor="end">${maxK.toFixed(1)}</text>
+        <text x="${padL-4}" y="${padT+innerH+3}" font-size="8" fill="#999" text-anchor="end">${minK.toFixed(1)}</text>
+        ${goalY != null ? `<line x1="${padL}" y1="${goalY.toFixed(1)}" x2="${w-padR}" y2="${goalY.toFixed(1)}" stroke="#9C8FE0" stroke-width="1" stroke-dasharray="3 3" />
+          <text x="${w-padR}" y="${(goalY-3).toFixed(1)}" font-size="8" fill="#9C8FE0" text-anchor="end">목표</text>` : ''}
+        <path d="${area}" fill="${down ? 'rgba(45,155,90,0.12)' : 'rgba(224,102,102,0.12)'}" />
+        <path d="${line}" stroke="${col}" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+        ${xy.map((p, i) => (i === xy.length - 1 || pts.length <= 12)
+          ? `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${i === xy.length-1 ? 3.5 : 2.5}" fill="${col}" stroke="white" stroke-width="1.5" />` : '').join('')}
+        <text x="${xy[0].x.toFixed(1)}" y="${h-4}" font-size="8" fill="#999" text-anchor="start">${pts[0].date.slice(5).replace('-','/')}</text>
+        <text x="${xy[xy.length-1].x.toFixed(1)}" y="${h-4}" font-size="8" fill="#999" text-anchor="end">${last.date.slice(5).replace('-','/')}</text>
+      </svg>` : `<div style="font-size:10px; color:var(--text-tertiary); padding:6px 0;">2번 이상 기록하면 추이 그래프가 나와요.</div>`}
+
+      <div style="font-size:10px; color:var(--text-tertiary); margin-top:6px;">총 ${all.length}회 기록</div>
+    </div>`;
+}
+
+function openWeightModal(dKey) {
+  const k = dKey || todayKey();
+  const cur = Number(workoutLog[k]?.weight) || 0;
+  const all = getWeightEntries();
+  const lastKg = all.length ? all[all.length - 1].kg : 0;
+  const goal = Number(settings.weightGoal) || 0;
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">취소</button>
+        <h2>⚖️ 체중 기록</h2>
+        <button class="modal-save" onclick="saveWeight()">저장</button>
+      </div>
+
+      <div class="field">
+        <div class="field-label">📅 날짜</div>
+        <input type="date" id="wt-date" value="${k}" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit;" />
+      </div>
+
+      <div class="field">
+        <div class="field-label">체중 (kg)</div>
+        <input type="number" id="wt-kg" value="${cur > 0 ? cur : ''}" step="0.1" placeholder="${lastKg > 0 ? lastKg.toFixed(1) : '예: 68.5'}" inputmode="decimal" />
+        ${lastKg > 0 ? `<div style="display:flex; gap:5px; margin-top:7px;">
+          ${[-0.5, -0.1, 0.1, 0.5].map(d => `<button type="button" onclick="const el=document.getElementById('wt-kg'); el.value=((Number(el.value)||${lastKg})+(${d})).toFixed(1);" class="chip" style="flex:1; font-size:11px;">${d > 0 ? '+' : ''}${d}</button>`).join('')}
+        </div>
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:6px;">최근 기록: ${lastKg.toFixed(1)}kg</div>` : ''}
+      </div>
+
+      <div class="field">
+        <div class="field-label">🎯 목표 체중 (선택)</div>
+        <input type="number" id="wt-goal" value="${goal > 0 ? goal : ''}" step="0.1" placeholder="예: 65" inputmode="decimal" />
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px;">그래프에 목표선이 표시돼요.</div>
+      </div>
+
+      ${cur > 0 ? `<button onclick="deleteWeight('${k}')" style="width:100%; padding:12px; margin-top:6px; border:none; border-radius:var(--radius-md); background:var(--bg-danger); color:var(--text-danger); font-size:13px; font-weight:500; cursor:pointer; font-family:inherit;">
+        <i class="ti ti-trash" style="font-size:14px; vertical-align:-2px;"></i> 이 날 체중 기록 삭제
+      </button>` : ''}
+    </div>`;
+  modal.classList.add('show');
+}
+
+function saveWeight() {
+  const k = document.getElementById('wt-date')?.value || todayKey();
+  const kg = Number(document.getElementById('wt-kg')?.value) || 0;
+  const goal = Number(document.getElementById('wt-goal')?.value) || 0;
+
+  if (!(kg > 0)) { showToast('체중을 입력해주세요'); return; }
+  if (kg < 20 || kg > 300) { showToast('체중 값을 확인해주세요 (20~300kg)'); return; }
+
+  // 🔧 기존 운동 기록을 덮어쓰지 않고 체중만 추가 (merge)
+  if (!workoutLog[k]) workoutLog[k] = { done: false };
+  workoutLog[k].weight = Math.round(kg * 10) / 10;
+
+  if (goal > 0) settings.weightGoal = Math.round(goal * 10) / 10;
+  else delete settings.weightGoal;
+
+  saveData();
+  closeModal();
+  showToast(`⚖️ ${kg.toFixed(1)}kg 기록됨`);
+  if (currentTab === 'workout') renderWorkout();
+}
+
+function deleteWeight(k) {
+  if (!confirm('이 날 체중 기록을 삭제할까요?')) return;
+  if (workoutLog[k]) {
+    delete workoutLog[k].weight;
+    // 운동 기록도 없는 빈 껍데기면 날짜 자체를 정리
+    const v = workoutLog[k];
+    if (!v.done && !v.note && !v.kcal && !v.minutes && !v.marked) delete workoutLog[k];
+  }
+  saveData();
+  closeModal();
+  showToast('삭제됨');
+  if (currentTab === 'workout') renderWorkout();
+}
+
 function saveWorkout(key) {
   const done = modal.querySelector('.toggle').classList.contains('on');
   const note = document.getElementById('w-note').value.trim();
   const min = Number(document.getElementById('w-min').value) || 0;
   const kcal = Number(document.getElementById('w-kcal').value) || 0;
+  const wt = Number(document.getElementById('w-weight')?.value) || 0;
 
+  // 🔧 기존 체중 기록을 보존하며 갱신 (예전엔 객체를 통째로 교체해 체중이 날아갔음)
+  const prevWeight = Number(workoutLog[key]?.weight) || 0;
   workoutLog[key] = { done, note, minutes: min, kcal };
+  const useWeight = wt > 0 ? wt : prevWeight;
+  if (useWeight > 0) workoutLog[key].weight = Math.round(useWeight * 10) / 10;
   saveData();
   showToast(done ? '운동 기록 저장됨' : '체크 해제됨');
   closeModal();
@@ -8290,28 +8556,55 @@ function addManualLot(assetId, lotIdToEdit) {
         <input type="date" id="lot-date" value="${existingLot?.date || todayKey()}" />
       </div>
 
-      <div class="field">
+      <div class="field" id="lot-qty-field">
         <div class="field-label">수량 (체결수량, 주)</div>
         <input type="number" id="lot-qty" value="${existingLot?.qty || ''}" step="0.0001" placeholder="예: 9" />
       </div>
 
-      <!-- 🔧 입력 방식 선택: 총 체결금액 (정확) vs 1주당 가격 -->
+      <!-- 🔧 입력 방식 선택: 총 체결금액 / 1주당 단가 / 금액으로 매수(수량 자동) -->
       <div class="field">
-        <div class="field-label">금액 입력 방식</div>
-        <div style="display:flex; gap:4px;" id="lot-mode">
-          <button type="button" class="chip active" data-mode="total">총 체결금액 (정확)</button>
-          <button type="button" class="chip" data-mode="unit">1주당 단가</button>
+        <div class="field-label">입력 방식</div>
+        <div style="display:flex; gap:4px; flex-wrap:wrap;" id="lot-mode">
+          <button type="button" class="chip active" data-mode="total">수량+총액</button>
+          <button type="button" class="chip" data-mode="unit">수량+단가</button>
+          <button type="button" class="chip" data-mode="amount">💰 금액으로</button>
+        </div>
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:5px; line-height:1.5;" id="lot-mode-desc">
+          증권사 화면의 체결수량과 총 체결금액을 그대로 넣으면 1원도 안 틀려요.
         </div>
       </div>
 
       <div class="field" id="lot-total-field">
         <div class="field-label">총 체결금액 (원) <span style="font-size:10px; color:var(--text-tertiary);">증권사 화면 그대로</span></div>
-        <input type="number" id="lot-total-input" value="${existingLot ? Math.round(Number(existingLot.qty) * Number(existingLot.price)) : ''}" placeholder="예: 247635" />
+        <div style="display:flex; gap:6px;">
+          <input type="number" id="lot-total-input" value="${existingLot ? Math.round(Number(existingLot.qty) * Number(existingLot.price)) : ''}" placeholder="예: 247635" style="flex:1;" />
+          ${calcBtn('lot-total-input')}
+        </div>
       </div>
 
       <div class="field" id="lot-unit-field" style="display:none;">
         <div class="field-label">1주당 단가 (원)</div>
-        <input type="number" id="lot-price" value="${existingLot?.price || ''}" placeholder="0" />
+        <div style="display:flex; gap:6px;">
+          <input type="number" id="lot-price" value="${existingLot?.price || ''}" placeholder="0" style="flex:1;" />
+          ${calcBtn('lot-price')}
+        </div>
+      </div>
+
+      <!-- 💰 금액으로 매수: 총액 + 단가 → 소수점 수량 자동 계산 -->
+      <div class="field" id="lot-amount-field" style="display:none;">
+        <div class="field-label">매수 금액 (원)</div>
+        <div style="display:flex; gap:6px;">
+          <input type="number" id="lot-amount-total" placeholder="예: 100000" style="flex:1;" />
+          ${calcBtn('lot-amount-total')}
+        </div>
+        <div class="field-label" style="margin-top:10px;">그때 1주당 가격 (원)</div>
+        <div style="display:flex; gap:6px;">
+          <input type="number" id="lot-amount-price" placeholder="예: 443000" step="0.01" style="flex:1;" />
+          ${calcBtn('lot-amount-price')}
+        </div>
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:5px; line-height:1.5;">
+          소수점 수량은 자동으로 계산돼요 (수량 칸은 안 채워도 됩니다).
+        </div>
       </div>
 
       <div class="field">
@@ -8324,7 +8617,7 @@ function addManualLot(assetId, lotIdToEdit) {
         <input type="text" id="lot-note" value="${escapeAttr(existingLot?.note || '')}" placeholder="추가 메모" />
       </div>
 
-      ${!isEdit && ['주식','국내주식','미국주식','ETF','국내ETF','해외ETF','펀드','채권','금','달러'].includes(asset.type) ? `
+      ${!isEdit && isExpenseLinkable(asset.type) ? `
       <label style="display:flex; align-items:flex-start; gap:10px; padding:11px 12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:12px; cursor:pointer;">
         <input type="checkbox" id="lot-to-expense" checked style="width:18px; height:18px; flex-shrink:0; margin-top:1px; cursor:pointer;" />
         <div>
@@ -8347,16 +8640,30 @@ function addManualLot(assetId, lotIdToEdit) {
     const priceEl = document.getElementById('lot-price');
     const previewEl = document.getElementById('lot-total-val');
 
+    const amtTotalEl = document.getElementById('lot-amount-total');
+    const amtPriceEl = document.getElementById('lot-amount-price');
+    const descEl = document.getElementById('lot-mode-desc');
+
+    const fmtQty = (n) => Number(n).toFixed(4).replace(/\.?0+$/, '');
+
     const updatePreview = () => {
       const q = Number(qtyEl.value) || 0;
       const mode = document.querySelector('#lot-mode .chip.active')?.dataset.mode || 'total';
       if (mode === 'total') {
         const total = Number(totalEl.value) || 0;
         const unit = q > 0 ? total / q : 0;
-        previewEl.innerHTML = `${q}주 · 총 ${total.toLocaleString()}원<br>→ 1주당 평균 <b>${unit.toLocaleString(undefined,{maximumFractionDigits:2})}원</b>`;
+        previewEl.innerHTML = `${fmtQty(q)}주 · 총 ${total.toLocaleString()}원<br>→ 1주당 평균 <b>${unit.toLocaleString(undefined,{maximumFractionDigits:2})}원</b>`;
+      } else if (mode === 'amount') {
+        // 💰 금액으로 매수 — 소수점 수량 자동 계산
+        const total = Number(amtTotalEl?.value) || 0;
+        const p = Number(amtPriceEl?.value) || 0;
+        const calcQty = p > 0 ? total / p : 0;
+        previewEl.innerHTML = calcQty > 0
+          ? `${total.toLocaleString()}원 ÷ ${p.toLocaleString()}원<br>→ <b>${fmtQty(calcQty)}주</b> 매수로 기록`
+          : `금액과 1주당 가격을 넣으면 소수점 수량이 자동 계산돼요`;
       } else {
         const p = Number(priceEl.value) || 0;
-        previewEl.innerHTML = `${q}주 × ${p.toLocaleString()}원<br>→ 총 <b>${(q*p).toLocaleString()}원</b>`;
+        previewEl.innerHTML = `${fmtQty(q)}주 × ${p.toLocaleString()}원<br>→ 총 <b>${Math.round(q*p).toLocaleString()}원</b>`;
       }
     };
 
@@ -8368,6 +8675,17 @@ function addManualLot(assetId, lotIdToEdit) {
         const mode = b.dataset.mode;
         document.getElementById('lot-total-field').style.display = mode === 'total' ? 'block' : 'none';
         document.getElementById('lot-unit-field').style.display = mode === 'unit' ? 'block' : 'none';
+        document.getElementById('lot-amount-field').style.display = mode === 'amount' ? 'block' : 'none';
+        // 금액 모드에선 수량을 자동 계산하므로 수량 입력칸을 숨김
+        const qf = document.getElementById('lot-qty-field');
+        if (qf) qf.style.display = mode === 'amount' ? 'none' : 'block';
+        if (descEl) {
+          descEl.textContent = mode === 'amount'
+            ? '“10만원어치” 처럼 금액으로 샀을 때 — 수량은 자동 계산돼요.'
+            : mode === 'unit'
+              ? '체결수량과 1주당 단가를 넣으면 총액이 계산돼요.'
+              : '증권사 화면의 체결수량과 총 체결금액을 그대로 넣으면 1원도 안 틀려요.';
+        }
         updatePreview();
       });
     });
@@ -8375,6 +8693,8 @@ function addManualLot(assetId, lotIdToEdit) {
     qtyEl.addEventListener('input', updatePreview);
     totalEl.addEventListener('input', updatePreview);
     priceEl.addEventListener('input', updatePreview);
+    if (amtTotalEl) amtTotalEl.addEventListener('input', updatePreview);
+    if (amtPriceEl) amtPriceEl.addEventListener('input', updatePreview);
     updatePreview();
   }, 50);
 }
@@ -8384,7 +8704,7 @@ function saveLot(assetId, lotIdToEdit) {
   if (!asset) return;
 
   const source = document.getElementById('lot-source').value.trim() || '수동 입력';
-  const qty = Number(document.getElementById('lot-qty').value);
+  let qty = Number(document.getElementById('lot-qty').value); // 💰 금액 모드에선 자동 계산됨
   const date = document.getElementById('lot-date').value;
   const fxDiscount = Number(document.getElementById('lot-fx').value) || null;
   const note = document.getElementById('lot-note').value.trim();
@@ -8393,7 +8713,18 @@ function saveLot(assetId, lotIdToEdit) {
   const mode = document.querySelector('#lot-mode .chip.active')?.dataset.mode || 'total';
   let price = 0;
   let totalAmount = 0;
-  if (mode === 'total') {
+  if (mode === 'amount') {
+    // 💰 금액으로 매수 — "10만원어치" 처럼 금액 지정 매수. 소수점 수량 자동 계산
+    totalAmount = Number(document.getElementById('lot-amount-total')?.value) || 0;
+    const unitPrice = Number(document.getElementById('lot-amount-price')?.value) || 0;
+    if (!totalAmount || !unitPrice) {
+      showToast('매수 금액과 1주당 가격을 입력해주세요');
+      return;
+    }
+    qty = parseFloat((totalAmount / unitPrice).toFixed(4));
+    if (!(qty > 0)) { showToast('수량이 0이에요. 금액·가격을 확인해주세요'); return; }
+    price = unitPrice;
+  } else if (mode === 'total') {
     totalAmount = Number(document.getElementById('lot-total-input').value);
     if (!qty || !totalAmount) {
       showToast('수량과 총 체결금액을 입력해주세요');
@@ -9672,8 +10003,14 @@ function quickAddAmt(targetId, amt, clear) {
 }
 
 // 빠른 금액 버튼 HTML 생성 (공통)
+// 🔧 계산기(🧮)를 기본 포함으로 — 금액 입력하는 모든 곳에서 바로 계산 가능
+//    (예전엔 includeCalc 기본값이 false라 25곳 중 어디에도 계산기가 안 붙어 있었음)
+function calcBtn(targetId, extraStyle = '') {
+  return `<button type="button" onclick="window._calcReturnTarget='${targetId}'; window._calcCurrentExpr=document.getElementById('${targetId}')?.value||''; openCalcModal(false);" title="계산기" style="padding:0 12px; border:0.5px solid var(--border-tertiary); background:var(--bg-secondary); border-radius:var(--radius-md); font-size:16px; cursor:pointer; font-family:inherit; ${extraStyle}">🧮</button>`;
+}
+
 function quickAmtButtons(targetId, options = {}) {
-  const { includeCalc = false, marginTop = '-8px' } = options;
+  const { includeCalc = true, marginTop = '-8px' } = options;
   return `
     <div style="display:flex; gap:5px; margin-top:${marginTop}; margin-bottom:12px; flex-wrap:wrap;">
       <button type="button" onclick="quickAddAmt('${targetId}', 1000)" style="flex:1; padding:6px 0; border:0.5px solid var(--border-tertiary); background:white; border-radius:7px; font-size:11px; color:var(--text-secondary); cursor:pointer; font-family:inherit;">+1천</button>
@@ -10157,7 +10494,7 @@ function openExpenseModal(forDateKey) {
           oninput="document.getElementById('amt-val').textContent = (Number(this.value) || 0).toLocaleString();" />
         <button onclick="openCalculator()" style="border:0.5px solid var(--border-tertiary); background:var(--bg-secondary); color:var(--text-primary); padding:0 14px; border-radius:var(--radius-md); font-size:18px; cursor:pointer; font-family:inherit;" title="계산기">🧮</button>
       </div>
-      ${quickAmtButtons('amt-input')}
+      ${quickAmtButtons('amt-input', { includeCalc: false })}
 
       <div class="field">
         <div class="field-label">📅 날짜</div>
@@ -10551,6 +10888,170 @@ function deleteExpense(id) {
   showToast(willDeleteAsset ? `삭제됨 (자산 "${linkedAsset.name}" 포함)` : '삭제됨');
   closeModal();
   renderMoney();
+}
+
+// ===== 🔍 가계부에 안 올라간 투자 지출 찾기 (누락 점검) =====
+// 자산에는 있는데 가계부엔 없는 '매수 기록'을 찾아 한 번에 반영한다.
+// 제외 규칙 (이중 계상 방지):
+//  · 자동매수 lot → 고정지출로 이미 투자 계상됨
+//  · 캡처 기준점 lot → '그 시점 총 보유량' 스냅샷이지 개별 매수가 아님
+//  · 현금·퇴직금 → 내 지출이 아님
+//  · 같은 날·같은 금액의 투자 지출이 이미 있으면 → 이미 기록한 것으로 간주
+function findUnrecordedPurchases(monthsBack, usdRate) {
+  let cutoff = '';
+  if (monthsBack > 0) {
+    const d = new Date();
+    d.setMonth(d.getMonth() - monthsBack);
+    cutoff = dateKey(d.getFullYear(), d.getMonth(), d.getDate());
+  }
+
+  const linkedIds = new Set();
+  const dateAmtKeys = new Set();
+  (budget.expenses || []).forEach(e => {
+    if (e.linkedLotId != null) linkedIds.add(String(e.linkedLotId));
+    if (e.type !== 'income' && isExpenseLinkable(e.cat)) {
+      dateAmtKeys.add(`${e.dateKey}|${Math.round(Number(e.amt) || 0)}`);
+    }
+  });
+
+  const out = [];
+  (assets || []).forEach(a => {
+    if (!isExpenseLinkable(a.type)) return;
+    const lots = (a.lots || []).filter(l => !l.autoBuy && !l.isCaptureBase);
+
+    if (lots.length > 0) {
+      lots.forEach(l => {
+        const amt = Math.round(Number(l.exactAmount) || (Number(l.qty) || 0) * (Number(l.price) || 0));
+        if (!(amt > 0)) return;
+        const d = l.date || '';
+        if (cutoff && d < cutoff) return;
+        if (linkedIds.has(String(l.id))) return;              // 이미 연결된 지출 있음
+        if (dateAmtKeys.has(`${d}|${amt}`)) return;           // 같은 날 같은 금액 이미 기록됨
+        const q = Number(l.qty) || 0;
+        out.push({
+          assetId: a.id, lotId: l.id, name: a.name, type: a.type, date: d, amt,
+          sub: `${q > 0 ? (Number.isInteger(q) ? q : q.toFixed(4).replace(/\.?0+$/, '')) + '주 · ' : ''}${l.source || '수동 입력'}`,
+          _checked: true,
+        });
+      });
+    } else {
+      // 매수 기록이 없는 자산 = '자산 추가'로만 만든 것 → 등록 시점 기준 1건으로 제안
+      let amt = Math.round((Number(a.qty) || 0) * (Number(a.price) || 0));
+      if (a.priceCurrency === 'USD') {
+        amt = Math.round(amt * (Number(a.avgBuyRate) || usdRate || 1400));
+      }
+      if (!(amt > 0)) return;
+      const ts = Math.floor(Number(a.id));
+      const dt = (ts > 1000000000000 && ts < 4000000000000) ? new Date(ts) : null;
+      const d = dt ? dateKey(dt.getFullYear(), dt.getMonth(), dt.getDate()) : todayKey();
+      if (cutoff && d < cutoff) return;
+      if (dateAmtKeys.has(`${d}|${amt}`)) return;
+      out.push({
+        assetId: a.id, lotId: null, name: a.name, type: a.type, date: d, amt,
+        sub: '자산 등록분 (매수 기록 없음 · 날짜는 등록 시점 추정)',
+        _checked: false, // 날짜가 추정이라 기본 해제
+      });
+    }
+  });
+
+  out.sort((x, y) => (y.date || '').localeCompare(x.date || ''));
+  return out;
+}
+
+async function openReconcileModal(monthsBack) {
+  const months = (monthsBack === undefined) ? 12 : monthsBack;
+  let usdRate = 0;
+  try { usdRate = await getUSDKRW(); } catch (e) {}
+  const list = findUnrecordedPurchases(months, usdRate);
+  window._reconcileItems = list;
+  window._reconcileMonths = months;
+  renderReconcileModal();
+}
+
+function renderReconcileModal() {
+  const list = window._reconcileItems || [];
+  const months = window._reconcileMonths ?? 12;
+  const rangeBtn = (m, label) => `<button onclick="openReconcileModal(${m})" class="chip ${months === m ? 'active' : ''}" style="font-size:11px;">${label}</button>`;
+  const checkedSum = list.filter(x => x._checked).reduce((s, x) => s + x.amt, 0);
+  const checkedCnt = list.filter(x => x._checked).length;
+
+  const rows = list.map((x, i) => `
+    <label style="display:flex; align-items:center; gap:9px; padding:10px 8px; border-bottom:0.5px solid var(--border-tertiary); cursor:pointer;">
+      <input type="checkbox" ${x._checked ? 'checked' : ''} onchange="window._reconcileItems[${i}]._checked=this.checked; renderReconcileModal();" style="width:18px; height:18px; flex-shrink:0;" />
+      <div style="flex:1; min-width:0;">
+        <div style="font-size:12px; font-weight:600;">${escapeHTML(x.name)} <span style="font-size:10px; color:var(--text-tertiary); font-weight:400;">${escapeHTML(x.type)}</span></div>
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">${x.date} · ${escapeHTML(x.sub)}</div>
+      </div>
+      <div style="font-size:12px; font-weight:700; white-space:nowrap;">${x.amt.toLocaleString()}원</div>
+    </label>`).join('');
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+        <h2>🔍 빠진 투자 지출</h2>
+        <button class="modal-save" onclick="applyReconcile()">반영</button>
+      </div>
+
+      <div style="padding:10px 12px; background:var(--bg-info); border-radius:10px; margin-bottom:10px; font-size:11px; color:var(--text-info); line-height:1.6;">
+        자산에는 있는데 <b>가계부엔 없는 매수</b>를 찾았어요.<br>
+        <span style="opacity:0.85;">자동매수분은 고정지출로 이미 잡혀서 제외돼요. 캡처 보정한 종목은 개별 이력이 합쳐져 안 나올 수 있어요.</span>
+      </div>
+
+      <div style="display:flex; gap:5px; margin-bottom:10px; flex-wrap:wrap;">
+        ${rangeBtn(3, '최근 3개월')}${rangeBtn(6, '6개월')}${rangeBtn(12, '1년')}${rangeBtn(0, '전체')}
+      </div>
+
+      ${list.length === 0 ? `
+        <div style="padding:26px 14px; text-align:center; color:var(--text-tertiary); font-size:12px; line-height:1.7;">
+          ✅ 이 기간엔 빠진 투자 지출이 없어요.<br>
+          <span style="font-size:11px;">(자동매수분은 이미 가계부에 반영돼 있어요)</span>
+        </div>` : `
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:9px 11px; background:var(--bg-secondary); border-radius:8px; margin-bottom:8px;">
+          <span style="font-size:11px; color:var(--text-secondary);">선택 ${checkedCnt}건 / 전체 ${list.length}건</span>
+          <span style="font-size:13px; font-weight:800;">${checkedSum.toLocaleString()}원</span>
+        </div>
+        <div style="border:0.5px solid var(--border-tertiary); border-radius:10px; overflow:hidden; max-height:48vh; overflow-y:auto;">
+          ${rows}
+        </div>
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:9px; line-height:1.6;">
+          반영하면 각 <b>매수일 날짜</b>로 가계부 변동지출(투자)에 기록돼요. 되돌릴 수 있게 반영 직전 자동 백업됩니다.
+        </div>`}
+    </div>`;
+  modal.classList.add('show');
+}
+
+function applyReconcile() {
+  const picked = (window._reconcileItems || []).filter(x => x._checked);
+  if (picked.length === 0) { showToast('선택된 항목이 없어요'); return; }
+
+  const sum = picked.reduce((s, x) => s + x.amt, 0);
+  if (!confirm(`${picked.length}건 · 총 ${sum.toLocaleString()}원을 가계부에 기록할까요?\n\n각 매수일 날짜로 '투자' 지출로 들어갑니다.`)) return;
+
+  if (typeof autoBackupBeforeRestore === 'function') autoBackupBeforeRestore(); // 되돌릴 지점 확보
+
+  budget.expenses = budget.expenses || [];
+  picked.forEach(x => {
+    budget.expenses.push({
+      id: Date.now() + Math.random(),
+      amt: x.amt,
+      cat: x.type,
+      memo: `${x.name} 매수`,
+      dateKey: x.date,
+      type: 'expense',
+      linkedAssetName: x.name,
+      linkedAssetId: x.assetId,
+      linkedLotId: x.lotId || undefined,
+      _reconciled: true, // 누락 점검으로 추가된 항목 표시
+    });
+  });
+
+  delete window._reconcileItems;
+  saveData(true);
+  closeModal();
+  showToast(`✅ ${picked.length}건 · ${sum.toLocaleString()}원 가계부에 반영됨`);
+  render();
 }
 
 // ===== 📸 카드 캡처 OCR (Gemini Vision) =====
@@ -13057,12 +13558,53 @@ function openTodoModal(forDateKey, editTodoObj) {
       <div class="row-flex" style="margin-bottom:10px;">
         <div class="lb"><i class="ti ti-calendar-event"></i>기간 일정 <span style="font-size:10px; color:var(--text-tertiary);">(여행·출장 등)</span></div>
         <div class="toggle ${isEdit && editTodoObj.endDateKey ? 'on' : ''}" id="todo-period-toggle"
-          onclick="this.classList.toggle('on'); document.getElementById('todo-end-row').style.display = this.classList.contains('on') ? 'block' : 'none';"><div class="knob"></div></div>
+          onclick="this.classList.toggle('on'); document.getElementById('todo-end-row').style.display = this.classList.contains('on') ? 'block' : 'none'; if(this.classList.contains('on')){ const rt=document.getElementById('todo-repeat-toggle'); if(rt&&rt.classList.contains('on')){ rt.classList.remove('on'); document.getElementById('todo-repeat-row').style.display='none'; } }"><div class="knob"></div></div>
       </div>
       <div class="field" id="todo-end-row" style="display:${isEdit && editTodoObj.endDateKey ? 'block' : 'none'};">
         <div class="field-label">📅 종료일</div>
         <input type="date" id="todo-end-date" value="${isEdit && editTodoObj.endDateKey ? editTodoObj.endDateKey : ''}" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit;" />
         <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px;">기간 중 매일 할일탭·캘린더에 표시돼요 (예: 여행 3일차/5일)</div>
+      </div>
+
+      <!-- 🔁 반복 할일 (루틴) — 매일/매주/매월 자동으로 다시 나타남 -->
+      <div class="row-flex" style="margin-bottom:10px;">
+        <div class="lb"><i class="ti ti-repeat"></i>반복 (루틴) <span style="font-size:10px; color:var(--text-tertiary);">(매주 분리수거 등)</span></div>
+        <div class="toggle ${isEdit && editTodoObj.repeat ? 'on' : ''}" id="todo-repeat-toggle"
+          onclick="this.classList.toggle('on'); toggleTodoRepeatUI();"><div class="knob"></div></div>
+      </div>
+      <div id="todo-repeat-row" style="display:${isEdit && editTodoObj.repeat ? 'block' : 'none'}; padding:11px 12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:12px;">
+        <div class="field-label" style="margin-bottom:6px;">반복 주기</div>
+        <div style="display:flex; gap:5px;" id="todo-repeat-type">
+          ${[['daily','매일'],['weekly','매주'],['monthly','매월']].map(([v, l]) => {
+            const cur = (isEdit && editTodoObj.repeat?.type) || 'weekly';
+            return `<button type="button" class="chip ${cur === v ? 'active' : ''}" data-r="${v}" style="flex:1;">${l}</button>`;
+          }).join('')}
+        </div>
+
+        <div id="todo-repeat-weekly" style="margin-top:10px;">
+          <div class="field-label" style="margin-bottom:6px;">요일 <span style="font-size:10px; color:var(--text-tertiary);">(여러 개 선택 가능)</span></div>
+          <div style="display:flex; gap:4px;" id="todo-repeat-dows">
+            ${['일','월','화','수','목','금','토'].map((n, i) => {
+              const sel = isEdit && Array.isArray(editTodoObj.repeat?.dows) ? editTodoObj.repeat.dows.includes(i) : false;
+              return `<button type="button" class="chip ${sel ? 'active' : ''}" data-d="${i}" style="flex:1; padding:8px 0; font-size:12px;">${n}</button>`;
+            }).join('')}
+          </div>
+        </div>
+
+        <div id="todo-repeat-monthly" style="margin-top:10px; display:none;">
+          <div class="field-label" style="margin-bottom:6px;">매월 며칠</div>
+          <input type="number" id="todo-repeat-day" min="1" max="31" value="${(isEdit && editTodoObj.repeat?.day) || ''}" placeholder="예: 25" />
+          <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px;">비우면 시작일의 날짜를 사용해요. 말일이 없는 달은 그 달 마지막 날로.</div>
+        </div>
+
+        <div style="margin-top:10px;">
+          <div class="field-label" style="margin-bottom:6px;">반복 종료일 <span style="font-size:10px; color:var(--text-tertiary);">(선택 — 비우면 계속)</span></div>
+          <input type="date" id="todo-repeat-until" value="${(isEdit && editTodoObj.repeat?.until) || ''}" style="width:100%; padding:10px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit;" />
+        </div>
+
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:9px; line-height:1.5;">
+          완료 체크는 <b>날짜별로 따로</b> 기록돼요. 오늘 완료해도 다음 반복일에 다시 나타납니다.
+        </div>
       </div>
 
       <div class="field">
@@ -13124,7 +13666,46 @@ function openTodoModal(forDateKey, editTodoObj) {
         b.classList.add('active');
       });
     });
+    // 🔁 반복 주기 선택 (매일/매주/매월)
+    document.querySelectorAll('#todo-repeat-type .chip').forEach(b => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('#todo-repeat-type .chip').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        syncTodoRepeatFields();
+      });
+    });
+    // 요일은 다중 선택
+    document.querySelectorAll('#todo-repeat-dows .chip').forEach(b => {
+      b.addEventListener('click', () => b.classList.toggle('active'));
+    });
+    syncTodoRepeatFields();
   }, 50);
+}
+
+// 🔁 반복 주기에 따라 요일/날짜 입력칸 표시 전환
+function syncTodoRepeatFields() {
+  const type = document.querySelector('#todo-repeat-type .chip.active')?.dataset.r || 'weekly';
+  const w = document.getElementById('todo-repeat-weekly');
+  const m = document.getElementById('todo-repeat-monthly');
+  if (w) w.style.display = type === 'weekly' ? 'block' : 'none';
+  if (m) m.style.display = type === 'monthly' ? 'block' : 'none';
+}
+
+// 🔁 반복 토글 — 기간 일정과는 동시에 못 쓰므로 서로 배타 처리
+function toggleTodoRepeatUI() {
+  const on = document.getElementById('todo-repeat-toggle')?.classList.contains('on');
+  const row = document.getElementById('todo-repeat-row');
+  if (row) row.style.display = on ? 'block' : 'none';
+  if (on) {
+    const pt = document.getElementById('todo-period-toggle');
+    if (pt && pt.classList.contains('on')) {
+      pt.classList.remove('on');
+      const er = document.getElementById('todo-end-row');
+      if (er) er.style.display = 'none';
+      showToast('기간 일정과 반복은 함께 쓸 수 없어 기간을 껐어요');
+    }
+    syncTodoRepeatFields();
+  }
 }
 
 function setTodoDate(preset) {
@@ -13157,6 +13738,25 @@ function saveTodo(editId) {
     if (endDateKeyVal <= dateKeyVal) { showToast('종료일은 시작일 다음날 이후여야 해요'); return; }
   }
 
+  // 🔁 반복 할일 (루틴)
+  const repeatOn = document.getElementById('todo-repeat-toggle')?.classList.contains('on');
+  let repeatVal = null;
+  if (repeatOn) {
+    const rType = document.querySelector('#todo-repeat-type .chip.active')?.dataset.r || 'weekly';
+    const until = document.getElementById('todo-repeat-until')?.value || null;
+    if (until && until < dateKeyVal) { showToast('반복 종료일이 시작일보다 빨라요'); return; }
+    repeatVal = { type: rType, until: until || null };
+    if (rType === 'weekly') {
+      const dows = Array.from(document.querySelectorAll('#todo-repeat-dows .chip.active'))
+        .map(x => Number(x.dataset.d));
+      if (dows.length === 0) { showToast('반복할 요일을 하나 이상 골라주세요'); return; }
+      repeatVal.dows = dows;
+    } else if (rType === 'monthly') {
+      const dayN = Number(document.getElementById('todo-repeat-day')?.value) || Number(dateKeyVal.slice(8, 10));
+      repeatVal.day = Math.min(31, Math.max(1, dayN));
+    }
+  }
+
   if (editId) {
     // 수정
     const t = todos.find(x => x.id === Number(editId));
@@ -13169,6 +13769,12 @@ function saveTodo(editId) {
       t.memo = memo;
       if (endDateKeyVal) t.endDateKey = endDateKeyVal;
       else delete t.endDateKey; // 토글 끄면 일반 할일로
+      if (repeatVal) {
+        t.repeat = repeatVal;
+        if (!t.doneDates) t.doneDates = {}; // 날짜별 완료 기록 (기존 기록 유지)
+      } else {
+        delete t.repeat; // 반복 끄면 일반 할일로 (완료 이력은 남겨둠)
+      }
     }
     showToast('수정됨');
   } else {
@@ -13184,8 +13790,13 @@ function saveTodo(editId) {
       done: false,
     };
     if (endDateKeyVal) newTodo.endDateKey = endDateKeyVal;
+    if (repeatVal) { newTodo.repeat = repeatVal; newTodo.doneDates = {}; }
     todos.unshift(newTodo);
-    showToast(endDateKeyVal ? `"${title}" 기간 일정 추가됨 (${periodLabel(newTodo)})` : `"${title}" 추가됨`);
+    showToast(
+      repeatVal ? `"${title}" 루틴 추가됨 (${repeatLabel(newTodo)}) 🔁`
+      : endDateKeyVal ? `"${title}" 기간 일정 추가됨 (${periodLabel(newTodo)})`
+      : `"${title}" 추가됨`
+    );
   }
   saveData();
   closeModal();
@@ -19913,6 +20524,18 @@ function openSettingsModal() {
           <i class="ti ti-refresh" style="color:var(--text-tertiary);"></i>
         </div>
       </button>
+      <!-- 🔍 가계부 누락 점검 -->
+      <button onclick="closeModal(); setTimeout(()=>openReconcileModal(12), 150);" style="width:100%; padding:14px; border:0.5px solid var(--border-tertiary); background:white; border-radius:var(--radius-md); cursor:pointer; font-family:inherit; text-align:left; margin-bottom:10px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-size:20px;">🔍</span>
+          <div style="flex:1;">
+            <div style="font-size:13px; font-weight:600;">가계부에 빠진 투자 지출 찾기</div>
+            <div style="font-size:11px; color:var(--text-tertiary); margin-top:1px;">자산엔 있는데 가계부엔 없는 매수를 한 번에 반영</div>
+          </div>
+          <i class="ti ti-search" style="color:var(--text-tertiary);"></i>
+        </div>
+      </button>
+
       <!-- 💾 데이터 백업 -->
       <button onclick="exportBackup()" style="width:100%; padding:14px; border:0.5px solid var(--border-tertiary); background:white; border-radius:var(--radius-md); cursor:pointer; font-family:inherit; text-align:left; margin-bottom:10px;">
         <div style="display:flex; align-items:center; gap:10px;">
@@ -20463,7 +21086,10 @@ function renderAssetFormFields(type) {
       <div class="field" style="display:flex; gap:8px;">
         <div style="flex:1.3;">
           <div class="field-label">월 적립액 (원)</div>
-          <input type="number" id="a-accrual-amt" placeholder="예: 300000" />
+          <div style="display:flex; gap:6px;">
+            <input type="number" id="a-accrual-amt" placeholder="예: 300000" style="flex:1;" />
+            ${calcBtn('a-accrual-amt')}
+          </div>
           <div style="font-size:10px; color:var(--text-tertiary); margin-top:3px;">비우면 자동 적립 안 함</div>
         </div>
         <div style="flex:1;">
@@ -20553,8 +21179,7 @@ function renderAssetFormFields(type) {
 
   // 🔧 자산 → 가계부 연동 체크박스
   //    예전엔 저장 직후 confirm() 팝업으로 물어봐서 놓치기 쉬웠음 → 폼 안에 항상 보이게 (기본 켜짐)
-  const _buyableTypes = ['국내주식','미국주식','국내ETF','해외ETF','주식','ETF','펀드','채권','금','달러','예적금','청약','부동산'];
-  if (_buyableTypes.includes(type)) {
+  if (isExpenseLinkable(type)) {
     html += `
       <label style="display:flex; align-items:flex-start; gap:10px; padding:11px 12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:12px; cursor:pointer;">
         <input type="checkbox" id="a-to-expense" checked style="width:18px; height:18px; flex-shrink:0; margin-top:1px; cursor:pointer;" />
@@ -20715,9 +21340,8 @@ async function saveAsset() {
   assets.push(asset);
 
   // 🔧 자산→변동지출 연동 — 폼의 체크박스로 처리 (예전 confirm 팝업은 놓치기 쉬워서 교체)
-  const investCats2 = ['주식','국내주식','미국주식','ETF','국내ETF','해외ETF','펀드','채권','금','달러','예적금','청약','부동산'];
   const toExpenseEl = document.getElementById('a-to-expense');
-  if (investCats2.includes(type) && toExpenseEl && toExpenseEl.checked) {
+  if (isExpenseLinkable(type) && toExpenseEl && toExpenseEl.checked) {
     // 🔧 달러 단가 종목은 원화로 환산해야 함 (예전엔 $349를 349원으로 기록하던 버그)
     let buyAmt = 0;
     if (isStockLikeType(type) && priceCurrency === 'USD') {
@@ -21248,7 +21872,10 @@ function editAsset(id) {
         <div class="field" style="display:flex; gap:8px;">
           <div style="flex:1.3;">
             <div class="field-label">월 적립액 (원)</div>
-            <input type="number" id="e-accrual-amt" value="${Number(_acc.amount) > 0 ? _acc.amount : ''}" placeholder="예: 300000" />
+            <div style="display:flex; gap:6px;">
+              <input type="number" id="e-accrual-amt" value="${Number(_acc.amount) > 0 ? _acc.amount : ''}" placeholder="예: 300000" style="flex:1;" />
+              ${calcBtn('e-accrual-amt')}
+            </div>
             <div style="font-size:10px; color:var(--text-tertiary); margin-top:3px;">비우면 자동 적립 중지</div>
           </div>
           <div style="flex:1;">
