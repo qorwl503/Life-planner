@@ -3417,6 +3417,23 @@ function renderChallengeCard(c) {
   const todayStatusText = c._weekDone ? '이번 주 목표 달성 🎉' : todayChecked === true ? '오늘 성공 ✓' : todayChecked === 'fail' ? '오늘 실패 기록' : '오늘 아직 미체크';
   const miniWeek = renderChallengeMiniWeek(c, accent);
 
+  // 🔧 하루 목표량이 있는 챌린지 — 오늘 얼마나 했는지 수치로 표시
+  const dTarget = Number(c.dailyTarget) || 0;
+  const todayLog = (c.logs || {})[tKey] || {};
+  const todayVal = Number(todayLog.value) || 0;
+  const valPct = dTarget > 0 ? Math.min(100, (todayVal / dTarget) * 100) : 0;
+  const dailyBar = dTarget > 0 ? `
+    <div style="margin-top:9px; padding:9px 11px; background:rgba(255,255,255,0.6); border-radius:11px;">
+      <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:5px;">
+        <span style="font-size:10px; color:var(--text-secondary);">오늘 목표</span>
+        <span style="font-size:12px; font-weight:800; color:${accent};">${todayVal.toLocaleString()}<span style="font-size:10px; font-weight:600; color:var(--text-tertiary);"> / ${dTarget.toLocaleString()}${escapeHTML(c.unit || '')}</span></span>
+      </div>
+      <div style="height:5px; background:rgba(0,0,0,0.07); border-radius:999px; overflow:hidden;">
+        <div style="width:${valPct}%; height:100%; background:${accent}; border-radius:999px;"></div>
+      </div>
+      ${todayLog.note ? `<div style="font-size:10px; color:var(--text-tertiary); margin-top:5px;">📝 ${escapeHTML(todayLog.note)}</div>` : ''}
+    </div>` : '';
+
   return `<div style="position:relative; overflow:hidden; margin-bottom:12px; padding:14px; border-radius:16px; background:${softBg}; border:0.5px solid ${softBorder};">
     <div style="position:absolute; right:-18px; top:-22px; font-size:78px; opacity:0.07; pointer-events:none;">${typeIcon}</div>
 
@@ -3426,8 +3443,9 @@ function renderChallengeCard(c) {
           <span style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:999px; background:rgba(255,255,255,0.75); color:${accent};">${badge}</span>
           ${!isCompleted ? `<span style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:999px; background:rgba(255,255,255,0.75); color:var(--text-secondary);">D-${daysLeft}</span>` : ''}
         </div>
-        <div style="font-size:15px; font-weight:800; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHTML(c.title)}</div>
+        <div style="font-size:15px; font-weight:800; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${c.icon ? c.icon + ' ' : ''}${escapeHTML(c.title)}</div>
         <div style="font-size:11px; color:var(--text-secondary); margin-top:3px;">${daysPassed}일째 · ${progressText} · ${todayStatusText}</div>
+        ${c.memo ? `<div style="font-size:10px; color:var(--text-tertiary); margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">💭 ${escapeHTML(c.memo)}</div>` : ''}
       </div>
       <div style="width:50px; height:50px; border-radius:50%; background:conic-gradient(${accent} ${progressPct}%, rgba(255,255,255,0.6) 0); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
         <div style="width:39px; height:39px; border-radius:50%; background:white; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; color:${accent};">${Math.round(progressPct)}%</div>
@@ -3435,6 +3453,7 @@ function renderChallengeCard(c) {
       <button onclick="event.stopPropagation(); editChallenge(${c.id})" style="border:none; background:transparent; color:var(--text-tertiary); padding:2px; font-size:16px; cursor:pointer; font-family:inherit; flex-shrink:0;">⋮</button>
     </div>
 
+    ${dailyBar}
     ${miniWeek}
 
     <div style="display:flex; gap:8px; margin-top:11px;">
@@ -3447,23 +3466,24 @@ function renderChallengeCard(c) {
             ? `<div style="flex:1; text-align:center; padding:12px; border-radius:12px; background:rgba(255,255,255,0.6); font-size:12px; font-weight:800; color:#3B6D11;">🎉 이번 주 목표 달성! (${c._thisWeekCount}/${c.perWeek}회)</div>`
           : `<button onclick="checkChallenge(${c.id}, ${todayChecked===true ? 'false' : 'true'})" style="flex:1; border:none; border-radius:12px; padding:12px; background:${todayChecked===true?'#3B6D11':'#1A1A1A'}; color:white; font-size:13px; font-weight:800; font-family:inherit; cursor:pointer;">${todayChecked===true?'오늘 완료됨 ✓':'오늘 완료했어요'}</button>`
       }
+      ${!isCompleted ? `<button onclick="openChallengeLog(${c.id})" title="오늘 기록 (수치·메모)" style="flex:0 0 auto; border:none; border-radius:12px; padding:11px 14px; background:rgba(255,255,255,0.85); color:${accent}; font-size:14px; font-weight:800; font-family:inherit; cursor:pointer;">📝</button>` : ''}
     </div>
   </div>`;
 }
 
 function getChallengePresets() {
   return [
-    { title:'커피 안 사 마시기', type:'forbidden', totalDays:7 },
-    { title:'매일 30분 운동', type:'daily', totalDays:30 },
-    { title:'야식 끊기', type:'forbidden', totalDays:14 },
-    { title:'매일 만보 걷기', type:'daily', totalDays:30 },
-    { title:'100일 책 읽기', type:'daily', totalDays:100 },
-    { title:'주 3회 운동', type:'count', totalDays:30, perWeek:3 },
-    { title:'주 4일 운동', type:'count', totalDays:30, perWeek:4 },
-    { title:'매일 일기', type:'daily', totalDays:30 },
-    { title:'배달음식 끊기', type:'forbidden', totalDays:14 },
-    { title:'금주 챌린지', type:'forbidden', totalDays:30 },
-    { title:'매일 영어공부 30분', type:'daily', totalDays:30 },
+    { title:'커피 안 사 마시기', type:'forbidden', totalDays:7, icon:'☕' },
+    { title:'매일 30분 운동', type:'daily', totalDays:30, icon:'💪', dailyTarget:30, unit:'분' },
+    { title:'야식 끊기', type:'forbidden', totalDays:14, icon:'🌙' },
+    { title:'매일 만보 걷기', type:'daily', totalDays:30, icon:'🏃', dailyTarget:10000, unit:'보' },
+    { title:'100일 책 읽기', type:'daily', totalDays:100, icon:'📚', dailyTarget:10, unit:'페이지' },
+    { title:'주 3회 운동', type:'count', totalDays:30, perWeek:3, icon:'💪' },
+    { title:'주 4일 운동', type:'count', totalDays:30, perWeek:4, icon:'💪' },
+    { title:'매일 일기', type:'daily', totalDays:30, icon:'📝' },
+    { title:'배달음식 끊기', type:'forbidden', totalDays:14, icon:'🥗' },
+    { title:'금주 챌린지', type:'forbidden', totalDays:30, icon:'🚭' },
+    { title:'매일 물 2L', type:'daily', totalDays:30, icon:'💧', dailyTarget:2, unit:'L' },
   ];
 }
 
@@ -3484,6 +3504,11 @@ function quickChallenge(preset) {
     startDate,
     checks: {},
     completed: false,
+    icon: preset.icon || '🎯',
+    dailyTarget: preset.dailyTarget || null,
+    unit: preset.dailyTarget ? (preset.unit || '회') : null,
+    memo: null,
+    logs: {},
   });
   saveData();
   showToast(`"${preset.title}" 챌린지 시작! 🚀`);
@@ -3512,6 +3537,102 @@ function checkChallenge(id, value) {
   }
 
   saveData();
+  renderTodo();
+}
+
+// 🔧 하루 기록 모달 — 성공/실패뿐 아니라 '얼마나 했는지'와 메모까지 남긴다
+//    (checks는 그대로 두고 logs에만 부가정보 저장 → 기존 진행률·streak 계산에 영향 없음)
+function openChallengeLog(id, dKey) {
+  const c = challenges.find(x => x.id === id);
+  if (!c) return;
+  const k = dKey || todayKey();
+  const cur = c.checks?.[k];
+  const log = (c.logs || {})[k] || {};
+  const dTarget = Number(c.dailyTarget) || 0;
+  const unit = c.unit || '';
+  const isForbidden = c.type === 'forbidden';
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">취소</button>
+        <h2>${c.icon || '🎯'} 오늘 기록</h2>
+        <button class="modal-save" onclick="saveChallengeLog(${c.id}, '${k}')">저장</button>
+      </div>
+
+      <div style="padding:10px 12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:14px;">
+        <div style="font-size:13px; font-weight:700;">${escapeHTML(c.title)}</div>
+        <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">${k}</div>
+      </div>
+
+      <div class="field">
+        <div class="field-label">오늘 어땠나요?</div>
+        <div style="display:flex; gap:6px;" id="cl-status">
+          <button type="button" class="chip ${cur === true ? 'active' : ''}" data-s="true" style="flex:1;">${isForbidden ? '🛡 지켰어요' : '✅ 성공'}</button>
+          <button type="button" class="chip ${cur === 'fail' ? 'active' : ''}" data-s="fail" style="flex:1;">${isForbidden ? '💥 어겼어요' : '❌ 못했어요'}</button>
+          <button type="button" class="chip ${cur === undefined ? 'active' : ''}" data-s="none" style="flex:1;">⬜ 미체크</button>
+        </div>
+      </div>
+
+      ${dTarget > 0 ? `
+      <div class="field">
+        <div class="field-label">얼마나 했나요? <span style="font-size:10px; color:var(--text-tertiary);">(목표 ${dTarget.toLocaleString()}${escapeHTML(unit)})</span></div>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <input type="number" id="cl-value" value="${Number(log.value) || ''}" placeholder="0" style="flex:1;" />
+          <span style="font-size:13px; color:var(--text-secondary); min-width:40px;">${escapeHTML(unit)}</span>
+        </div>
+        <div style="display:flex; gap:5px; margin-top:7px;">
+          ${[0.5, 1].map(r => {
+            const v = Math.round(dTarget * r);
+            return `<button type="button" onclick="document.getElementById('cl-value').value=${v}" class="chip" style="flex:1; font-size:11px;">${r === 1 ? '목표 달성' : '절반'} (${v.toLocaleString()}${escapeHTML(unit)})</button>`;
+          }).join('')}
+        </div>
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:6px;">목표를 채우면 자동으로 성공 처리돼요.</div>
+      </div>` : ''}
+
+      <div class="field">
+        <div class="field-label">메모 <span style="font-size:10px; color:var(--text-tertiary);">(선택)</span></div>
+        <input type="text" id="cl-note" value="${escapeAttr(log.note || '')}" placeholder="예: 러닝 5km, 컨디션 좋았음" />
+      </div>
+    </div>
+  `;
+  modal.classList.add('show');
+
+  setTimeout(() => {
+    document.querySelectorAll('#cl-status .chip').forEach(b => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('#cl-status .chip').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+      });
+    });
+  }, 40);
+}
+
+function saveChallengeLog(id, k) {
+  const c = challenges.find(x => x.id === id);
+  if (!c) return;
+  if (!c.checks) c.checks = {};
+  if (!c.logs) c.logs = {};
+
+  const val = Number(document.getElementById('cl-value')?.value) || 0;
+  const note = (document.getElementById('cl-note')?.value || '').trim();
+  let status = document.querySelector('#cl-status .chip.active')?.dataset.s || 'none';
+
+  // 목표량을 채웠으면 자동으로 성공 처리 (사용자가 굳이 성공을 또 누르지 않아도 되게)
+  const dTarget = Number(c.dailyTarget) || 0;
+  if (dTarget > 0 && val >= dTarget && status === 'none') status = 'true';
+
+  if (status === 'true') { c.checks[k] = true; haptic(); }
+  else if (status === 'fail') c.checks[k] = 'fail';
+  else delete c.checks[k];
+
+  if (val > 0 || note) c.logs[k] = { value: val || null, note: note || null };
+  else delete c.logs[k];
+
+  saveData();
+  closeModal();
+  showToast(dTarget > 0 && val > 0 ? `기록됨 · ${val.toLocaleString()}${c.unit || ''}` : '기록됨');
   renderTodo();
 }
 
@@ -3557,6 +3678,15 @@ function openChallengeModal() {
       <div class="field">
         <div class="field-label">챌린지 이름</div>
         <input type="text" id="ch-title" placeholder="예: 일주일 커피 안 사 마시기" autofocus />
+      </div>
+
+      <div class="field">
+        <div class="field-label">아이콘 <span style="font-size:10px; color:var(--text-tertiary);">(목록에서 한눈에 구분돼요)</span></div>
+        <div style="display:flex; gap:5px; flex-wrap:wrap;" id="ch-icon">
+          ${['🎯','💪','🏃','📚','💧','🧘','🚭','☕','💰','📝','🌙','🥗','🧹','🎸'].map((e, i) =>
+            `<button type="button" class="chip ${i === 0 ? 'active' : ''}" data-i="${e}" style="padding:7px 10px; font-size:15px;">${e}</button>`
+          ).join('')}
+        </div>
       </div>
 
       <div class="field">
@@ -3626,10 +3756,31 @@ function openChallengeModal() {
         </div>
       </div>
 
+      <div class="field" id="ch-target-field">
+        <div class="field-label">하루 목표량 <span style="font-size:10px; color:var(--text-tertiary);">(선택 — 넣으면 "20/30분"처럼 기록돼요)</span></div>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <input type="number" id="ch-daily-target" placeholder="예: 30" style="flex:1;" />
+          <input type="text" id="ch-unit" placeholder="단위" value="분" style="width:70px; text-align:center;" />
+        </div>
+        <div style="display:flex; gap:5px; flex-wrap:wrap; margin-top:7px;" id="ch-unit-quick">
+          ${['분','회','페이지','km','L','잔','개','시간'].map(u =>
+            `<button type="button" class="chip" data-u="${u}" style="padding:5px 10px; font-size:11px;">${u}</button>`
+          ).join('')}
+        </div>
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:6px; line-height:1.5;">
+          비워두면 지금처럼 했다/안했다만 체크해요.
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="field-label">왜 하나요? <span style="font-size:10px; color:var(--text-tertiary);">(선택 — 흔들릴 때 보는 다짐)</span></div>
+        <input type="text" id="ch-memo" placeholder="예: 3개월 뒤 건강검진 통과하기" />
+      </div>
+
       <div style="font-size:12px; color:var(--text-secondary); margin: 16px 0 8px;">⚡ 빠른 시작</div>
       <div style="display:flex; flex-wrap:wrap; gap:6px;">
         ${getChallengePresets().map(p => `
-          <button onclick="fillPreset('${p.title}', '${p.type}', ${p.totalDays}, ${p.targetCount || 'null'}, ${p.perWeek || 'null'})" class="chip" style="padding:8px 12px; font-size:11px;">${p.title}</button>
+          <button onclick="fillPreset('${p.title}', '${p.type}', ${p.totalDays}, ${p.targetCount || 'null'}, ${p.perWeek || 'null'}, '${p.icon || '🎯'}', ${p.dailyTarget || 'null'}, '${p.unit || ''}')" class="chip" style="padding:8px 12px; font-size:11px;">${p.icon || ''} ${p.title}</button>
         `).join('')}
       </div>
     </div>
@@ -3660,6 +3811,21 @@ function openChallengeModal() {
       b.addEventListener('click', () => {
         document.querySelectorAll('#ch-days .chip').forEach(x => x.classList.remove('active'));
         b.classList.add('active');
+      });
+    });
+
+    // 🔧 아이콘 선택
+    document.querySelectorAll('#ch-icon .chip').forEach(b => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('#ch-icon .chip').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+      });
+    });
+    // 🔧 단위 빠른 선택
+    document.querySelectorAll('#ch-unit-quick .chip').forEach(b => {
+      b.addEventListener('click', () => {
+        const el = document.getElementById('ch-unit');
+        if (el) el.value = b.dataset.u;
       });
     });
 
@@ -3783,12 +3949,23 @@ function saveChallenge() {
     }
   }
 
+  // 🔧 보강 필드 (전부 선택 — 없으면 기존과 똑같이 동작)
+  const icon = document.querySelector('#ch-icon .chip.active')?.dataset.i || '🎯';
+  const dailyTarget = Number(document.getElementById('ch-daily-target')?.value) || 0;
+  const unit = (document.getElementById('ch-unit')?.value || '').trim();
+  const memo = (document.getElementById('ch-memo')?.value || '').trim();
+
   challenges.push({
     id: Date.now(),
     title, type, totalDays, targetCount, perWeek,
     startDate,
     checks: {},
     completed: false,
+    icon,
+    dailyTarget: dailyTarget > 0 ? dailyTarget : null,
+    unit: dailyTarget > 0 ? (unit || '회') : null,
+    memo: memo || null,
+    logs: {}, // 날짜별 수치·메모 (checks와 분리 — 기존 진행률 계산에 영향 없음)
   });
   saveData();
   showToast(`"${title}" 챌린지 시작! 🚀 (${totalDays}일)`);
@@ -7987,14 +8164,19 @@ function renderAccrualPanel(a) {
   const yearSum = sumOf(accLots.filter(l => (l.date || '').startsWith(thisYear)));
   const totalSum = sumOf(accLots);
 
-  // 다음 적립 예정일
+  // 🔧 다음 적립 예정일 — '아직 안 온 날짜' 중 첫 번째. (이미 지난 날을 '예정'으로 띄우던 버그 수정)
   let nextLabel = '';
   if (amt > 0 && day) {
     const now = new Date();
     let ny = now.getFullYear(), nm = now.getMonth();
-    if (thisMonthDone) { nm++; if (nm > 11) { nm = 0; ny++; } }
-    const dim = new Date(ny, nm + 1, 0).getDate();
-    nextLabel = `${nm + 1}월 ${Math.min(day, dim)}일`;
+    for (let i = 0; i < 24; i++) {
+      const dim = new Date(ny, nm + 1, 0).getDate();
+      const dd = Math.min(day, dim);
+      const k = dateKey(ny, nm, dd);
+      const already = accLots.some(l => l.date === k);
+      if (!already && k > tkStr) { nextLabel = `${nm + 1}월 ${dd}일`; break; }
+      nm++; if (nm > 11) { nm = 0; ny++; }
+    }
   }
 
   // 최근 12개월 월별 적립 (막대)
@@ -8014,25 +8196,31 @@ function renderAccrualPanel(a) {
         ${amt > 0 ? `<span style="font-size:11px; color:var(--text-info); font-weight:600;">매월 ${amt.toLocaleString()}원</span>` : ''}
       </div>
 
-      <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:${months.length ? '12px' : '0'};">
+      <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:10px;">
         <div style="padding:9px; background:var(--bg-secondary); border-radius:8px;">
           <div style="font-size:9px; color:var(--text-tertiary);">이번 달</div>
           <div style="font-size:13px; font-weight:700; margin-top:2px; color:${thisMonthDone ? 'var(--text-success)' : 'var(--text-tertiary)'};">
             ${thisMonthDone ? `+${amt.toLocaleString()}` : '대기'}
           </div>
-          <div style="font-size:9px; color:var(--text-tertiary); margin-top:1px;">${thisMonthDone ? '적립 완료' : (nextLabel ? nextLabel + ' 예정' : '—')}</div>
+          <div style="font-size:9px; color:var(--text-tertiary); margin-top:1px;">${thisMonthDone ? (nextLabel ? `완료 · 다음 ${nextLabel}` : '적립 완료') : (nextLabel ? nextLabel + ' 예정' : '—')}</div>
         </div>
         <div style="padding:9px; background:var(--bg-secondary); border-radius:8px;">
-          <div style="font-size:9px; color:var(--text-tertiary);">올해 누적</div>
-          <div style="font-size:13px; font-weight:700; margin-top:2px;">${Math.round(yearSum/10000).toLocaleString()}만</div>
-          <div style="font-size:9px; color:var(--text-tertiary); margin-top:1px;">${thisYear}년</div>
+          <div style="font-size:9px; color:var(--text-tertiary);">자동적립 누적</div>
+          <div style="font-size:13px; font-weight:700; margin-top:2px;">${accLots.length > 0 ? Math.round(totalSum/10000).toLocaleString() + '만' : '—'}</div>
+          <div style="font-size:9px; color:var(--text-tertiary); margin-top:1px;">${accLots.length > 0 ? `${accLots.length}회 · 올해 ${Math.round(yearSum/10000).toLocaleString()}만` : '첫 적립 대기'}</div>
         </div>
         <div style="padding:9px; background:var(--bg-secondary); border-radius:8px;">
-          <div style="font-size:9px; color:var(--text-tertiary);">적립 누적</div>
-          <div style="font-size:13px; font-weight:700; margin-top:2px;">${Math.round(totalSum/10000).toLocaleString()}만</div>
-          <div style="font-size:9px; color:var(--text-tertiary); margin-top:1px;">${accLots.length}회</div>
+          <div style="font-size:9px; color:var(--text-tertiary);">현재 잔액</div>
+          <div style="font-size:13px; font-weight:700; margin-top:2px;">${Math.round((Number(a.price)||0)/10000).toLocaleString()}만</div>
+          <div style="font-size:9px; color:var(--text-tertiary); margin-top:1px;">전체 적립액</div>
         </div>
       </div>
+
+      ${accLots.length === 0 && amt > 0 ? `
+      <div style="padding:9px 11px; background:var(--bg-secondary); border-radius:8px; font-size:10px; color:var(--text-secondary); line-height:1.6; margin-bottom:10px;">
+        💡 등록할 때 넣은 <b>${(Number(a.price)||0).toLocaleString()}원</b>은 이미 잔액에 반영돼 있어요.<br>
+        자동 적립은 <b>${nextLabel || '다음 적립일'}</b>부터 이 위에 쌓입니다. (이미 지난 이번 달분이 빠졌다면 잔액을 수정해 주세요)
+      </div>` : ''}
 
       ${months.length > 0 ? `
       <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:6px;">월별 적립 (최근 ${months.length}개월)</div>
@@ -20673,6 +20861,17 @@ function editAsset(id) {
       <div id="e-dynamic-fields"></div>
 
       ${(() => {
+        // 🔧 퇴직금은 '자동매수(고정지출)'를 쓰면 안 됨 — 회사가 쌓아주는 돈이라 내 지출로 잘못 잡힘.
+        //    대신 위의 '월 적립액'(별도 자동적립 엔진)을 안내한다.
+        if (a.type === '퇴직금') {
+          return `<div style="margin-top:10px; padding:12px; background:rgba(92,122,153,0.08); border-radius:10px; border:1px dashed rgba(92,122,153,0.35);">
+            <div style="font-size:11px; font-weight:600; color:#5C7A99; margin-bottom:5px;">💼 퇴직금은 위의 '월 적립액'으로 자동 적립돼요</div>
+            <div style="font-size:10px; color:var(--text-secondary); line-height:1.6;">
+              자동매수(고정지출)로 걸면 <b>내 지갑에서 나간 지출</b>로 잘못 잡혀 가계부가 틀어져요.<br>
+              월 적립액·적립일만 넣어두면 매달 알아서 쌓입니다.
+            </div>
+          </div>`;
+        }
         // 이 자산에 연결된 자동매수가 있는지 확인 (티커 우선)
         const normT = (t) => (t || '').toUpperCase().replace(/\.(KS|KQ|KQI)$/, '').trim();
         const aTicker = normT(a.ticker);
