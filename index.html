@@ -1618,6 +1618,26 @@ function todoGroup(dateKeyStr) {
   return 'later';
 }
 
+// 🚩 할일 우선순위 4단계 (Todoist·TickTick 스타일). 옛 데이터의 flag(중요)는 '긴급'으로 승계
+const PRIORITIES = [
+  { v: 1, label: '긴급', icon: '🔴', color: '#E24B4A' },
+  { v: 2, label: '높음', icon: '🟠', color: '#E89B4A' },
+  { v: 3, label: '보통', icon: '🔵', color: '#4574E0' },
+  { v: 4, label: '낮음', icon: '⚪', color: '#98A1B3' },
+];
+function todoPriority(t) {
+  const p = Number(t && t.priority);
+  if (p >= 1 && p <= 4) return p;
+  return (t && t.flag) ? 1 : 3; // 하위호환: 중요 표시였으면 긴급, 아니면 보통
+}
+function priorityMeta(v) { return PRIORITIES.find(p => p.v === v) || PRIORITIES[2]; }
+
+// ☑️ 체크리스트(하위 항목) 진행률
+function subtaskStats(t) {
+  const list = Array.isArray(t && t.subtasks) ? t.subtasks : [];
+  return { total: list.length, done: list.filter(s => s && s.done).length };
+}
+
 // 🔁 반복 할일(루틴) — 이 할일이 그 날짜에 반복 발생하는지
 //    repeat: { type: 'daily'|'weekly'|'monthly', dows:[0~6], day:1~31, until:'YYYY-MM-DD'|null }
 //    원본 할일 1건만 저장하고, 각 날짜의 완료 여부는 doneDates에 날짜별로 기록 (데이터 폭증 없음)
@@ -3027,6 +3047,21 @@ function renderTodo() {
     </div>
   `;
 
+  // ===== 🔍 검색 + 정렬/필터 + 완료율 통계 =====
+  html += renderTodoToolbar();
+  html += renderTodoStatsCard();
+
+  // 검색어가 있으면 주간 뷰 대신 '검색 결과'만 보여준다
+  if ((window.todoSearch || '').trim()) {
+    html += renderTodoSearchResults();
+    screen.innerHTML = html;
+    setTimeout(() => {
+      const el = document.getElementById('todo-search-input');
+      if (el && window._todoSearchFocus) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+    }, 20);
+    return;
+  }
+
   // ===== 주간 뷰 (이번 주 자세히) =====
   html += `
     <div style="margin: 18px 0 8px; display:flex; justify-content:space-between; align-items:center;">
@@ -3069,8 +3104,8 @@ function renderTodo() {
     if (dayTodos.length === 0 && dayDone.length === 0) {
       html += `<div style="padding:8px 12px; color:var(--text-tertiary); font-size:11px; opacity:0.6;">${isToday ? '오늘 할일 없음 ✨' : '없음'}</div>`;
     } else {
-      sortTodosByTime(dayTodos).forEach(t => html += renderTodoRow(t, dK));
-      sortTodosByTime(dayDone).forEach(t => html += renderTodoRow(t, dK));
+      todoList(dayTodos).forEach(t => html += renderTodoRow(t, dK));
+      todoList(dayDone).forEach(t => html += renderTodoRow(t, dK));
     }
   }
 
@@ -3177,6 +3212,11 @@ function renderTodo() {
   }
 
   screen.innerHTML = html;
+  // 🔍 검색 입력 중이면 커서를 유지 (렌더될 때마다 포커스가 튀지 않게)
+  setTimeout(() => {
+    const el = document.getElementById('todo-search-input');
+    if (el && window._todoSearchFocus) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+  }, 20);
 }
 
 // 🔧 밀린 할일 일괄 처리
@@ -3210,18 +3250,175 @@ function bulkDeletePastTodos() {
   renderTodo();
 }
 
+// ===== 🔍 검색 · 정렬 · 필터 =====
+function setTodoSearch(v) { window.todoSearch = v; renderTodo(); }
+function setTodoSort(v) { window.todoSort = v; window._todoSearchFocus = false; renderTodo(); }
+function setTodoFilter(v) { window.todoFilter = v; window._todoSearchFocus = false; renderTodo(); }
+
+function todoMatchesSearch(t, q) {
+  if (!q) return true;
+  const s = q.toLowerCase();
+  if ((t.title || '').toLowerCase().includes(s)) return true;
+  if ((t.memo || '').toLowerCase().includes(s)) return true;
+  if ((t.tag || '').toLowerCase().includes(s)) return true;
+  if (Array.isArray(t.subtasks) && t.subtasks.some(x => (x.text || '').toLowerCase().includes(s))) return true;
+  return false;
+}
+
+// 정렬: 시간순(기본) / 우선순위 / 최근 추가
+function applyTodoSort(list) {
+  const mode = window.todoSort || 'time';
+  const arr = list.slice();
+  if (mode === 'priority') {
+    return arr.sort((a, b) => {
+      const pa = todoPriority(a), pb = todoPriority(b);
+      if (pa !== pb) return pa - pb;
+      const ta = a.time || '', tb = b.time || '';
+      if (ta && tb) return ta.localeCompare(tb);
+      if (ta) return -1;
+      if (tb) return 1;
+      return 0;
+    });
+  }
+  if (mode === 'recent') return arr.sort((a, b) => Number(b.id) - Number(a.id));
+  return sortTodosByTime(arr);
+}
+
+// 필터: 중요(긴급·높음)만 + 검색어
+function applyTodoFilter(list) {
+  let out = list;
+  if ((window.todoFilter || 'all') === 'important') out = out.filter(t => todoPriority(t) <= 2);
+  const q = (window.todoSearch || '').trim();
+  if (q) out = out.filter(t => todoMatchesSearch(t, q));
+  return out;
+}
+// 정렬+필터 한 번에 (주간 뷰용)
+function todoList(list) { return applyTodoSort(applyTodoFilter(list)); }
+
+function renderTodoToolbar() {
+  const q = window.todoSearch || '';
+  const sort = window.todoSort || 'time';
+  const filter = window.todoFilter || 'all';
+  const chip = (on, label, onclick) =>
+    `<button onclick="${onclick}" class="chip ${on ? 'active' : ''}" style="font-size:11px; padding:6px 11px;">${label}</button>`;
+  return `
+    <div style="margin:14px 0 10px;">
+      <div style="display:flex; gap:6px; margin-bottom:8px;">
+        <input id="todo-search-input" type="search" value="${escapeAttr(q)}" placeholder="🔍 할일·메모·체크리스트 검색"
+          oninput="window._todoSearchFocus=true; setTodoSearch(this.value)"
+          style="flex:1; padding:10px 12px; border:0.5px solid var(--border-tertiary); border-radius:10px; font-size:13px; font-family:inherit; background:white;" />
+        ${q ? `<button onclick="window._todoSearchFocus=false; setTodoSearch('')" style="padding:0 13px; border:0.5px solid var(--border-tertiary); background:white; border-radius:10px; font-size:13px; cursor:pointer; font-family:inherit; color:var(--text-tertiary);">✕</button>` : ''}
+      </div>
+      <div style="display:flex; gap:5px; flex-wrap:wrap;">
+        ${chip(sort === 'time', '🕐 시간순', `setTodoSort('time')`)}
+        ${chip(sort === 'priority', '🚩 우선순위', `setTodoSort('priority')`)}
+        ${chip(sort === 'recent', '🆕 최근', `setTodoSort('recent')`)}
+        ${chip(filter === 'important', '🔴 중요만', `setTodoFilter('${filter === 'important' ? 'all' : 'important'}')`)}
+      </div>
+    </div>`;
+}
+
+// 🔍 검색 결과 (주간 뷰 대신 표시)
+function renderTodoSearchResults() {
+  const q = (window.todoSearch || '').trim();
+  const hits = todoList(todos);
+  if (hits.length === 0) {
+    return `<div class="empty-state" style="margin-top:10px;"><i class="ti ti-search"></i>"${escapeHTML(q)}" 결과가 없어요</div>`;
+  }
+  const undone = hits.filter(t => !t.done);
+  const done = hits.filter(t => t.done);
+  let h = `<div style="font-size:12px; color:var(--text-secondary); margin:4px 0 8px;">🔍 "<b>${escapeHTML(q)}</b>" 검색 결과 ${hits.length}개</div>`;
+  undone.forEach(t => h += renderTodoRow(t, t.dateKey));
+  if (done.length) {
+    h += `<div style="font-size:11px; color:var(--text-tertiary); margin:12px 0 6px;">완료됨 ${done.length}개</div>`;
+    done.forEach(t => h += renderTodoRow(t, t.dateKey));
+  }
+  return h;
+}
+
+// ===== 📊 완료율 통계 (최근 8주 추이) =====
+function renderTodoStatsCard() {
+  if ((window.todoSearch || '').trim()) return ''; // 검색 중엔 숨김
+  const open = !!window._todoStatsOpen;
+  const weeks = [];
+  const base = new Date();
+  base.setHours(0, 0, 0, 0);
+  base.setDate(base.getDate() - base.getDay()); // 이번 주 일요일
+
+  for (let w = 7; w >= 0; w--) {
+    const ws = new Date(base); ws.setDate(base.getDate() - w * 7);
+    let total = 0, done = 0;
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(ws); d.setDate(ws.getDate() + i);
+      const k = dateKey(d.getFullYear(), d.getMonth(), d.getDate());
+      todos.forEach(t => {
+        if (!todoOnDay(t, k)) return;
+        total++;
+        if (todoDoneOn(t, k)) done++;
+      });
+    }
+    weeks.push({ label: `${ws.getMonth() + 1}/${ws.getDate()}`, total, done, pct: total ? Math.round(done / total * 100) : 0 });
+  }
+  const thisW = weeks[weeks.length - 1];
+  const prevW = weeks[weeks.length - 2];
+  const diff = prevW ? thisW.pct - prevW.pct : 0;
+  const withData = weeks.filter(w => w.total > 0);
+  const avg = withData.length ? Math.round(withData.reduce((s, w) => s + w.pct, 0) / withData.length) : 0;
+
+  return `
+    <div style="background:white; border:0.5px solid var(--border-tertiary); border-radius:14px; padding:13px 14px; margin-bottom:12px;">
+      <div onclick="window._todoStatsOpen=!window._todoStatsOpen; renderTodo();" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;">
+        <span style="font-size:13px; font-weight:600;">📊 완료율</span>
+        <span style="display:flex; align-items:center; gap:8px;">
+          <b style="font-size:15px; color:${thisW.pct >= 70 ? 'var(--text-success)' : thisW.pct >= 40 ? 'var(--text-warning)' : 'var(--text-tertiary)'};">${thisW.pct}%</b>
+          ${prevW && prevW.total > 0 ? `<span style="font-size:10px; color:${diff >= 0 ? 'var(--text-success)' : 'var(--text-danger)'};">${diff >= 0 ? '▲' : '▼'}${Math.abs(diff)}</span>` : ''}
+          <span style="font-size:11px; color:var(--text-tertiary);">${open ? '접기 ▲' : '추이 ▼'}</span>
+        </span>
+      </div>
+      <div style="font-size:10px; color:var(--text-tertiary); margin-top:3px;">이번 주 ${thisW.done}/${thisW.total}개 완료 · 8주 평균 ${avg}%</div>
+
+      ${open ? `
+      <div style="display:flex; align-items:flex-end; gap:4px; height:62px; margin-top:11px;">
+        ${weeks.map((w, i) => {
+          const isNow = i === weeks.length - 1;
+          const h = Math.max(4, Math.round((w.pct / 100) * 50));
+          return `<div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:3px;">
+            <div style="font-size:8px; color:var(--text-tertiary);">${w.total ? w.pct : ''}</div>
+            <div style="width:100%; height:${h}px; background:${isNow ? '#4574E0' : (w.total ? '#A9BEE8' : 'rgba(0,0,0,0.06)')}; border-radius:3px 3px 0 0;" title="${w.label} · ${w.done}/${w.total}"></div>
+            <div style="font-size:8px; color:var(--text-tertiary);">${w.label}</div>
+          </div>`;
+        }).join('')}
+      </div>` : ''}
+    </div>`;
+}
+
 function renderTodoRow(t, dayK) {
   // 🔁 반복 할일은 '그 날짜'의 완료 여부를 따로 본다 (dayK 없으면 원래 날짜/오늘 기준)
   const dk = dayK || t.dateKey || todayKey();
   const isDone = todoDoneOn(t, dk);
-  return `<div class="todo-row ${isDone?'done':''}" onclick="editTodo(${t.id})">
+  const pr = todoPriority(t);
+  const pm = priorityMeta(pr);
+  const st = subtaskStats(t);
+  const expanded = !!(window._expandedTodos && window._expandedTodos[t.id]);
+  // ☑️ 체크리스트 펼침 영역
+  const subHtml = (st.total > 0 && expanded) ? `
+    <div style="margin-top:6px; padding:7px 9px; background:rgba(0,0,0,0.03); border-radius:8px;">
+      ${(t.subtasks || []).map(s => `
+        <div onclick="toggleSubtask(${t.id}, '${s.id}', event)" style="display:flex; align-items:center; gap:7px; padding:4px 0; cursor:pointer;">
+          <span style="width:17px; height:17px; flex-shrink:0; border-radius:5px; border:1.5px solid ${s.done ? '#3B6D11' : 'var(--border-secondary)'}; background:${s.done ? '#3B6D11' : 'transparent'}; color:white; font-size:10px; display:flex; align-items:center; justify-content:center;">${s.done ? '✓' : ''}</span>
+          <span style="font-size:11px; ${s.done ? 'text-decoration:line-through; color:var(--text-tertiary);' : 'color:var(--text-secondary);'}">${escapeHTML(s.text)}</span>
+        </div>`).join('')}
+    </div>` : '';
+
+  return `<div class="todo-row ${isDone?'done':''}" onclick="editTodo(${t.id})" style="${pr <= 2 ? `border-left:3px solid ${pm.color};` : ''}">
     <div class="todo-check ${isDone?'done':''}" onclick="event.stopPropagation(); toggleTodo(${t.id}, event, '${dk}')">
       ${isDone ? '<i class="ti ti-check"></i>' : ''}
     </div>
     <div style="flex:1; min-width:0;">
-      <div class="todo-title">${t.time ? `<span style="color:var(--text-info); font-weight:700; margin-right:5px;">${escapeHTML(t.time)}</span>` : ''}${escapeHTML(t.title)}</div>
+      <div class="todo-title">${pr <= 2 ? `<span style="font-size:10px; margin-right:3px;">${pm.icon}</span>` : ''}${t.time ? `<span style="color:var(--text-info); font-weight:700; margin-right:5px;">${escapeHTML(t.time)}</span>` : ''}${escapeHTML(t.title)}</div>
       <div class="todo-meta">
         <span class="tag">${escapeHTML(t.tag)}</span>
+        ${st.total > 0 ? `<span class="meta-mini" onclick="toggleTodoExpand(${t.id}, event)" style="font-size:11px; color:${st.done === st.total ? 'var(--text-success)' : 'var(--text-secondary)'}; font-weight:600; cursor:pointer;"><i class="ti ti-list-check" style="font-size:11px;"></i> ${st.done}/${st.total} ${expanded ? '▲' : '▼'}</span>` : ''}
         ${t.repeat && t.repeat.type ? `<span class="meta-mini" style="font-size:11px; color:#2D8A6E; font-weight:600;"><i class="ti ti-repeat" style="font-size:11px;"></i> ${repeatLabel(t)}</span>`
           : t.endDateKey ? `<span class="meta-mini" style="font-size:11px; color:#7D6FC9; font-weight:600;"><i class="ti ti-calendar-event" style="font-size:11px;"></i> ${periodLabel(t)}</span>`
           : t.dateKey ? `<span class="meta-mini" style="font-size:11px;"><i class="ti ti-calendar" style="font-size:11px;"></i> ${dateLabel(t.dateKey)}</span>` : ''}
@@ -3229,6 +3426,7 @@ function renderTodoRow(t, dayK) {
         ${t.money ? `<span class="meta-money"><i class="ti ti-wallet" style="font-size:11px;"></i> ${escapeHTML(t.money)}</span>` : ''}
       </div>
       ${t.memo ? `<div style="font-size:11px; color:var(--text-tertiary); margin-top:3px; line-height:1.5; white-space:pre-wrap; word-break:break-word;">📝 ${escapeHTML(t.memo)}</div>` : ''}
+      ${subHtml}
     </div>
     ${t.flag ? '<i class="ti ti-flag" style="font-size:14px; color:var(--text-danger);"></i>' : ''}
     <button class="todo-del" onclick="event.stopPropagation(); delTodo(${t.id}, event)" aria-label="삭제"><i class="ti ti-trash"></i></button>
@@ -13645,9 +13843,27 @@ function openTodoModal(forDateKey, editTodoObj) {
         </div>
       </div>
 
-      <div class="row-flex">
-        <div class="lb"><i class="ti ti-flag"></i>중요 표시</div>
-        <div class="toggle ${isEdit && editTodoObj.flag ? 'on' : ''}" id="todo-flag-toggle" onclick="this.classList.toggle('on')"><div class="knob"></div></div>
+      <!-- 🚩 우선순위 4단계 (기존 '중요 표시' ON/OFF를 대체) -->
+      <div class="field">
+        <div class="field-label">우선순위</div>
+        <div style="display:flex; gap:5px;" id="todo-priority">
+          ${PRIORITIES.map(p => {
+            const cur = isEdit ? todoPriority(editTodoObj) : 3;
+            return `<button type="button" class="chip ${cur === p.v ? 'active' : ''}" data-p="${p.v}" style="flex:1; font-size:11px; ${cur === p.v ? '' : `color:${p.color};`}">${p.icon} ${p.label}</button>`;
+          }).join('')}
+        </div>
+      </div>
+
+      <!-- ☑️ 체크리스트 (하위 항목) -->
+      <div class="field">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <div class="field-label" style="margin:0;">체크리스트 <span style="font-size:10px; color:var(--text-tertiary);">(준비물·단계 나누기)</span></div>
+          <button type="button" onclick="addSubtaskRow()" style="border:none; background:var(--bg-info); color:var(--text-info); padding:4px 10px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">+ 항목</button>
+        </div>
+        <div id="subtask-list"></div>
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px; line-height:1.5;" id="subtask-hint">
+          항목을 넣으면 할일 목록에 <b>2/5</b> 처럼 진행률이 표시돼요.
+        </div>
       </div>
 
       ${isEdit ? `
@@ -13666,6 +13882,25 @@ function openTodoModal(forDateKey, editTodoObj) {
         b.classList.add('active');
       });
     });
+    // 🚩 우선순위 선택
+    document.querySelectorAll('#todo-priority .chip').forEach(b => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('#todo-priority .chip').forEach(x => {
+          x.classList.remove('active');
+          const m = priorityMeta(Number(x.dataset.p));
+          x.style.color = m.color;
+        });
+        b.classList.add('active');
+        b.style.color = '';
+      });
+    });
+
+    // ☑️ 체크리스트 초기화 (수정이면 기존 항목 복사 — 취소 시 원본 보존)
+    window._editSubtasks = (isEdit && Array.isArray(editTodoObj.subtasks))
+      ? JSON.parse(JSON.stringify(editTodoObj.subtasks))
+      : [];
+    renderSubtaskRows();
+
     // 🔁 반복 주기 선택 (매일/매주/매월)
     document.querySelectorAll('#todo-repeat-type .chip').forEach(b => {
       b.addEventListener('click', () => {
@@ -13680,6 +13915,66 @@ function openTodoModal(forDateKey, editTodoObj) {
     });
     syncTodoRepeatFields();
   }, 50);
+}
+
+// ===== ☑️ 체크리스트 편집 (할일 모달 안) =====
+function renderSubtaskRows() {
+  const box = document.getElementById('subtask-list');
+  if (!box) return;
+  const list = window._editSubtasks || [];
+  if (list.length === 0) {
+    box.innerHTML = `<div style="font-size:11px; color:var(--text-tertiary); padding:8px 0;">항목이 없어요. <b>+ 항목</b>을 눌러 추가하세요.</div>`;
+    return;
+  }
+  box.innerHTML = list.map((s, i) => `
+    <div style="display:flex; align-items:center; gap:7px; margin-bottom:6px;">
+      <button type="button" onclick="toggleSubtaskDraft(${i})" aria-label="완료 토글"
+        style="width:22px; height:22px; flex-shrink:0; border-radius:6px; border:1.5px solid ${s.done ? '#3B6D11' : 'var(--border-secondary)'}; background:${s.done ? '#3B6D11' : 'white'}; color:white; font-size:12px; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; padding:0;">${s.done ? '✓' : ''}</button>
+      <input type="text" value="${escapeAttr(s.text || '')}" placeholder="예: 여권 챙기기"
+        oninput="window._editSubtasks[${i}].text = this.value"
+        style="flex:1; padding:8px 10px; border:0.5px solid var(--border-tertiary); border-radius:8px; font-size:12px; font-family:inherit; ${s.done ? 'text-decoration:line-through; color:var(--text-tertiary);' : ''}" />
+      <button type="button" onclick="removeSubtaskRow(${i})" aria-label="삭제"
+        style="width:26px; height:26px; flex-shrink:0; border:none; background:transparent; color:var(--text-tertiary); font-size:14px; cursor:pointer; font-family:inherit; padding:0;">✕</button>
+    </div>`).join('');
+}
+function addSubtaskRow() {
+  if (!Array.isArray(window._editSubtasks)) window._editSubtasks = [];
+  window._editSubtasks.push({ id: Date.now() + Math.random(), text: '', done: false });
+  renderSubtaskRows();
+  setTimeout(() => {
+    const inputs = document.querySelectorAll('#subtask-list input');
+    if (inputs.length) inputs[inputs.length - 1].focus();
+  }, 30);
+}
+function removeSubtaskRow(i) {
+  if (!Array.isArray(window._editSubtasks)) return;
+  window._editSubtasks.splice(i, 1);
+  renderSubtaskRows();
+}
+function toggleSubtaskDraft(i) {
+  const s = (window._editSubtasks || [])[i];
+  if (!s) return;
+  s.done = !s.done;
+  renderSubtaskRows();
+}
+
+// ☑️ 목록에서 바로 체크리스트 항목 토글
+function toggleSubtask(todoId, subId, e) {
+  if (e) e.stopPropagation();
+  const t = todos.find(x => x.id === todoId);
+  if (!t || !Array.isArray(t.subtasks)) return;
+  const s = t.subtasks.find(x => String(x.id) === String(subId));
+  if (!s) return;
+  s.done = !s.done;
+  if (s.done) haptic();
+  saveData();
+  renderTodo();
+}
+function toggleTodoExpand(todoId, e) {
+  if (e) e.stopPropagation();
+  if (!window._expandedTodos) window._expandedTodos = {};
+  window._expandedTodos[todoId] = !window._expandedTodos[todoId];
+  renderTodo();
 }
 
 // 🔁 반복 주기에 따라 요일/날짜 입력칸 표시 전환
@@ -13724,10 +14019,15 @@ function saveTodo(editId) {
   if (!title) { showToast('내용을 입력해주세요'); return; }
   const dateKeyVal = document.getElementById('todo-date').value || todayKey();
   const tag = document.querySelector('#tag-grid .chip.active')?.dataset.tag || '업무';
-  // 🔧 기간 토글 추가로 .toggle이 2개 — 중요 표시는 반드시 id로 참조
-  const flag = document.getElementById('todo-flag-toggle')?.classList.contains('on') || false;
+  // 🚩 우선순위 (flag는 하위호환용으로 함께 유지 — 긴급이면 true)
+  const priority = Number(document.querySelector('#todo-priority .chip.active')?.dataset.p) || 3;
+  const flag = priority === 1;
   const time = document.getElementById('todo-time')?.value || '';
   const memo = document.getElementById('todo-memo')?.value.trim() || '';
+  // ☑️ 체크리스트 — 빈 항목은 버림
+  const subtasks = (window._editSubtasks || [])
+    .filter(s => s && String(s.text || '').trim())
+    .map(s => ({ id: s.id, text: String(s.text).trim(), done: !!s.done }));
 
   // 🔧 기간 일정 (여행 등): 토글 켜짐 + 종료일이 시작일 이후일 때만 저장
   const periodOn = document.getElementById('todo-period-toggle')?.classList.contains('on');
@@ -13765,6 +14065,8 @@ function saveTodo(editId) {
       t.dateKey = dateKeyVal;
       t.tag = tag;
       t.flag = flag;
+      t.priority = priority;
+      t.subtasks = subtasks;
       t.time = time;
       t.memo = memo;
       if (endDateKeyVal) t.endDateKey = endDateKeyVal;
@@ -13785,6 +14087,8 @@ function saveTodo(editId) {
       tag,
       dateKey: dateKeyVal,
       flag,
+      priority,
+      subtasks,
       time,
       memo,
       done: false,
