@@ -14641,6 +14641,27 @@ function buildAssetDetailCard(a, live) {
         ${holdInfo ? `<div style="font-size:11px; color:var(--text-tertiary); margin-top:12px; padding-top:10px; border-top:0.5px solid var(--border-tertiary);">${holdInfo}</div>` : ''}
       </div>
 
+      ${(a.ticker || a.type === '금') ? (() => {
+        // 🔔 목표가 알림 — 설정돼 있으면 현재 상태와 남은 거리 표시
+        const below = Number(a.alertBelow) || 0, above = Number(a.alertAbove) || 0;
+        const gap = alertGapPct(a, 'asset');
+        if (below > 0 || above > 0) {
+          return `<div onclick="openTargetPriceModal('asset', ${a.id})" style="margin-top:12px; padding:11px 12px; background:rgba(29,158,117,0.08); border:1px solid rgba(29,158,117,0.3); border-radius:10px; cursor:pointer;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span style="font-size:11px; font-weight:700; color:#1D9E75;">🔔 목표가 알림 켜짐</span>
+              <span style="font-size:10px; color:var(--text-tertiary);">수정 ›</span>
+            </div>
+            <div style="font-size:11px; color:var(--text-secondary); margin-top:4px; line-height:1.6;">
+              ${below > 0 ? `📉 ${below.toLocaleString()} 이하면 알림 (매수 기회)` : ''}
+              ${below > 0 && above > 0 ? '<br>' : ''}
+              ${above > 0 ? `📈 ${above.toLocaleString()} 이상이면 알림` : ''}
+              ${gap != null ? `<br><b style="color:${Math.abs(gap) <= 3 ? '#D85A30' : 'var(--text-tertiary)'};">목표까지 ${Math.abs(gap).toFixed(1)}%</b>` : ''}
+            </div>
+          </div>`;
+        }
+        return `<button onclick="openTargetPriceModal('asset', ${a.id})" style="width:100%; margin-top:12px; padding:11px; border:1px dashed rgba(29,158,117,0.5); background:rgba(29,158,117,0.05); color:#1D9E75; border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">🔔 목표가 알림 설정</button>`;
+      })() : ''}
+
       <div style="display:flex; gap:8px; margin-top:12px;">
         <button onclick="editAsset(${a.id})" style="flex:1; border:none; background:var(--accent-primary, #5E5CE6); color:white; padding:12px; border-radius:10px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">✏️ 수정</button>
         ${a.ticker ? `<button onclick="manualRefreshAssetPrices()" style="flex:1; border:none; background:var(--bg-tertiary); color:var(--text-secondary); padding:12px; border-radius:10px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit;">🔄 시세 갱신</button>` : ''}
@@ -14902,7 +14923,23 @@ function renderAsset() {
   let html = '';
 
   // 시장 지수 카드 (라이브)
-  html += `<div id="market-indices" style="margin-bottom:14px;"></div>`;
+  html += `<div id="market-indices" style="margin-bottom:8px;"></div>`;
+  // 🔔 환율·금 목표가 알림 (시장 지표라 자산과 별개로 설정)
+  html += (() => {
+    const ma = settings.marketAlerts || {};
+    const on = [];
+    if (ma.fx && (ma.fx.above || ma.fx.below)) on.push('환율');
+    if (ma.gold && (ma.gold.above || ma.gold.below)) on.push('금');
+    const unread = unreadAlerts().length;
+    return `<div onclick="openMarketAlertModal()" style="display:flex; align-items:center; gap:8px; padding:10px 12px; margin-bottom:14px; border:1px dashed ${on.length ? 'rgba(29,158,117,0.45)' : 'var(--border-tertiary)'}; background:${on.length ? 'rgba(29,158,117,0.06)' : 'var(--bg-secondary)'}; border-radius:10px; cursor:pointer;">
+      <span style="font-size:15px;">${on.length ? '🔔' : '🔕'}</span>
+      <div style="flex:1; min-width:0;">
+        <div style="font-size:12px; font-weight:700; color:${on.length ? '#1D9E75' : 'var(--text-secondary)'};">환율·금 목표가 알림 ${on.length ? `(${on.join('·')} 켜짐)` : ''}</div>
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${on.length ? '도달하면 배너로 알려드려요' : '환율·금값이 원하는 선에 오면 알림 받기'}</div>
+      </div>
+      ${unread > 0 ? `<span onclick="event.stopPropagation(); openAlertCenter();" style="font-size:10px; font-weight:700; background:#D85A30; color:white; padding:3px 8px; border-radius:999px;">${unread}</span>` : `<span style="font-size:11px; color:var(--text-tertiary);">›</span>`}
+    </div>`;
+  })();
 
   // 자산 변화 추이 (월별 스냅샷)
   html += renderAssetTrendCard();
@@ -15251,6 +15288,12 @@ async function loadMarketIndices() {
     domesticGoldPerG = data.goldDomestic.price;
     kimchiPremium = ((domesticGoldPerG - intlGoldKrwPerG) / intlGoldKrwPerG) * 100;
   }
+
+  // 🔔 환율·금 목표 도달 검사 (시장 지표를 받아온 이 시점이 가장 정확)
+  try {
+    window._lastGoldPerG = domesticGoldPerG || intlGoldKrwPerG || null;
+    checkMarketAlerts(data.usdkrw?.price || null, window._lastGoldPerG);
+  } catch (e) { console.warn('환율·금 알림 확인 실패:', e); }
 
   const items = [
     {
@@ -17842,6 +17885,7 @@ async function refreshAllAssetPrices() {
   });
   await Promise.all(promises);
   console.log('📈 시세 갱신 완료');
+  try { checkPriceAlerts(); } catch (e) { console.warn('목표가 알림 확인 실패:', e); } // 🔔 목표가 도달 검사
 }
 
 // 수동 시세 갱신 (자산 헤더 버튼용)
@@ -18454,6 +18498,369 @@ function saveWatchItem() {
   render();
 }
 
+// ===== 🔔 목표가 알림 =====
+// 서버가 없어 '앱이 꺼져 있을 때'는 못 보내지만, 시세를 받아올 때마다(앱 열 때·자산탭 진입·수동 갱신)
+// 목표가 도달을 검사해서 배너로 남긴다. 읽기 전까지 사라지지 않으므로 놓치지 않는다.
+// 브라우저 알림 권한이 있으면 앱이 켜져 있는 동안엔 시스템 알림도 함께 띄운다.
+
+function alertItemPrice(item, kind) {
+  if (kind === 'asset') {
+    const live = liveAssetData[item.id];
+    if (live && live.currentPrice != null) return Number(live.currentPrice);
+    return null;
+  }
+  const r = (window._watchResults || []).find(x => x.w && x.w.id === item.id);
+  return r && r.price != null ? Number(r.price) : null;
+}
+
+// 목표가까지 남은 비율 (음수=이미 넘어섬)
+function alertGapPct(item, kind) {
+  const p = alertItemPrice(item, kind);
+  if (p == null) return null;
+  const above = Number(item.alertAbove) || 0;
+  const below = Number(item.alertBelow) || 0;
+  if (below > 0) return ((p - below) / below) * 100;   // 매수 목표: 얼마나 더 내려야 하나
+  if (above > 0) return ((above - p) / p) * 100;       // 매도/돌파 목표: 얼마나 더 올라야 하나
+  return null;
+}
+
+function evalItemAlerts(item, price, kind, out) {
+  const above = Number(item.alertAbove) || 0;
+  const below = Number(item.alertBelow) || 0;
+  const name = item.name || item.ticker || '종목';
+  const tk = item.ticker || '';
+
+  // 이상(돌파) 목표
+  if (above > 0) {
+    if (price >= above && !item.alertAboveFired) {
+      item.alertAboveFired = true;
+      out.push({ id: Date.now() + Math.random(), name, ticker: tk, kind: 'above', target: above, price, at: Date.now(), read: false });
+    } else if (price < above * 0.995) {
+      item.alertAboveFired = false; // 0.5% 이상 되돌아오면 재무장 (같은 알림 반복 방지)
+    }
+  }
+  // 이하(매수 기회) 목표
+  if (below > 0) {
+    if (price <= below && !item.alertBelowFired) {
+      item.alertBelowFired = true;
+      out.push({ id: Date.now() + Math.random(), name, ticker: tk, kind: 'below', target: below, price, at: Date.now(), read: false });
+    } else if (price > below * 1.005) {
+      item.alertBelowFired = false;
+    }
+  }
+}
+
+function checkPriceAlerts() {
+  const hits = [];
+  (assets || []).forEach(a => {
+    if (!(Number(a.alertAbove) > 0 || Number(a.alertBelow) > 0)) return;
+    const p = alertItemPrice(a, 'asset');
+    if (p != null) evalItemAlerts(a, p, 'asset', hits);
+  });
+  (watchlist || []).forEach(w => {
+    if (!(Number(w.alertAbove) > 0 || Number(w.alertBelow) > 0)) return;
+    const p = alertItemPrice(w, 'watch');
+    if (p != null) evalItemAlerts(w, p, 'watch', hits);
+  });
+
+  return recordAlertHits(hits);
+}
+
+// 도달 기록 저장 + 알림 (자산·관심종목·시장지표 공용)
+function recordAlertHits(hits) {
+  if (!hits || hits.length === 0) return 0;
+  if (!settings.alertHits) settings.alertHits = [];
+  settings.alertHits = hits.concat(settings.alertHits).slice(0, 30); // 최근 30건만 보관
+  saveData();
+  hits.forEach(h => sendSystemNotification(h));
+  showToast(`🔔 목표 도달! ${hits.map(h => h.name).join(', ')}`);
+  renderAlertBanner();
+  return hits.length;
+}
+
+// ===== 🔔 시장 지표 알림 (환율 · 금) =====
+// 보유 자산이 아니어서 별도 관리. 시장 지수를 불러올 때마다 검사한다.
+function evalMarketAlert(cfg, price, name, unit, out) {
+  if (!cfg || price == null || !isFinite(price)) return;
+  const above = Number(cfg.above) || 0;
+  const below = Number(cfg.below) || 0;
+  if (above > 0) {
+    if (price >= above && !cfg.aboveFired) {
+      cfg.aboveFired = true;
+      out.push({ id: Date.now() + Math.random(), name, ticker: unit, kind: 'above', target: above, price: Math.round(price), at: Date.now(), read: false });
+    } else if (price < above * 0.995) cfg.aboveFired = false;
+  }
+  if (below > 0) {
+    if (price <= below && !cfg.belowFired) {
+      cfg.belowFired = true;
+      out.push({ id: Date.now() + Math.random(), name, ticker: unit, kind: 'below', target: below, price: Math.round(price), at: Date.now(), read: false });
+    } else if (price > below * 1.005) cfg.belowFired = false;
+  }
+}
+
+function checkMarketAlerts(fxRate, goldPerG) {
+  const ma = settings.marketAlerts;
+  if (!ma) return 0;
+  const hits = [];
+  evalMarketAlert(ma.fx, fxRate, '원/달러 환율', '원', hits);
+  evalMarketAlert(ma.gold, goldPerG, '금 시세', '원/g', hits);
+  if (hits.length) saveData(); // fired 플래그 보존
+  return recordAlertHits(hits);
+}
+
+function openMarketAlertModal() {
+  if (!settings.marketAlerts) settings.marketAlerts = {};
+  const ma = settings.marketAlerts;
+  const fx = ma.fx || {}, gold = ma.gold || {};
+  const curFx = exchangeRateCache?.rate ? Math.round(exchangeRateCache.rate) : null;
+  const curGold = window._lastGoldPerG ? Math.round(window._lastGoldPerG) : null;
+
+  const block = (id, label, icon, cfg, cur, unit, hint) => `
+    <div style="padding:12px; background:var(--bg-secondary); border-radius:12px; margin-bottom:12px;">
+      <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:9px;">
+        <span style="font-size:13px; font-weight:700;">${icon} ${label}</span>
+        <span style="font-size:11px; color:var(--text-tertiary);">${cur != null ? `현재 ${cur.toLocaleString()}${unit}` : '불러오는 중'}</span>
+      </div>
+      <div class="field-label" style="margin-bottom:5px;">📉 이 값 <b>이하</b>면 알림 <span style="font-size:10px; color:var(--text-tertiary);">${hint}</span></div>
+      <div style="display:flex; gap:6px; margin-bottom:9px;">
+        <input type="number" id="${id}-below" step="any" value="${Number(cfg.below) > 0 ? cfg.below : ''}" placeholder="${cur != null ? Math.round(cur * 0.97) : ''}" style="flex:1;" />
+        ${calcBtn(id + '-below')}
+      </div>
+      <div class="field-label" style="margin-bottom:5px;">📈 이 값 <b>이상</b>이면 알림</div>
+      <div style="display:flex; gap:6px;">
+        <input type="number" id="${id}-above" step="any" value="${Number(cfg.above) > 0 ? cfg.above : ''}" placeholder="${cur != null ? Math.round(cur * 1.03) : ''}" style="flex:1;" />
+        ${calcBtn(id + '-above')}
+      </div>
+    </div>`;
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">취소</button>
+        <h2>🔔 환율·금 알림</h2>
+        <button class="modal-save" onclick="saveMarketAlerts()">저장</button>
+      </div>
+      ${block('ma-fx', '원/달러 환율', '💱', fx, curFx, '원', '(환전·미국주식 매수 타이밍)')}
+      ${block('ma-gold', '금 시세 (국내, 원/g)', '🪙', gold, curGold, '원', '(금 매수 타이밍)')}
+      <div style="padding:10px 12px; background:var(--bg-info); border-radius:10px; font-size:11px; color:var(--text-info); line-height:1.6;">
+        💡 <b>앱을 열 때마다</b> 확인해서 도달했으면 배너로 알려드려요. 비워두면 그 알림은 꺼져요.
+      </div>
+    </div>`;
+  modal.classList.add('show');
+}
+
+async function saveMarketAlerts() {
+  if (!settings.marketAlerts) settings.marketAlerts = {};
+  const ma = settings.marketAlerts;
+  const read = (id) => Number(document.getElementById(id)?.value) || 0;
+
+  const setCfg = (key, below, above, cur) => {
+    if (below <= 0 && above <= 0) { delete ma[key]; return; }
+    if (below > 0 && above > 0 && below >= above) throw new Error('이하 값이 이상 값보다 낮아야 해요');
+    const cfg = ma[key] || {};
+    if (below > 0) cfg.below = below; else { delete cfg.below; delete cfg.belowFired; }
+    if (above > 0) cfg.above = above; else { delete cfg.above; delete cfg.aboveFired; }
+    // 설정 직후 즉시 울리지 않도록 현재값 기준으로 무장 상태 맞춤
+    if (cur != null) {
+      if (above > 0) cfg.aboveFired = cur >= above;
+      if (below > 0) cfg.belowFired = cur <= below;
+    }
+    ma[key] = cfg;
+  };
+
+  try {
+    setCfg('fx', read('ma-fx-below'), read('ma-fx-above'), exchangeRateCache?.rate || null);
+    setCfg('gold', read('ma-gold-below'), read('ma-gold-above'), window._lastGoldPerG || null);
+  } catch (e) {
+    showToast(e.message);
+    return;
+  }
+
+  if (ma.fx || ma.gold) await ensureNotificationPermission();
+  saveData();
+  closeModal();
+  showToast((ma.fx || ma.gold) ? '🔔 환율·금 알림 설정됨' : '알림 해제됨');
+  render();
+}
+
+// 시스템 알림 (앱이 켜져 있을 때만 동작 — 권한 있을 때)
+function sendSystemNotification(h) {
+  try {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    const dir = h.kind === 'below' ? '이하로 내려왔어요 (매수 기회)' : '이상으로 올라왔어요';
+    new Notification(`🔔 ${h.name} 목표가 도달`, {
+      body: `목표 ${h.target.toLocaleString()} · 현재 ${h.price.toLocaleString()}\n${dir}`,
+      tag: `price-${h.ticker || h.name}`,
+    });
+  } catch (e) { /* 알림 미지원 환경 무시 */ }
+}
+
+async function ensureNotificationPermission() {
+  try {
+    if (typeof Notification === 'undefined') return false;
+    if (Notification.permission === 'granted') return true;
+    if (Notification.permission === 'denied') return false;
+    const r = await Notification.requestPermission();
+    return r === 'granted';
+  } catch (e) { return false; }
+}
+
+function unreadAlerts() { return (settings.alertHits || []).filter(h => !h.read); }
+
+function renderAlertBanner() {
+  const unread = unreadAlerts();
+  let el = document.getElementById('price-alert-banner');
+  if (unread.length === 0) { if (el) el.remove(); return; }
+
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'price-alert-banner';
+    el.style.cssText = 'position:fixed; left:0; right:0; bottom:calc(58px + env(safe-area-inset-bottom,0)); z-index:9998; padding:0 10px;';
+    document.body.appendChild(el);
+  }
+  const top = unread[0];
+  const dir = top.kind === 'below' ? '↓ 목표가 이하' : '↑ 목표가 이상';
+  const color = top.kind === 'below' ? '#1D9E75' : '#D85A30';
+  el.innerHTML = `
+    <div onclick="openAlertCenter()" style="background:${color}; color:white; border-radius:12px; padding:11px 13px; box-shadow:0 4px 16px rgba(0,0,0,0.2); display:flex; align-items:center; gap:10px; cursor:pointer;">
+      <span style="font-size:18px;">🔔</span>
+      <div style="flex:1; min-width:0;">
+        <div style="font-size:12px; font-weight:800;">${escapeHTML(top.name)} 목표가 도달 ${unread.length > 1 ? `외 ${unread.length - 1}건` : ''}</div>
+        <div style="font-size:10px; opacity:0.92; margin-top:1px;">${dir} · 목표 ${top.target.toLocaleString()} → 현재 ${top.price.toLocaleString()}</div>
+      </div>
+      <button onclick="event.stopPropagation(); dismissAllAlerts();" style="border:none; background:rgba(255,255,255,0.25); color:white; width:26px; height:26px; border-radius:50%; font-size:13px; cursor:pointer; font-family:inherit; flex-shrink:0;">✕</button>
+    </div>`;
+}
+
+function dismissAllAlerts() {
+  (settings.alertHits || []).forEach(h => h.read = true);
+  saveData();
+  renderAlertBanner();
+}
+
+function openAlertCenter() {
+  const list = settings.alertHits || [];
+  const rows = list.length === 0
+    ? `<div style="padding:24px; text-align:center; color:var(--text-tertiary); font-size:12px;">아직 도달 기록이 없어요.</div>`
+    : list.map(h => {
+        const dir = h.kind === 'below' ? '↓ 이하 도달 (매수 기회)' : '↑ 이상 도달';
+        const col = h.kind === 'below' ? '#1D9E75' : '#D85A30';
+        const dt = new Date(h.at);
+        return `<div style="padding:11px 8px; border-bottom:0.5px solid var(--border-tertiary); ${h.read ? 'opacity:0.5;' : ''}">
+          <div style="display:flex; justify-content:space-between; align-items:baseline;">
+            <span style="font-size:13px; font-weight:700;">${escapeHTML(h.name)}</span>
+            <span style="font-size:11px; font-weight:700; color:${col};">${dir}</span>
+          </div>
+          <div style="font-size:11px; color:var(--text-tertiary); margin-top:3px;">
+            목표 ${h.target.toLocaleString()} → 도달가 ${h.price.toLocaleString()} · ${dt.getMonth()+1}/${dt.getDate()} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}
+          </div>
+        </div>`;
+      }).join('');
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+        <h2>🔔 목표가 알림</h2>
+        <button class="modal-save" onclick="dismissAllAlerts(); closeModal();">모두 읽음</button>
+      </div>
+      <div style="padding:10px 12px; background:var(--bg-warning); border-radius:10px; margin-bottom:10px; font-size:11px; color:var(--text-warning); line-height:1.6;">
+        앱이 꺼져 있을 땐 알림을 못 보내요(서버 필요). <b>앱을 열 때마다 시세를 확인해</b> 도달했으면 여기에 남겨둬요.
+      </div>
+      <div style="border:0.5px solid var(--border-tertiary); border-radius:10px; overflow:hidden; max-height:60vh; overflow-y:auto;">${rows}</div>
+      ${list.length ? `<button onclick="settings.alertHits=[]; saveData(); closeModal(); renderAlertBanner(); showToast('기록 비움');" style="width:100%; margin-top:10px; padding:11px; border:0.5px solid var(--border-tertiary); background:white; color:var(--text-tertiary); border-radius:10px; font-size:12px; cursor:pointer; font-family:inherit;">기록 모두 지우기</button>` : ''}
+    </div>`;
+  modal.classList.add('show');
+  dismissAllAlerts();
+}
+
+// 🔔 목표가 설정 모달 (자산 / 관심종목 공용)
+function openTargetPriceModal(kind, id) {
+  const item = kind === 'asset' ? assets.find(a => a.id === id) : watchlist.find(w => w.id === id);
+  if (!item) return;
+  const cur = alertItemPrice(item, kind);
+  const isUS = kind === 'asset'
+    ? (liveAssetData[item.id]?.currency === 'USD')
+    : !((item.ticker || '').length === 6 && /\d/.test(item.ticker || ''));
+  const unit = isUS ? '$' : '원';
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">취소</button>
+        <h2>🔔 목표가 설정</h2>
+        <button class="modal-save" onclick="saveTargetPrice('${kind}', ${id})">저장</button>
+      </div>
+
+      <div style="padding:11px 12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:12px;">
+        <div style="font-size:13px; font-weight:700;">${escapeHTML(item.name || item.ticker)}</div>
+        <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">
+          ${cur != null ? `현재가 ${unit === '$' ? '$' : ''}${cur.toLocaleString()}${unit === '원' ? '원' : ''}` : '현재가 불러오는 중'}
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="field-label">📉 이 가격 <b>이하</b>면 알림 <span style="font-size:10px; color:var(--text-tertiary);">(매수 기회)</span></div>
+        <div style="display:flex; gap:6px;">
+          <input type="number" id="tp-below" step="any" value="${Number(item.alertBelow) > 0 ? item.alertBelow : ''}" placeholder="${cur != null ? (cur * 0.95).toFixed(isUS ? 2 : 0) : '예: 60000'}" style="flex:1;" />
+          ${calcBtn('tp-below')}
+        </div>
+        ${cur != null ? `<div style="display:flex; gap:5px; margin-top:7px;">
+          ${[3, 5, 10].map(p => `<button type="button" onclick="document.getElementById('tp-below').value=(${cur}*${(1 - p/100)}).toFixed(${isUS ? 2 : 0})" class="chip" style="flex:1; font-size:11px;">-${p}%</button>`).join('')}
+        </div>` : ''}
+      </div>
+
+      <div class="field">
+        <div class="field-label">📈 이 가격 <b>이상</b>이면 알림 <span style="font-size:10px; color:var(--text-tertiary);">(돌파·익절)</span></div>
+        <div style="display:flex; gap:6px;">
+          <input type="number" id="tp-above" step="any" value="${Number(item.alertAbove) > 0 ? item.alertAbove : ''}" placeholder="${cur != null ? (cur * 1.05).toFixed(isUS ? 2 : 0) : '예: 80000'}" style="flex:1;" />
+          ${calcBtn('tp-above')}
+        </div>
+        ${cur != null ? `<div style="display:flex; gap:5px; margin-top:7px;">
+          ${[3, 5, 10].map(p => `<button type="button" onclick="document.getElementById('tp-above').value=(${cur}*${(1 + p/100)}).toFixed(${isUS ? 2 : 0})" class="chip" style="flex:1; font-size:11px;">+${p}%</button>`).join('')}
+        </div>` : ''}
+      </div>
+
+      <div style="padding:10px 12px; background:var(--bg-info); border-radius:10px; font-size:11px; color:var(--text-info); line-height:1.6;">
+        💡 <b>앱을 열 때마다</b> 시세를 확인해 도달했으면 알려드려요. 읽기 전까진 배너가 남아 있어서 놓치지 않아요.<br>
+        비워두면 그 방향 알림은 꺼져요.
+      </div>
+    </div>`;
+  modal.classList.add('show');
+}
+
+async function saveTargetPrice(kind, id) {
+  const item = kind === 'asset' ? assets.find(a => a.id === id) : watchlist.find(w => w.id === id);
+  if (!item) return;
+  const below = Number(document.getElementById('tp-below')?.value) || 0;
+  const above = Number(document.getElementById('tp-above')?.value) || 0;
+
+  if (below > 0 && above > 0 && below >= above) {
+    showToast('이하 가격이 이상 가격보다 낮아야 해요');
+    return;
+  }
+
+  if (below > 0) item.alertBelow = below; else { delete item.alertBelow; delete item.alertBelowFired; }
+  if (above > 0) item.alertAbove = above; else { delete item.alertAbove; delete item.alertAboveFired; }
+
+  // 설정 직후 이미 도달한 상태면 바로 울리지 않도록 현재가 기준으로 무장 상태 맞춤
+  const p = alertItemPrice(item, kind);
+  if (p != null) {
+    if (above > 0) item.alertAboveFired = p >= above;
+    if (below > 0) item.alertBelowFired = p <= below;
+  }
+
+  if (below > 0 || above > 0) await ensureNotificationPermission();
+
+  saveData();
+  closeModal();
+  showToast(below > 0 || above > 0 ? '🔔 목표가 설정됨' : '목표가 해제됨');
+  render();
+}
+
 function removeWatchItem(id) {
   watchlist = watchlist.filter(w => w.id !== id);
   saveData();
@@ -18604,6 +19011,7 @@ async function renderWatchlist() {
             ${price != null ? `<div style="font-size:11px; color:${chgColor};">${changePct >= 0 ? '▲' : '▼'}${Math.abs(changePct).toFixed(2)}%</div>` : ''}
             ${(price != null && fiftyTwoWeekHigh) ? `<div style="font-size:10px; margin-top:1px;">${drawdownBadge(price, fiftyTwoWeekHigh, {fontSize:9})}</div>` : ''}
           </div>
+          <button onclick="event.stopPropagation(); openTargetPriceModal('watch', ${w.id})" title="목표가 알림" style="border:none; background:transparent; cursor:pointer; padding:4px; color:${(Number(w.alertBelow) > 0 || Number(w.alertAbove) > 0) ? '#1D9E75' : 'var(--text-tertiary)'}; font-family:inherit; flex-shrink:0; font-size:14px;">${(Number(w.alertBelow) > 0 || Number(w.alertAbove) > 0) ? '🔔' : '🔕'}</button>
           <button onclick="event.stopPropagation(); removeWatchItem(${w.id})" style="border:none; background:transparent; cursor:pointer; padding:4px; color:var(--text-tertiary); font-family:inherit; flex-shrink:0;"><i class="ti ti-x" style="font-size:14px;"></i></button>
         </div>
         ${isOpen ? (related.length > 0 ? `
@@ -18624,6 +19032,7 @@ async function renderWatchlist() {
   // 결과 캐시 (토글 시 재요청 없이 다시 그리기)
   window._watchResults = results;
   container.innerHTML = html;
+  try { checkPriceAlerts(); } catch (e) { console.warn('목표가 알림 확인 실패:', e); } // 🔔 관심종목 목표가 검사
 }
 
 // 관심종목 카드 펼치기/접기
@@ -18671,6 +19080,7 @@ function renderWatchlistFromCache() {
             ${price != null ? `<div style="font-size:11px; color:${chgColor};">${changePct >= 0 ? '▲' : '▼'}${Math.abs(changePct).toFixed(2)}%</div>` : ''}
             ${(price != null && fiftyTwoWeekHigh) ? `<div style="font-size:10px; margin-top:1px;">${drawdownBadge(price, fiftyTwoWeekHigh, {fontSize:9})}</div>` : ''}
           </div>
+          <button onclick="event.stopPropagation(); openTargetPriceModal('watch', ${w.id})" title="목표가 알림" style="border:none; background:transparent; cursor:pointer; padding:4px; color:${(Number(w.alertBelow) > 0 || Number(w.alertAbove) > 0) ? '#1D9E75' : 'var(--text-tertiary)'}; font-family:inherit; flex-shrink:0; font-size:14px;">${(Number(w.alertBelow) > 0 || Number(w.alertAbove) > 0) ? '🔔' : '🔕'}</button>
           <button onclick="event.stopPropagation(); removeWatchItem(${w.id})" style="border:none; background:transparent; cursor:pointer; padding:4px; color:var(--text-tertiary); font-family:inherit; flex-shrink:0;"><i class="ti ti-x" style="font-size:14px;"></i></button>
         </div>
         ${isOpen ? (related.length > 0 ? `
@@ -22988,6 +23398,7 @@ function startApp() {
   // 앱 시작 시 자동매수 1회 점검 (render와 분리, 시세 로드 여유를 두고 실행)
   setTimeout(() => runAllAutoBuysSafe('app-start'), 1500);
   setTimeout(() => runAssetAccrualsSafe(), 1800); // 💼 자동 적립(퇴직금 등) 점검
+  setTimeout(() => { try { renderAlertBanner(); } catch (e) {} }, 600); // 🔔 못 읽은 목표가 알림 배너 복원
 }
 
 function showLoginScreen() {
