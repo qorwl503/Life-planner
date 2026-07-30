@@ -10467,7 +10467,7 @@ async function processTradeCapture(input) {
 - 응답은 JSON만: {"transcript":"...","trades":[{...}]}
 - 정말 못 읽으면 {"transcript":"...","trades":[],"error":"이유"}`;
 
-      const ocrModels = ['gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-flash-latest'];
+      const ocrModels = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
       const body = {
         contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64 } }] }],
         generationConfig: { temperature: 0, maxOutputTokens: 4000 }
@@ -11559,7 +11559,7 @@ async function processAssetCapture(input) {
 - 매입단가/평균단가가 직접 있으면 → 그 값 그대로
 - 예: "평가금액 2,800,000원 / 100주" → price=28000, qty=100`;
 
-    const ocrModels = ['gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-flash-latest'];
+    const ocrModels = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
     const body = {
       contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64 } }] }],
       generationConfig: { temperature: 0, maxOutputTokens: 8000 }
@@ -11923,7 +11923,7 @@ async function processAutobuyCapture(input) {
 
 종목이 하나도 없을 때만: {"items":[],"error":"이유"}`;
 
-      const ocrModels = ['gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-flash-latest'];
+      const ocrModels = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
       const reqBody = {
         contents: [{ parts: [
           { text: prompt },
@@ -12419,19 +12419,31 @@ async function processFixedCapture(input) {
 
 ⚠️ 일회성 지출(한 번만 쓴 것)은 제외하고, 정기적으로 빠져나가는 것만 추출해.`;
 
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${window.GEMINI_API_KEY}`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [
-            { text: prompt },
-            { inline_data: { mime_type: mimeType, data: base64 } },
-          ]}],
-          generationConfig: { temperature: 0, maxOutputTokens: 2000 },
-        }),
+      // 🔧 모델 폴백 추가 — 최신 모델로 읽고, 한도(429)/혼잡(503)이면 기존 경량 모델로 강등
+      const fxModels = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+      const reqBody = JSON.stringify({
+        contents: [{ parts: [
+          { text: prompt },
+          { inline_data: { mime_type: mimeType, data: base64 } },
+        ]}],
+        generationConfig: { temperature: 0, maxOutputTokens: 2000 },
       });
-      const data = await res.json();
+      let data = null;
+      for (const model of fxModels) {
+        try {
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${window.GEMINI_API_KEY}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: reqBody,
+          });
+          if (res.status === 429 || res.status === 503 || res.status === 404) continue; // 다음 모델로
+          const d = await res.json();
+          if (!res.ok || d.error) continue;
+          data = d;
+          break;
+        } catch (e) { continue; }
+      }
+      if (!data) throw new Error('AI 호출 실패 (모든 모델)');
       const txt = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
       const m = txt.match(/\{[\s\S]*\}/);
       if (m) {
@@ -13387,8 +13399,6 @@ async function processCardCapture(input) {
 
 만약 분석 불가하면: {"items":[],"error":"이유"}`;
 
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${window.GEMINI_API_KEY}`;
-
       const body = {
         contents: [{
           parts: [
@@ -13397,19 +13407,29 @@ async function processCardCapture(input) {
           ]
         }],
         generationConfig: {
-          temperature: 0.1,
+          temperature: 0,
           maxOutputTokens: 2000,
         }
       };
 
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error?.message || `HTTP ${res.status}`);
+      // 🔧 모델 폴백 추가 — 최신 모델 우선, 한도(429)/혼잡(503)이면 기존 경량 모델로 강등
+      const cardModels = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+      let data = null, lastErr = '';
+      for (const model of cardModels) {
+        try {
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${window.GEMINI_API_KEY}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          if (res.status === 429 || res.status === 503 || res.status === 404) { lastErr = `HTTP ${res.status}`; continue; }
+          const d = await res.json();
+          if (!res.ok || d.error) { lastErr = d.error?.message || `HTTP ${res.status}`; continue; }
+          data = d;
+          break;
+        } catch (e) { lastErr = e.message || '네트워크 오류'; continue; }
+      }
+      if (!data) throw new Error(lastErr || 'AI 호출 실패');
 
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
       console.log(`📸 OCR 결과 ${idx + 1}:`, text);
@@ -16020,7 +16040,7 @@ async function askGemini(prompt, options = {}) {
     return { error: 'AI 키가 설정되지 않았어요. 우측 상단 톱니바퀴에서 키를 입력하세요.', needsKey: true };
   }
 
-  const models = ['gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-flash-latest'];
+  const models = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
   let lastError = '알 수 없는 오류';
   let searchFailed = false; // 🔧 검색 도구 때문에 실패했는지
 
