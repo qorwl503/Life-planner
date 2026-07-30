@@ -8448,9 +8448,16 @@ function findMatchingAsset(criteria) {
   // ⚠️ 단, 내 티커가 있는데 후보의 티커가 '다르면' → 다른 종목이므로 매칭 거부
   //    (QQQ vs QQQM 처럼 이름이 비슷해도 티커가 다르면 합치면 안 됨)
   if (name && type) {
+    // 🔧 종류 비교를 '계열' 단위로 완화 — OCR이 '주식'/'미국주식'/'해외ETF'를 다르게 읽어도
+    //    이름이 같으면 같은 종목으로 본다. (예: "알파벳 A"가 매칭 안 되고 신규로 추가되던 문제)
+    const sameTypeFamily = (t1, t2) => {
+      if (t1 === t2) return true;
+      if (isStockLikeType(t1) && isStockLikeType(t2)) return true; // 주식·ETF·펀드·채권 계열끼리
+      return DEPOSIT_TYPES.includes(t1) && DEPOSIT_TYPES.includes(t2); // 납입형끼리
+    };
     const byName = assets.find(a => {
       // 🔧 정규화 비교 — 띄어쓰기·기호 차이 무시 (OCR 변형에 강하게)
-      if (normName(a.name) !== myName || a.type !== type) return false;
+      if (normName(a.name) !== myName || !sameTypeFamily(a.type, type)) return false;
       const at = normTicker(a.ticker);
       // 둘 다 티커가 있는데 서로 다르면 → 다른 종목
       if (myTicker && at && myTicker !== at) return false;
@@ -12710,6 +12717,13 @@ function openAssetReviewModal(items) {
               ⚠️ 같은 자산 이미 있음: ${escapeHTML(existing.name)} (${existing.qty || 0}주 평균 ${(existing.price || 0).toLocaleString()}원)${autoNote}
             </div>`;
           })()}
+        ` : `
+          <div style="margin-top:8px; padding:8px; background:var(--bg-secondary); border-radius:8px; font-size:11px; color:var(--text-secondary); line-height:1.5;">
+            🔎 자동으로 같은 자산을 못 찾았어요. 아래에서 <b>기존 자산을 직접 골라 보정</b>할 수 있어요.
+          </div>
+        `}
+
+          <!-- 🔧 연결할 자산 선택 — 자동 매칭 실패해도 항상 표시 (예전엔 매칭됐을 때만 나와서 무조건 신규로 추가됐음) -->
           <div style="margin-top:8px;">
             <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:3px;">📎 연결할 자산 (자동 매칭이 틀렸으면 직접 선택)</div>
             <select onchange="window._setAssetReviewTarget(${i}, this.value)" style="width:100%; padding:8px 6px; border:0.5px solid var(--border-tertiary); border-radius:6px; font-size:12px; font-family:inherit; background:white;">
@@ -12751,20 +12765,20 @@ function openAssetReviewModal(items) {
               🚫 건너뛰기<br><span style="font-size:9px; opacity:0.7;">추가 X</span>
             </button>
           </div>
-          ${it._action === 'correct' ? `
+          ${(it._action === 'correct' && existing) ? `
             <div style="margin-top:6px; padding:7px 9px; background:rgba(123,97,255,0.08); border-radius:6px; font-size:10px; color:#7B61FF; line-height:1.6;">
-              🎯 <b>보정 모드</b>: "${existing.name}"의 현재 수량·평단가를 캡처값으로 덮어씁니다.<br>
+              🎯 <b>보정 모드</b>: "${escapeHTML(existing.name)}"의 현재 수량·평단가를 캡처값으로 덮어씁니다.<br>
               ✅ 자동매수 연동·회차 기록은 그대로 유지 → 다음 회차부터 보정된 값 기준으로 자동 계산<br>
               ${(Number(it.profitPct) || it.profitPct === 0 || Number(it.evalAmount) > 0)
                 ? '📊 캡처에 찍힌 수익률/평가금액도 함께 반영돼 증권사와 정확히 일치해요.'
                 : ''}
             </div>
           ` : ''}
-        ` : `
-          <div style="margin-top:6px; padding:6px 8px; background:var(--bg-success); border-radius:6px; font-size:11px; color:var(--text-success);">
-            ✨ 새 자산으로 추가됩니다
-          </div>
-        `}
+          ${it._action === 'new' ? `
+            <div style="margin-top:6px; padding:6px 8px; background:var(--bg-success); border-radius:6px; font-size:11px; color:var(--text-success);">
+              ✨ 새 자산으로 추가됩니다
+            </div>
+          ` : ''}
       </div>
     `;}).join('');
 
@@ -14517,6 +14531,7 @@ function buildAssetDetailCard(a, live) {
         ${row('현재가', (isUSD && a.priceCurrency !== 'KRW') ? `$${(live.currentPrice||0).toFixed(2)}` : `${Math.round(krwNow).toLocaleString()}원`, (isUSD && a.priceCurrency !== 'KRW') ? `₩${Math.round(krwNow).toLocaleString()}` : (isUSD ? `$${(live.currentPrice||0).toFixed(2)}` : ''))}
         ${row('총 평가금액', `${Math.round(totalEval).toLocaleString()}원`, '')}
       </div>
+      ${live.isManual ? `<div style="margin:-2px 0 10px; padding:7px 9px; background:var(--bg-warning); border-radius:8px; font-size:10px; color:var(--text-warning); line-height:1.5;">📌 <b>현재가 수동 지정 중</b>${a.manualPriceAt ? ` (${a.manualPriceAt} 입력)` : ''} — 실시간 갱신 안 돼요. 수정에서 비우면 실시간으로 돌아가요.</div>` : ''}
       ${live.fiftyTwoWeekHigh ? `<div style="margin:-2px 0 10px;">${drawdownBadge(live.currentPrice, live.fiftyTwoWeekHigh, {fontSize:11})} <span style="font-size:10px; color:var(--text-tertiary);">(52주 최고 ${isUSD && a.priceCurrency !== 'KRW' ? '$'+live.fiftyTwoWeekHigh.toFixed(2) : Math.round(live.fiftyTwoWeekHigh).toLocaleString()})</span></div>` : ''}
       <div style="display:flex; gap:12px; padding-top:8px; border-top:0.5px solid var(--border-tertiary);">
         <div style="flex:1;">
@@ -17810,7 +17825,19 @@ async function fetchAssetLive(asset) {
     console.log(`🔧 티커 자동 보정: ${asset.ticker} → ${ticker}`);
   }
 
-  const priceData = await fetchYahooPrice(ticker);
+  let priceData = await fetchYahooPrice(ticker);
+  // 📌 현재가 수동 지정이 있으면 그 값으로 덮어씀 (증권사 화면과 맞추기 위해)
+  //    통화·전일종가 등 나머지 정보는 라이브 값을 그대로 활용
+  if (Number(asset.manualPrice) > 0) {
+    const mp = Number(asset.manualPrice);
+    if (priceData) {
+      priceData = { ...priceData, price: mp, isManual: true };
+    } else {
+      // 시세 조회가 실패했어도 수동값으로 평가 가능하게
+      const guessUSD = (asset.region === '해외' || asset.region === '미국' || ['미국주식','해외ETF'].includes(asset.type));
+      priceData = { ticker, price: mp, previousClose: mp, changePct: 0, currency: guessUSD ? 'USD' : 'KRW', fiftyTwoWeekHigh: null, time: Date.now(), isManual: true };
+    }
+  }
   if (!priceData) {
     return snapResult() || {
       currentPrice: Number(asset.price),
@@ -17882,6 +17909,7 @@ async function fetchAssetLive(asset) {
     fxRateMissing,
     fiftyTwoWeekHigh: priceData.fiftyTwoWeekHigh != null ? Number(priceData.fiftyTwoWeekHigh) : null,
     hasLive: true,
+    isManual: !!priceData.isManual, // 📌 수동 지정가로 평가된 상태 표시
   };
 }
 
@@ -22464,23 +22492,27 @@ function editAsset(id) {
             </div>
           </div>
 
-          <!-- 합계 수동 수정 (옵션) -->
-          <details style="margin-top:10px;">
-            <summary style="font-size:11px; color:var(--text-tertiary); cursor:pointer;">📝 합계 수동 수정 (선택)</summary>
-            <div style="padding:8px 0;">
-              <div class="field" style="display:flex; gap:8px;">
-                <div style="flex:1;">
-                  <div class="field-label">수량 (주)</div>
-                  <input type="number" id="e-qty" value="${a.qty || 0}" step="0.0001" />
-                </div>
-                <div style="flex:1;">
-                  <div class="field-label">평균 매입가 (원)</div>
-                  <input type="number" id="e-price" value="${a.price || 0}" />
+          <!-- 🔧 수량·평균 매입가 직접 수정 — 예전엔 접힌 토글 안에 숨어 있어서 못 찾으셨음 → 항상 표시 -->
+          <div style="margin-top:12px; padding:12px; border:1px solid var(--border-secondary); border-radius:10px; background:white;">
+            <div style="font-size:12px; font-weight:700; margin-bottom:8px;">✍️ 수량 · 평균 매입가 직접 수정</div>
+            <div class="field" style="display:flex; gap:8px; margin-bottom:6px;">
+              <div style="flex:1;">
+                <div class="field-label">수량 (주)</div>
+                <input type="number" id="e-qty" value="${a.qty || 0}" step="0.0001" />
+              </div>
+              <div style="flex:1;">
+                <div class="field-label">평균 매입가 (원)</div>
+                <div style="display:flex; gap:6px;">
+                  <input type="number" id="e-price" value="${a.price || 0}" style="flex:1;" />
+                  ${calcBtn('e-price')}
                 </div>
               </div>
-              <div style="font-size:10px; color:var(--text-tertiary);">⚠️ 합계를 직접 수정하면 매수 기록과 어긋날 수 있어요</div>
             </div>
-          </details>
+            <div style="font-size:10px; color:var(--text-tertiary); line-height:1.5;">
+              증권사 화면 그대로 맞추고 싶을 때 여기서 바로 고치세요.<br>
+              ⚠️ 저장하면 <b>위 매수 기록은 지워지고</b> 입력한 합계가 기준이 돼요 (자동매수는 다음 회차부터 이 값 위에 쌓임).
+            </div>
+          </div>
         ` : `
           <!-- lots 없을 때: 직접 입력 -->
           <div class="field" style="display:flex; gap:8px;">
@@ -22506,6 +22538,24 @@ function editAsset(id) {
             <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px;">증권사별/날짜별로 매수 기록 관리하기</div>
           </div>
         `}
+
+        <!-- 📌 현재가 수동 지정 — 증권사 화면과 맞추고 싶을 때 (야후 정규장 종가 vs 증권사 애프터마켓 차이 등) -->
+        <div class="field">
+          <div class="field-label">📌 현재가 수동 지정 <span style="font-size:10px; color:var(--text-tertiary);">(선택 — 비우면 실시간 시세)</span></div>
+          <div style="display:flex; gap:6px;">
+            <input type="number" id="e-manual-price" step="any" value="${Number(a.manualPrice) > 0 ? a.manualPrice : ''}"
+              placeholder="${(() => { const lv = liveAssetData[a.id]; return lv && lv.currentPrice != null ? String(lv.currentPrice) : '증권사 화면 현재가'; })()}" style="flex:1;" />
+            ${calcBtn('e-manual-price')}
+          </div>
+          <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px; line-height:1.5;">
+            ${(() => {
+              const lv = liveAssetData[a.id];
+              const cur = lv && lv.currency === 'USD' ? '달러($) 단위로' : '원 단위로';
+              return `증권사 현재가와 다를 때 ${cur} 직접 넣으면 그 값으로 평가해요.`;
+            })()}<br>
+            ${Number(a.manualPrice) > 0 ? `<b style="color:var(--text-warning);">⚠️ 지금 수동값 사용 중 — 시세가 변해도 자동 갱신되지 않아요. 비우면 실시간으로 복귀.</b>` : '야후 정규장 종가와 증권사 애프터마켓 가격이 다를 때 유용해요.'}
+          </div>
+        </div>
 
         <div class="field">
           <div class="field-label">💱 환전 우대율 % <span style="font-size:10px; color:var(--text-tertiary);">(미국 주식만)</span></div>
@@ -22785,6 +22835,15 @@ function updateAsset(id) {
   const buyprice = Number(document.getElementById('e-buyprice')?.value) || 0;
   const fxDiscount = Number(document.getElementById('e-fx-discount')?.value) || 0;
   const avgBuyRate = Number(document.getElementById('e-avgrate')?.value) || 0;
+  // 📌 현재가 수동 지정 (있으면 실시간 시세 대신 이 값으로 평가)
+  const manualPriceEl = document.getElementById('e-manual-price');
+  if (manualPriceEl) {
+    const mp = Number(manualPriceEl.value) || 0;
+    if (mp > 0) { a.manualPrice = mp; a.manualPriceAt = todayKey(); }
+    else { delete a.manualPrice; delete a.manualPriceAt; }
+    liveAssetData = {};              // 시세 캐시 비워 즉시 재평가
+    window._lastAssetRefresh = 0;
+  }
 
   if (rate) a.rate = rate; else delete a.rate;
   if (maturity) a.maturity = maturity; else delete a.maturity;
@@ -22815,8 +22874,19 @@ function updateAsset(id) {
   const _accrualLots = (a.lots || []).filter(l => l.accrual);
   const _accrualSum = _accrualLots.reduce((s, l) => s + (Number(l.exactAmount) || Number(l.price) || 0), 0);
 
-  // 기존 lots 모두 삭제 (입력값에 이미 다 포함됨)
-  a.lots = [];
+  // 🔧🔧 [비파괴] 합계를 '실제로 바꿨을 때만' 매수 기록을 비운다.
+  //    예전엔 이름·티커만 고쳐도 저장하는 순간 lots가 전부 삭제됐음 (조용한 이력 손실).
+  const _prevQty = Number(a.qty) || 0;
+  const _prevPrice = Number(a.price) || 0;
+  const _qtyChanged = Math.abs(userInputQty - _prevQty) > 0.00005;
+  const _priceChanged = Math.abs(userInputPrice - _prevPrice) > 0.5;
+  const _totalsEdited = _qtyChanged || _priceChanged;
+  const _hadLots = Array.isArray(a.lots) && a.lots.length > 0;
+
+  if (_totalsEdited) {
+    a.lots = []; // 사용자가 합계를 직접 바꿨으므로 입력값이 기준이 됨
+  }
+  // 합계를 안 건드렸으면 lots 그대로 유지 → 아래에서 qty/price도 덮어쓰지 않음
 
   if (isDepositType) {
     a.qty = 1;
@@ -22851,10 +22921,12 @@ function updateAsset(id) {
     delete a.evalAmount;
     delete a.ocrSnapshot;
     delete a.brokerSnapshot;
-  } else {
+  } else if (_totalsEdited || !_hadLots) {
+    // 합계를 직접 바꿨거나 원래 매수기록이 없던 자산 → 입력값이 곧 보유 상태
     a.qty = userInputQty;
     a.price = userInputPrice;
   }
+  // else: 매수기록이 있고 합계를 안 건드렸으면 → lots 기반 값 그대로 유지 (이력 보존)
 
   // ⭐ 연결된 자동매수: 시작일이 과거면 → lastBuyDate = 오늘 (다음 매수일부터 추가)
   // 시작일이 미래면 → lastBuyDate 그대로 (그 날부터 자동 추가)
