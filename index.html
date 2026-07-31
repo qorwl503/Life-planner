@@ -15055,6 +15055,7 @@ function renderAsset() {
     { id:'holdings', label:'보유' },
     { id:'plan',     label:'플랜' },
     { id:'analysis', label:'🔍 분석' },
+    ...(settings.ipoHidden ? [] : [{ id:'ipo', label:'📋 공모주' }]), // 📋 공모주 (숨기기 가능)
     { id:'market',   label:'시장·뉴스' },
     { id:'youtube',  label:'유튜브' },
   ];
@@ -15250,6 +15251,8 @@ function renderAsset() {
         }); // groupItems.forEach
       }); // groupKeys.forEach
     }
+  } else if (assetTab === 'ipo') {
+    html += renderIpoTab(); // 📋 공모주
   } else if (assetTab === 'plan') {
     html += renderAssetPlan(total, byType);
   } else if (assetTab === 'analysis') {
@@ -18546,6 +18549,871 @@ function saveWatchItem() {
   render();
 }
 
+// ══════════════════════════════════════════════════════════════
+// ===== 📋 공모주 (IPO) — 제거 가능 블록 시작 =====
+// 이 기능이 불필요해지면: ① 이 블록 전체 삭제 ② 자산 탭 tabs 배열의 'ipo' 항목 삭제
+//                        ③ renderAsset의 assetTab === 'ipo' 분기 삭제 → 끝. 다른 기능에 영향 없음.
+// 데이터는 settings.ipos 한 곳에만 저장 (저장·동기화·백업이 자동으로 따라감)
+// ══════════════════════════════════════════════════════════════
+const IPO_KINDS = [
+  { key: 'sub',    label: '청약',  color: '#4574E0', icon: '🔵' },
+  { key: 'refund', label: '환불',  color: '#E89B4A', icon: '🟠' },
+  { key: 'list',   label: '상장',  color: '#2FA47C', icon: '🟢' },
+];
+
+function getIpos() {
+  if (!Array.isArray(settings.ipos)) settings.ipos = [];
+  return settings.ipos;
+}
+
+// 특정 날짜에 걸리는 공모주 이벤트들
+function ipoEventsOn(dateK) {
+  const out = [];
+  getIpos().forEach(p => {
+    if (p.subStart && p.subEnd && dateK >= p.subStart && dateK <= p.subEnd) out.push({ p, kind: 'sub' });
+    else if (p.subStart && !p.subEnd && dateK === p.subStart) out.push({ p, kind: 'sub' });
+    if (p.refundDate === dateK) out.push({ p, kind: 'refund' });
+    if (p.listDate === dateK) out.push({ p, kind: 'list' });
+  });
+  return out;
+}
+
+// 다가오는 일정 (오늘 이후, D-day 순)
+function ipoUpcoming(limit) {
+  const tk = todayKey();
+  const rows = [];
+  getIpos().forEach(p => {
+    const add = (dateK, kind) => {
+      if (!dateK || dateK < tk) return;
+      const d1 = new Date(dateK + 'T00:00:00'), d0 = new Date(tk + 'T00:00:00');
+      rows.push({ p, kind, date: dateK, dday: Math.round((d1 - d0) / 86400000) });
+    };
+    add(p.subStart, 'sub');
+    add(p.refundDate, 'refund');
+    add(p.listDate, 'list');
+  });
+  rows.sort((a, b) => a.date.localeCompare(b.date));
+  return limit ? rows.slice(0, limit) : rows;
+}
+
+function renderIpoTab() {
+  if (window._ipoViewY == null) { window._ipoViewY = currentYear; window._ipoViewM = currentMonth; }
+  const y = window._ipoViewY, m = window._ipoViewM;
+  const list = getIpos();
+
+  let h = `
+    <div style="display:flex; gap:6px; margin-bottom:12px;">
+      <button onclick="openIpoModal()" style="flex:1; padding:11px; border:none; background:var(--accent-primary, #5E5CE6); color:white; border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">+ 공모주 추가</button>
+      <input type="file" id="ipo-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processIpoCapture(this)" />
+      <button onclick="document.getElementById('ipo-capture-input').click()" style="flex:1; padding:11px; border:1px dashed var(--text-info); background:rgba(70,140,255,0.06); color:var(--text-info); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">📸 일정 캡처</button>
+    </div>
+    <div style="display:flex; gap:6px; margin-bottom:12px;">
+      <button onclick="fetchIpoScheduleAuto()" style="flex:1; padding:10px; border:0.5px solid var(--border-tertiary); background:white; color:var(--text-secondary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">🔄 일정 자동 불러오기</button>
+      <button onclick="openIpoAnalyze()" style="flex:1; padding:10px; border:0.5px solid var(--border-tertiary); background:white; color:var(--text-secondary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">🤖 AI 분석</button>
+    </div>`;
+
+  // ── 미니 월간 캘린더 ──
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const startOffset = new Date(y, m, 1).getDay();
+  h += `
+    <div style="background:white; border:0.5px solid var(--border-tertiary); border-radius:14px; padding:12px; margin-bottom:12px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <button onclick="ipoMonthShift(-1)" style="border:none; background:transparent; padding:4px 8px; cursor:pointer; color:var(--text-secondary); font-family:inherit;">◀</button>
+        <span style="font-size:13px; font-weight:700;">${y}년 ${m + 1}월</span>
+        <button onclick="ipoMonthShift(1)" style="border:none; background:transparent; padding:4px 8px; cursor:pointer; color:var(--text-secondary); font-family:inherit;">▶</button>
+      </div>
+      <div style="display:flex; gap:8px; justify-content:center; margin-bottom:8px; font-size:10px; color:var(--text-tertiary);">
+        ${IPO_KINDS.map(k => `<span>${k.icon} ${k.label}</span>`).join('')}
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(7,1fr); gap:2px; text-align:center; font-size:9px; color:var(--text-tertiary); margin-bottom:3px;">
+        ${['일','월','화','수','목','금','토'].map(d => `<div>${d}</div>`).join('')}
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(7,1fr); gap:2px;">
+        ${Array(startOffset).fill('<div></div>').join('')}
+        ${Array.from({ length: daysInMonth }, (_, i) => {
+          const d = i + 1;
+          const k = dateKey(y, m, d);
+          const evs = ipoEventsOn(k);
+          const isToday = k === todayKey();
+          const sel = window._ipoSelDay === k;
+          const dots = IPO_KINDS.filter(kd => evs.some(e => e.kind === kd.key))
+            .map(kd => `<span style="width:4px; height:4px; border-radius:50%; background:${kd.color};"></span>`).join('');
+          return `<div onclick="window._ipoSelDay='${k}'; renderAsset();" style="aspect-ratio:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; border-radius:7px; cursor:pointer;
+            background:${sel ? 'var(--bg-info)' : isToday ? 'var(--bg-secondary)' : 'transparent'};
+            ${isToday ? 'box-shadow:inset 0 0 0 1px var(--text-info);' : ''}">
+            <span style="font-size:11px; font-weight:${isToday ? '700' : '400'}; color:${evs.length ? 'var(--text-primary)' : 'var(--text-tertiary)'};">${d}</span>
+            <span style="display:flex; gap:2px; height:4px;">${dots}</span>
+          </div>`;
+        }).join('')}
+      </div>
+      ${window._ipoSelDay ? (() => {
+        const evs = ipoEventsOn(window._ipoSelDay);
+        if (evs.length === 0) return `<div style="margin-top:9px; padding-top:9px; border-top:0.5px solid var(--border-tertiary); font-size:11px; color:var(--text-tertiary); text-align:center;">${window._ipoSelDay} · 일정 없음</div>`;
+        return `<div style="margin-top:9px; padding-top:9px; border-top:0.5px solid var(--border-tertiary);">
+          <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:5px;">${window._ipoSelDay}</div>
+          ${evs.map(e => {
+            const kd = IPO_KINDS.find(x => x.key === e.kind);
+            return `<div onclick="openIpoModal(${e.p.id})" style="display:flex; align-items:center; gap:7px; padding:5px 0; cursor:pointer;">
+              <span style="width:7px; height:7px; border-radius:50%; background:${kd.color}; flex-shrink:0;"></span>
+              <span style="font-size:12px; font-weight:600; flex:1; min-width:0;">${escapeHTML(e.p.name)}</span>
+              <span style="font-size:10px; color:${kd.color}; font-weight:700;">${kd.label}</span>
+            </div>`;
+          }).join('')}
+        </div>`;
+      })() : ''}
+    </div>`;
+
+  // ── 다가오는 일정 ──
+  const up = ipoUpcoming(6);
+  if (up.length > 0) {
+    h += `<div style="font-size:12px; font-weight:700; margin:14px 0 8px;">⏰ 다가오는 일정</div>`;
+    up.forEach(r => {
+      const kd = IPO_KINDS.find(x => x.key === r.kind);
+      const band = (Number(r.p.priceLow) > 0 || Number(r.p.priceHigh) > 0)
+        ? `공모가 ${Number(r.p.priceLow || 0).toLocaleString()}~${Number(r.p.priceHigh || 0).toLocaleString()}원` : '';
+      h += `<div onclick="openIpoModal(${r.p.id})" style="display:flex; align-items:center; gap:10px; padding:11px 12px; background:white; border:0.5px solid var(--border-tertiary); border-left:3px solid ${kd.color}; border-radius:10px; margin-bottom:6px; cursor:pointer;">
+        <div style="flex:1; min-width:0;">
+          <div style="font-size:13px; font-weight:700;">${escapeHTML(r.p.name)} <span style="font-size:10px; color:${kd.color}; font-weight:700;">${kd.label}</span></div>
+          <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">${r.date}${band ? ' · ' + band : ''}${r.p.broker ? ' · ' + escapeHTML(r.p.broker) : ''}</div>
+        </div>
+        <div style="font-size:13px; font-weight:800; color:${r.dday <= 1 ? 'var(--text-danger)' : kd.color}; white-space:nowrap;">${r.dday === 0 ? '오늘' : `D-${r.dday}`}</div>
+      </div>`;
+    });
+  }
+
+  // ── 전체 목록 ──
+  h += `<div style="font-size:12px; font-weight:700; margin:16px 0 8px;">📋 등록한 공모주 ${list.length > 0 ? `(${list.length})` : ''}</div>`;
+  if (list.length === 0) {
+    h += `<div style="padding:22px 14px; text-align:center; color:var(--text-tertiary); font-size:12px; line-height:1.7; background:var(--bg-secondary); border-radius:12px;">
+      아직 등록한 공모주가 없어요.<br>
+      <span style="font-size:11px;">청약 일정을 넣으면 캘린더와 D-day에 표시돼요.<br>공모주 일정 화면을 캡처해서 한 번에 넣을 수도 있어요.</span>
+    </div>`;
+  } else {
+    const sorted = list.slice().sort((a, b) => (b.subStart || '').localeCompare(a.subStart || ''));
+    sorted.forEach(p => {
+      const tk = todayKey();
+      const done = p.listDate && p.listDate < tk;
+      h += `<div onclick="openIpoModal(${p.id})" style="padding:11px 12px; background:white; border:0.5px solid var(--border-tertiary); border-radius:10px; margin-bottom:6px; cursor:pointer; ${done ? 'opacity:0.6;' : ''}">
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <span style="font-size:13px; font-weight:700;">${escapeHTML(p.name)}${p.code ? ` <span style="font-size:10px; color:var(--text-tertiary); font-weight:400;">${escapeHTML(p.code)}</span>` : ''}</span>
+          ${done ? `<span style="font-size:10px; color:var(--text-tertiary);">상장 완료</span>` : ''}
+        </div>
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:3px; line-height:1.6;">
+          ${p.subStart ? `🔵 청약 ${p.subStart}${p.subEnd && p.subEnd !== p.subStart ? `~${p.subEnd.slice(5)}` : ''}` : ''}
+          ${p.refundDate ? ` · 🟠 환불 ${p.refundDate.slice(5)}` : ''}
+          ${p.listDate ? ` · 🟢 상장 ${p.listDate.slice(5)}` : ''}
+          ${(Number(p.priceLow) > 0 || Number(p.priceHigh) > 0) ? `<br>공모가 ${Number(p.priceLow || 0).toLocaleString()}~${Number(p.priceHigh || 0).toLocaleString()}원` : ''}
+          ${p.broker ? ` · ${escapeHTML(p.broker)}` : ''}
+        </div>
+      </div>`;
+    });
+  }
+
+  // ── 기능 숨기기 (코드 안 건드리고 비활성화) ──
+  h += `<button onclick="hideIpoTab()" style="width:100%; margin-top:16px; padding:10px; border:0.5px solid var(--border-tertiary); background:transparent; color:var(--text-tertiary); border-radius:10px; font-size:11px; cursor:pointer; font-family:inherit;">
+    이 공모주 탭 숨기기 <span style="opacity:0.7;">(설정에서 다시 켤 수 있어요)</span>
+  </button>`;
+
+  return h;
+}
+
+function ipoMonthShift(delta) {
+  let m = window._ipoViewM + delta, y = window._ipoViewY;
+  if (m < 0) { m = 11; y--; } else if (m > 11) { m = 0; y++; }
+  window._ipoViewM = m; window._ipoViewY = y;
+  renderAsset();
+}
+
+function hideIpoTab() {
+  if (!confirm('공모주 탭을 숨길까요?\n\n등록한 일정은 지워지지 않고, 설정에서 다시 켤 수 있어요.')) return;
+  settings.ipoHidden = true;
+  if (assetTab === 'ipo') assetTab = 'holdings';
+  saveData();
+  showToast('공모주 탭을 숨겼어요 (설정에서 다시 켜기)');
+  renderAsset();
+}
+
+function showIpoTab() {
+  delete settings.ipoHidden;
+  saveData();
+  showToast('공모주 탭을 다시 켰어요');
+  closeModal();
+  nav('asset');
+}
+
+// ── 🤖 공모주 AI 분석 ──
+//    변수는 전부 사용자가 직접 채운다. 앱이 숫자를 지어내거나 추정해 넣지 않는다.
+//    빈 칸은 프롬프트에서 "미입력"으로 넘어가고, AI는 그 항목의 판단을 보류하도록 지시한다.
+const IPO_ANALYSES = [
+  { key: 'month', icon: '🗓️', title: '이달 일정 정리', scope: 'all',
+    desc: '등록한 공모주를 날짜순으로 정리하고 자금이 겹치는 구간을 짚어줘요',
+    vars: [
+      { k: 'budget', label: '청약에 쓸 수 있는 금액 (만원)', ph: '예: 1000' },
+      { k: 'accounts', label: '보유 중인 증권사 계좌', ph: '예: 미래에셋, 한국투자, KB' },
+      { k: 'note', label: '추가로 고려할 점 (선택)', ph: '예: 8월 중순에 카드값 빠짐' },
+    ] },
+  { key: 'demand', icon: '📊', title: '수요예측 흥행 해석', scope: 'one',
+    desc: '경쟁률·확약비율을 넣으면 과거 사례와 비교해 흥행 수준을 해석해요',
+    vars: [
+      { k: 'compRate', label: '수요예측 경쟁률 (:1)', ph: '예: 1250' },
+      { k: 'lockup', label: '의무보유확약 비율 (%)', ph: '예: 12.5' },
+      { k: 'instCount', label: '기관 참여 건수', ph: '예: 2100' },
+      { k: 'bandPos', label: '공모가 확정 위치', ph: '예: 밴드 상단 초과 / 상단 / 중간 / 하단' },
+    ] },
+  { key: 'float', icon: '🔓', title: '상장일 유통물량 점검', scope: 'one',
+    desc: '상장 첫날 시장에 풀릴 수 있는 물량 부담을 정리해요',
+    vars: [
+      { k: 'totalShares', label: '상장 예정 주식수', ph: '예: 12,000,000' },
+      { k: 'floatPct', label: '상장일 유통가능 비율 (%)', ph: '예: 28.4' },
+      { k: 'oldHolder', label: '기존주주 매도가능 물량 (%)', ph: '예: 15' },
+      { k: 'lockupPct', label: '보호예수 물량 비율 (%)', ph: '예: 45' },
+      { k: 'marketCap', label: '공모가 기준 시가총액 (억원)', ph: '예: 3200' },
+    ] },
+  { key: 'strategy', icon: '🎯', title: '공모가 비교 · 청약 전략', scope: 'one',
+    desc: '밸류에이션과 배정 방식을 넣으면 청약 규모 판단에 필요한 항목을 정리해요',
+    vars: [
+      { k: 'peerPER', label: '동종업계 평균 PER', ph: '예: 18.5' },
+      { k: 'ipoPER', label: '공모가 산정 PER', ph: '예: 22.1' },
+      { k: 'discount', label: '공모가 할인율 (%)', ph: '예: 20' },
+      { k: 'peers', label: '비교 대상 기업', ph: '예: A사, B사' },
+      { k: 'allocRule', label: '균등:비례 배정 비율', ph: '예: 50:50' },
+      { k: 'marginRate', label: '청약증거금률 (%)', ph: '예: 50' },
+      { k: 'myBudget', label: '내 청약 예산 (만원)', ph: '예: 500' },
+    ] },
+];
+
+const IPO_AI_RULES = `⚠️ 반드시 지킬 것
+- 위에 주어진 값만 사용해라. 경쟁률·유통물량·재무수치 등을 네가 모르는데 지어내지 마라.
+- "미입력"인 항목은 판단하지 말고 "○○ 값이 없어 판단 보류"라고 적어라.
+- 주가나 상장 후 수익률을 예측하지 마라. "과거 이런 조건에서는 ~한 경향이 있었다" 같은 서술만 허용.
+- 매수/청약을 권유하지 마라. 판단에 필요한 근거만 정리해라.
+- 한국어, 마크다운 헤더 없이 짧은 문단과 "- " 목록으로. 800자 이내.`;
+
+function ipoVarStore(p, key) {
+  if (!p.vars) p.vars = {};
+  if (!p.vars[key]) p.vars[key] = {};
+  return p.vars[key];
+}
+
+function ipoFacts(p) {
+  const band = (Number(p.priceLow) > 0 || Number(p.priceHigh) > 0)
+    ? `${Number(p.priceLow || 0).toLocaleString()}~${Number(p.priceHigh || 0).toLocaleString()}원` : '미입력';
+  return `종목명: ${p.name}
+종목코드: ${p.code || '미입력'}
+주관사: ${p.broker || '미입력'}
+공모가 밴드: ${band}
+청약일: ${p.subStart || '미입력'}${p.subEnd && p.subEnd !== p.subStart ? ` ~ ${p.subEnd}` : ''}
+환불일: ${p.refundDate || '미입력'}
+상장일: ${p.listDate || '미입력'}
+내 메모: ${p.memo || '없음'}`;
+}
+
+function buildIpoPrompt(cfg, p, vals) {
+  const varLines = cfg.vars.map(v => `${v.label}: ${String(vals[v.k] || '').trim() || '미입력'}`).join('\n');
+
+  if (cfg.scope === 'all') {
+    const list = getIpos().slice().sort((a, b) => (a.subStart || '').localeCompare(b.subStart || ''));
+    const rows = list.length === 0 ? '(등록된 공모주 없음)' : list.map(x =>
+      `- ${x.name}: 청약 ${x.subStart || '?'}${x.subEnd && x.subEnd !== x.subStart ? `~${x.subEnd}` : ''} / 환불 ${x.refundDate || '?'} / 상장 ${x.listDate || '?'} / 공모가 ${Number(x.priceLow || 0).toLocaleString()}~${Number(x.priceHigh || 0).toLocaleString()}원 / 주관사 ${x.broker || '?'}`
+    ).join('\n');
+    return `오늘은 ${todayKey()}이다. 내가 등록해 둔 공모주 청약 일정이다.
+
+[등록 일정]
+${rows}
+
+[내가 입력한 조건]
+${varLines}
+
+아래를 정리해줘.
+1. 앞으로 다가오는 순서대로 일정 타임라인 (청약 → 환불 → 상장)
+2. 청약 증거금이 묶이는 기간이 겹치는 구간이 있으면 어디인지
+3. 입력한 금액으로 감당 가능한지, 우선순위를 어떻게 나눠볼 수 있는지 (금액 계산 위주로)
+4. 놓치기 쉬운 날짜가 있으면 짚어주기
+
+${IPO_AI_RULES}`;
+  }
+
+  const heads = {
+    demand: `아래를 정리해줘.
+1. 이 경쟁률·확약비율이 일반적인 공모주 사례에서 어느 정도 수준인지
+2. 의무보유확약 비율이 상장 초반 물량 부담에 어떤 의미인지
+3. 공모가가 밴드 어디에서 확정됐는지가 시사하는 점
+4. 이 숫자들만으로는 알 수 없어서 추가로 확인해야 할 항목`,
+    float: `아래를 정리해줘.
+1. 상장일 유통가능 물량 수준이 일반적인 사례 대비 어느 정도인지
+2. 유통가능 주식수 × 공모가로 계산되는 상장일 매도 가능 금액 규모
+3. 보호예수 해제 시점에 유의할 점 (일반적인 구조 기준)
+4. 이 숫자들만으로는 알 수 없어서 추가로 확인해야 할 항목`,
+    strategy: `아래를 정리해줘.
+1. 공모가 산정 PER과 동종업계 PER 비교 — 할인율이 실제로 얼마나 되는지 계산
+2. 균등배정 기준으로 내 예산에서 몇 계좌·몇 주까지 신청 가능한지 (증거금률 반영해 계산)
+3. 비례배정까지 노릴 경우 필요한 증거금 규모
+4. 이 숫자들만으로는 알 수 없어서 추가로 확인해야 할 항목`,
+  };
+
+  return `오늘은 ${todayKey()}이다. 아래 공모주를 검토 중이다.
+
+[기본 정보 — 내가 입력한 값]
+${ipoFacts(p)}
+
+[분석용 변수 — 내가 입력한 값]
+${varLines}
+
+${heads[cfg.key]}
+
+${IPO_AI_RULES}`;
+}
+
+function openIpoAnalyze(ipoId) {
+  const list = getIpos();
+  window._ipoAnalyzeId = ipoId || window._ipoAnalyzeId || (list[0] && list[0].id) || null;
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+        <h2>🤖 공모주 AI 분석</h2>
+        <span style="width:44px;"></span>
+      </div>
+      <div style="padding:10px 12px; background:var(--bg-info); border-radius:10px; margin-bottom:12px; font-size:11px; color:var(--text-info); line-height:1.6;">
+        숫자는 <b>직접 입력한 값만</b> 사용해요. AI가 경쟁률·물량을 스스로 찾아오지는 못하니, 공시나 증권사 화면에서 보고 채워주세요.
+      </div>
+      ${IPO_ANALYSES.map(c => `
+        <div onclick="openIpoAnalyzeForm('${c.key}')" style="padding:13px; background:white; border:0.5px solid var(--border-tertiary); border-radius:12px; margin-bottom:8px; cursor:pointer;">
+          <div style="font-size:13px; font-weight:700;">${c.icon} ${c.title} <span style="font-size:10px; color:var(--text-tertiary); font-weight:500;">${c.scope === 'all' ? '· 전체' : '· 종목별'}</span></div>
+          <div style="font-size:11px; color:var(--text-tertiary); margin-top:3px; line-height:1.5;">${c.desc}</div>
+        </div>`).join('')}
+    </div>`;
+  modal.classList.add('show');
+}
+
+function openIpoAnalyzeForm(key) {
+  const cfg = IPO_ANALYSES.find(c => c.key === key);
+  if (!cfg) return;
+  const list = getIpos();
+
+  let p = null;
+  if (cfg.scope === 'one') {
+    if (list.length === 0) { showToast('먼저 공모주를 등록해주세요'); return; }
+    p = list.find(x => x.id === window._ipoAnalyzeId) || list[0];
+    window._ipoAnalyzeId = p.id;
+  }
+  const saved = p ? ipoVarStore(p, key) : (settings.ipoVarsAll && settings.ipoVarsAll[key]) || {};
+
+  const picker = cfg.scope === 'one' ? `
+    <label style="font-size:11px; color:var(--text-secondary); font-weight:600;">분석할 종목</label>
+    <select id="ipo-an-target" onchange="window._ipoAnalyzeId=Number(this.value); openIpoAnalyzeForm('${key}')" style="width:100%; padding:11px; border:0.5px solid var(--border-tertiary); border-radius:10px; font-size:13px; font-family:inherit; margin:5px 0 12px; background:white;">
+      ${list.map(x => `<option value="${x.id}" ${x.id === p.id ? 'selected' : ''}>${escapeHTML(x.name)}</option>`).join('')}
+    </select>` : '';
+
+  const fields = cfg.vars.map(v => `
+    <label style="font-size:11px; color:var(--text-secondary); font-weight:600;">${v.label}</label>
+    <input id="ipo-an-${v.k}" value="${escapeAttr(saved[v.k] || '')}" placeholder="${escapeAttr(v.ph)}"
+      style="width:100%; padding:11px; border:0.5px solid var(--border-tertiary); border-radius:10px; font-size:13px; font-family:inherit; margin:5px 0 10px;" />`).join('');
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="openIpoAnalyze()">← 뒤로</button>
+        <h2>${cfg.icon} ${cfg.title}</h2>
+        <span style="width:44px;"></span>
+      </div>
+      ${picker}
+      ${p ? `<div style="padding:9px 11px; background:var(--bg-secondary); border-radius:10px; margin-bottom:12px; font-size:10px; color:var(--text-tertiary); line-height:1.6; white-space:pre-line;">${escapeHTML(ipoFacts(p))}</div>` : ''}
+      <div style="font-size:11px; color:var(--text-tertiary); margin-bottom:8px;">아는 값만 채워도 돼요. 빈 칸은 "판단 보류"로 넘어가요.</div>
+      ${fields}
+      <div style="display:flex; gap:6px; margin-top:14px;">
+        <button onclick="copyIpoPrompt('${key}')" style="flex:1; padding:12px; border:0.5px solid var(--border-tertiary); background:white; color:var(--text-secondary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">📋 프롬프트 복사</button>
+        <button onclick="runIpoAnalyze('${key}')" style="flex:1.4; padding:12px; border:none; background:var(--accent-primary, #5E5CE6); color:white; border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">🤖 분석 요청</button>
+      </div>
+      <div id="ipo-an-result" style="margin-top:12px;"></div>
+    </div>`;
+  modal.classList.add('show');
+}
+
+function collectIpoVars(cfg) {
+  const vals = {};
+  cfg.vars.forEach(v => {
+    const el = document.getElementById(`ipo-an-${v.k}`);
+    vals[v.k] = el ? el.value.trim() : '';
+  });
+  // 다음에 또 안 적도록 저장 (사용자가 넣은 값만 보관)
+  if (cfg.scope === 'one') {
+    const p = getIpos().find(x => x.id === window._ipoAnalyzeId);
+    if (p) { ipoVarStore(p, cfg.key); p.vars[cfg.key] = { ...vals }; }
+  } else {
+    if (!settings.ipoVarsAll) settings.ipoVarsAll = {};
+    settings.ipoVarsAll[cfg.key] = { ...vals };
+  }
+  saveData();
+  return vals;
+}
+
+function copyIpoPrompt(key) {
+  const cfg = IPO_ANALYSES.find(c => c.key === key);
+  if (!cfg) return;
+  const p = cfg.scope === 'one' ? getIpos().find(x => x.id === window._ipoAnalyzeId) : null;
+  if (cfg.scope === 'one' && !p) { showToast('종목을 선택해주세요'); return; }
+  const text = buildIpoPrompt(cfg, p, collectIpoVars(cfg));
+  navigator.clipboard?.writeText(text)
+    .then(() => showToast('📋 프롬프트를 복사했어요'))
+    .catch(() => showToast('복사에 실패했어요'));
+}
+
+async function runIpoAnalyze(key) {
+  const cfg = IPO_ANALYSES.find(c => c.key === key);
+  if (!cfg) return;
+  const p = cfg.scope === 'one' ? getIpos().find(x => x.id === window._ipoAnalyzeId) : null;
+  if (cfg.scope === 'one' && !p) { showToast('종목을 선택해주세요'); return; }
+
+  const box = document.getElementById('ipo-an-result');
+  const vals = collectIpoVars(cfg);
+  const filled = cfg.vars.filter(v => String(vals[v.k] || '').trim()).length;
+  if (filled === 0) { showToast('값을 하나 이상 채워주세요'); return; }
+
+  if (box) box.innerHTML = `<div style="padding:16px; text-align:center; color:var(--text-tertiary); font-size:12px;">분석 중...</div>`;
+  const prompt = buildIpoPrompt(cfg, p, vals);
+  const cacheKey = `ipo-${key}-${p ? p.id : 'all'}-${JSON.stringify(vals)}`;
+  const result = await askGemini(prompt, { useCache: true, cacheKey, maxRetries: 1 });
+
+  if (!box) return;
+  if (result.error || !result.text) {
+    box.innerHTML = `<div style="padding:13px; background:var(--bg-secondary); border-radius:10px; font-size:11px; color:var(--text-danger); line-height:1.6;">
+      분석 실패: ${escapeHTML(result.error || '응답 없음')}<br>
+      <span style="color:var(--text-tertiary);">📋 프롬프트 복사로 다른 AI에 붙여넣어도 돼요.</span>
+    </div>`;
+    return;
+  }
+  box.innerHTML = `
+    <div style="padding:15px; background:linear-gradient(135deg,#EEF2FF 0%,#E0E7FF 100%); border-radius:14px; border:0.5px solid #A5B4FC;">
+      <div style="font-size:11px; font-weight:700; color:#4F46E5; margin-bottom:8px;">${cfg.icon} ${cfg.title}${result.cached ? ' <span style="opacity:0.6; font-weight:500;">(저장된 결과)</span>' : ''}</div>
+      <div style="font-size:12px; color:var(--text-primary); line-height:1.75; white-space:pre-wrap;">${escapeHTML(result.text)}</div>
+      <div style="font-size:9px; color:var(--text-tertiary); margin-top:10px;">※ 입력한 값만 근거로 한 참고용 정리이며 투자 권유가 아니에요.</div>
+    </div>`;
+}
+
+function openIpoModal(id) {
+  const p = id ? getIpos().find(x => x.id === id) : null;
+  const isEdit = !!p;
+  const dateField = (fid, label, val, hint) => `
+    <div class="field">
+      <div class="field-label">${label} ${hint ? `<span style="font-size:10px; color:var(--text-tertiary);">${hint}</span>` : ''}</div>
+      <input type="date" id="${fid}" value="${val || ''}" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:white; color:var(--text-primary); font-family:inherit;" />
+    </div>`;
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">취소</button>
+        <h2>${isEdit ? '공모주 수정' : '공모주 추가'}</h2>
+        <button class="modal-save" onclick="saveIpo(${id || 'null'})">저장</button>
+      </div>
+
+      <div class="field">
+        <div class="field-label">기업명</div>
+        <input type="text" id="ipo-name" value="${isEdit ? escapeAttr(p.name) : ''}" placeholder="예: 액스비스" ${!isEdit ? 'autofocus' : ''} />
+      </div>
+
+      <div class="field" style="display:flex; gap:8px;">
+        <div style="flex:1;">
+          <div class="field-label">종목코드 (선택)</div>
+          <input type="text" id="ipo-code" value="${isEdit ? escapeAttr(p.code || '') : ''}" placeholder="예: 123456" />
+        </div>
+        <div style="flex:1.2;">
+          <div class="field-label">주관사 (선택)</div>
+          <input type="text" id="ipo-broker" value="${isEdit ? escapeAttr(p.broker || '') : ''}" placeholder="예: 미래에셋" />
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="field-label">공모가 밴드 (원)</div>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <input type="number" id="ipo-price-low" value="${isEdit && p.priceLow ? p.priceLow : ''}" placeholder="하단" style="flex:1;" />
+          <span style="color:var(--text-tertiary);">~</span>
+          <input type="number" id="ipo-price-high" value="${isEdit && p.priceHigh ? p.priceHigh : ''}" placeholder="상단" style="flex:1;" />
+        </div>
+      </div>
+
+      ${dateField('ipo-sub-start', '🔵 청약 시작일', isEdit ? p.subStart : '')}
+      ${dateField('ipo-sub-end', '🔵 청약 종료일', isEdit ? p.subEnd : '', '(보통 시작 다음날)')}
+      ${dateField('ipo-refund', '🟠 환불일', isEdit ? p.refundDate : '', '(선택)')}
+      ${dateField('ipo-list', '🟢 상장일', isEdit ? p.listDate : '', '(선택)')}
+
+      <div class="field">
+        <div class="field-label">메모 (선택)</div>
+        <input type="text" id="ipo-memo" value="${isEdit ? escapeAttr(p.memo || '') : ''}" placeholder="예: 경쟁률 1200:1, 의무보유 15%" />
+      </div>
+
+      ${isEdit ? `<button onclick="deleteIpo(${p.id})" style="width:100%; padding:12px; margin-top:8px; border:none; border-radius:var(--radius-md); background:var(--bg-danger); color:var(--text-danger); font-size:13px; font-weight:500; cursor:pointer; font-family:inherit;">
+        <i class="ti ti-trash" style="font-size:14px; vertical-align:-2px;"></i> 이 공모주 삭제
+      </button>` : ''}
+    </div>`;
+  modal.classList.add('show');
+}
+
+function saveIpo(id) {
+  const name = (document.getElementById('ipo-name')?.value || '').trim();
+  if (!name) { showToast('기업명을 입력해주세요'); return; }
+  const subStart = document.getElementById('ipo-sub-start')?.value || '';
+  let subEnd = document.getElementById('ipo-sub-end')?.value || '';
+  if (subStart && subEnd && subEnd < subStart) { showToast('청약 종료일이 시작일보다 빨라요'); return; }
+  if (subStart && !subEnd) subEnd = subStart;
+
+  const data = {
+    name,
+    code: (document.getElementById('ipo-code')?.value || '').trim(),
+    broker: (document.getElementById('ipo-broker')?.value || '').trim(),
+    priceLow: Number(document.getElementById('ipo-price-low')?.value) || 0,
+    priceHigh: Number(document.getElementById('ipo-price-high')?.value) || 0,
+    subStart, subEnd,
+    refundDate: document.getElementById('ipo-refund')?.value || '',
+    listDate: document.getElementById('ipo-list')?.value || '',
+    memo: (document.getElementById('ipo-memo')?.value || '').trim(),
+  };
+
+  const list = getIpos();
+  if (id) {
+    const idx = list.findIndex(x => x.id === id);
+    if (idx >= 0) list[idx] = { ...list[idx], ...data };
+    showToast('수정됨');
+  } else {
+    list.push({ id: Date.now(), ...data });
+    showToast(`📋 ${name} 추가됨`);
+  }
+  saveData();
+  closeModal();
+  renderAsset();
+}
+
+function deleteIpo(id) {
+  const p = getIpos().find(x => x.id === id);
+  if (!p) return;
+  if (!confirm(`"${p.name}" 공모주 일정을 삭제할까요?`)) return;
+  settings.ipos = getIpos().filter(x => x.id !== id);
+  saveData();
+  closeModal();
+  showToast('삭제됨');
+  renderAsset();
+}
+
+// 🔄 공모주 일정 자동 불러오기
+//    AI만으로는 불가 (무료 키에 웹검색 권한 없음 → 일정을 지어낼 위험).
+//    그래서 ① 프록시로 실제 페이지 HTML을 가져오고 ② 그 텍스트를 AI가 파싱한다.
+//    사이트가 개편/차단되면 멈출 수 있으므로 캡처 방식이 항상 백업으로 남아 있음.
+const IPO_SOURCES = [
+  'https://www.38.co.kr/html/fund/index.htm?o=k',   // 38커뮤니케이션 공모주 청약일정
+  'https://www.38.co.kr/html/fund/',
+];
+
+function ipoHtmlToText(html) {
+  return String(html || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<\/t[dh]>/gi, ' | ')          // 표 칸 구분 유지 (AI 파싱 정확도 ↑)
+    .replace(/<\/(tr|div|p|li|h\d)>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n\s*\n+/g, '\n')
+    .trim();
+}
+
+async function fetchIpoScheduleAuto() {
+  if (!window.GEMINI_API_KEY) { showToast('AI 키 먼저 설정해주세요'); return; }
+  showToast('공모주 일정 불러오는 중...');
+
+  const targets = settings.ipoSourceUrl ? [settings.ipoSourceUrl, ...IPO_SOURCES] : IPO_SOURCES;
+  const proxies = [
+    (u) => ({ url: `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(u)}`, pick: async (r) => (await r.json()).contents }),
+    (u) => ({ url: `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`, pick: async (r) => (await r.json()).contents }),
+    (u) => ({ url: `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`, pick: async (r) => r.text() }),
+  ];
+
+  let pageText = '', usedUrl = '';
+  outer:
+  for (const target of targets) {
+    for (const mk of proxies) {
+      const p = mk(target);
+      try {
+        const ctrl = new AbortController();
+        const to = setTimeout(() => ctrl.abort(), 9000);
+        const res = await fetch(p.url, { signal: ctrl.signal });
+        clearTimeout(to);
+        if (!res.ok) continue;
+        const raw = await p.pick(res);
+        const txt = ipoHtmlToText(raw);
+        // 한글이 깨졌거나(인코딩 문제) 내용이 빈약하면 다음 후보로
+        const koreanCount = (txt.match(/[가-힣]/g) || []).length;
+        if (txt.length > 300 && koreanCount > 50) { pageText = txt; usedUrl = target; break outer; }
+      } catch (e) { /* 다음 프록시 */ }
+    }
+  }
+
+  if (!pageText) {
+    showToast('일정 페이지를 못 가져왔어요 — 캡처로 넣어주세요');
+    return;
+  }
+
+  // 토큰 절약: 공모주 관련 구간 위주로 자르기
+  let snippet = pageText;
+  const anchor = snippet.search(/공모주|청약일정|수요예측|공모가/);
+  if (anchor > 2000) snippet = snippet.slice(anchor - 500);
+  snippet = snippet.slice(0, 24000);
+
+  const thisYear = new Date().getFullYear();
+  const prompt = `아래는 공모주(IPO) 청약일정 웹페이지에서 추출한 텍스트야. 여기서 청약 예정/진행 종목을 뽑아 JSON으로 반환해.
+
+⚠️ 반드시 아래 텍스트에 실제로 적힌 내용만 사용할 것. 없는 종목·날짜를 지어내지 마라.
+
+각 항목: {name, code, priceLow, priceHigh, subStart, subEnd, refundDate, listDate, broker}
+- name: 기업명 (필수)
+- priceLow/priceHigh: 공모가(희망공모가) 밴드 하단/상단, 숫자만. 확정가 하나뿐이면 둘 다 같은 값
+- subStart/subEnd: 청약 시작/종료일 → YYYY-MM-DD
+- refundDate: 환불일 → YYYY-MM-DD
+- listDate: 상장일 → YYYY-MM-DD
+- broker: 주관사
+
+📌 날짜 규칙:
+- "11.05" "11/05" 처럼 연도가 없으면 ${thisYear}년으로 채운다
+- "11.05~11.06" 범위면 subStart=${thisYear}-11-05, subEnd=${thisYear}-11-06
+- 확신 없는 값은 그 필드를 생략 (틀린 날짜보다 빈 값이 낫다)
+- 이미 지난 일정도 텍스트에 있으면 포함 (앱이 알아서 정리함)
+
+📤 JSON만 출력:
+{"items":[{"name":"...","priceLow":18000,"priceHigh":22000,"subStart":"${thisYear}-11-05","subEnd":"${thisYear}-11-06","refundDate":"","listDate":"","broker":"..."}]}
+못 찾으면 {"items":[],"error":"이유"}
+
+--- 페이지 텍스트 ---
+${snippet}`;
+
+  const models = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+  const body = { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0, maxOutputTokens: 6000 } };
+  let data = null, lastErr = '';
+  for (const model of models) {
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${window.GEMINI_API_KEY}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      if (res.status === 429 || res.status === 503 || res.status === 404) { lastErr = `HTTP ${res.status}`; continue; }
+      const d = await res.json();
+      if (!res.ok || d.error) { lastErr = d.error?.message || `HTTP ${res.status}`; continue; }
+      data = d; break;
+    } catch (e) { lastErr = e.message; }
+  }
+  if (!data) { showToast(`AI 분석 실패: ${lastErr}`); return; }
+
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  let parsed;
+  try {
+    const js = text.trim().replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+    parsed = JSON.parse(js);
+  } catch (e) {
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) { showToast('결과를 읽지 못했어요 — 캡처로 넣어주세요'); return; }
+    try { parsed = JSON.parse(m[0]); } catch (e2) { showToast('결과를 읽지 못했어요'); return; }
+  }
+
+  const items = (parsed.items || []).filter(it => it && it.name);
+  if (items.length === 0) {
+    showToast(parsed.error ? `찾지 못함: ${parsed.error}` : '청약 예정 종목을 못 찾았어요');
+    return;
+  }
+
+  const existingNames = getIpos().map(p => (p.name || '').replace(/\s/g, ''));
+  items.forEach(it => {
+    it._dup = existingNames.includes(String(it.name).replace(/\s/g, ''));
+    it._checked = !it._dup; // 이미 있는 건 기본 해제 (원하면 체크해서 갱신)
+  });
+  window._ipoCapture = items;
+  window._ipoSourceUsed = usedUrl;
+  renderIpoCapturePreview();
+}
+
+// 📸 공모주 일정 캡처 → 여러 종목 한 번에 등록 (38커뮤니케이션·증권사 공모주 화면 등)
+async function processIpoCapture(input) {
+  const files = Array.isArray(input) ? input : Array.from(input?.files || []);
+  if (files.length === 0) return;
+  if (!window.GEMINI_API_KEY) { showToast('AI 키 먼저 설정해주세요'); return; }
+
+  showToast('공모주 일정 분석 중...');
+  const found = [];
+  let lastErr = '';
+  const thisYear = new Date().getFullYear();
+
+  for (const file of files) {
+    try {
+      const base64 = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result.split(',')[1]);
+        r.onerror = reject;
+        r.readAsDataURL(file);
+      });
+
+      const prompt = `공모주(IPO) 청약 일정 화면에서 종목들을 추출해 JSON으로 반환.
+
+🚨 2단계로 작업하라:
+[1단계] 화면의 표/목록을 줄 단위로 그대로 옮겨 적어 "transcript"에 담기 (숫자·날짜 정확히)
+[2단계] transcript에 적은 내용만 사용해 items 만들기 (추측 금지)
+
+각 항목: {name, code, priceLow, priceHigh, subStart, subEnd, refundDate, listDate, broker}
+- name: 기업명 (필수)
+- code: 종목코드 6자리 (있으면)
+- priceLow / priceHigh: 공모가 밴드 하단/상단 (원, 숫자만). 확정공모가 하나면 둘 다 같은 값
+- subStart / subEnd: 청약 시작일 / 종료일 → **YYYY-MM-DD**
+- refundDate: 환불일 (납입일 아님) → YYYY-MM-DD
+- listDate: 상장일 → YYYY-MM-DD
+- broker: 주관사/주간사
+
+📌 날짜 규칙 (매우 중요):
+- 화면에 "11.05" "11/05" "11월 5일" 처럼 연도가 없으면 **${thisYear}년**으로 채워라
+- "11.05~11.06" 처럼 범위면 subStart=${thisYear}-11-05, subEnd=${thisYear}-11-06
+- 12월 일정인데 지금이 연말이면 연도는 그대로 ${thisYear} 사용 (임의로 다음해로 넘기지 말 것)
+- 확실하지 않은 날짜는 **그 필드를 생략** (틀린 날짜보다 빈 값이 나음)
+
+📤 출력 (JSON만):
+{"transcript":"...","items":[
+  {"name":"액스비스","code":"123456","priceLow":18000,"priceHigh":22000,"subStart":"${thisYear}-11-05","subEnd":"${thisYear}-11-06","refundDate":"${thisYear}-11-10","listDate":"${thisYear}-11-14","broker":"미래에셋"}
+]}
+못 읽으면: {"transcript":"...","items":[],"error":"이유"}`;
+
+      const models = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+      const body = {
+        contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: file.type || 'image/jpeg', data: base64 } }] }],
+        generationConfig: { temperature: 0, maxOutputTokens: 4000 },
+      };
+      let data = null;
+      for (const model of models) {
+        try {
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${window.GEMINI_API_KEY}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+          });
+          if (res.status === 429 || res.status === 503 || res.status === 404) { lastErr = `HTTP ${res.status}`; continue; }
+          const d = await res.json();
+          if (!res.ok || d.error) { lastErr = d.error?.message || `HTTP ${res.status}`; continue; }
+          data = d; break;
+        } catch (e) { lastErr = e.message; }
+      }
+      if (!data) throw new Error(lastErr || 'AI 호출 실패');
+
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      let js = text.trim().replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+      let parsed;
+      try { parsed = JSON.parse(js); }
+      catch (e) {
+        const m = js.match(/\{[\s\S]*\}/);
+        if (!m) throw new Error('인식 결과가 비어있어요');
+        parsed = JSON.parse(m[0]);
+      }
+      if (parsed.transcript) console.log('📝 공모주 캡처 원문:\n' + parsed.transcript);
+      (parsed.items || []).forEach(it => { if (it && it.name) found.push(it); });
+      if (parsed.error && !(parsed.items || []).length) lastErr = parsed.error;
+    } catch (e) {
+      console.warn('공모주 캡처 실패:', e.message);
+      lastErr = e.message;
+    }
+  }
+
+  if (!Array.isArray(input) && input) input.value = '';
+  if (found.length === 0) {
+    showToast(lastErr ? `분석 실패: ${lastErr}` : '공모주 일정을 찾지 못했어요');
+    return;
+  }
+
+  // 이름이 같은 기존 항목은 '갱신' 대상으로 표시
+  const existingNames = getIpos().map(p => (p.name || '').replace(/\s/g, ''));
+  found.forEach(it => {
+    it._dup = existingNames.includes(String(it.name).replace(/\s/g, ''));
+    it._checked = true;
+  });
+  delete window._ipoSourceUsed; // 캡처 경로는 출처 표기 없음
+  window._ipoCapture = found;
+  renderIpoCapturePreview();
+}
+
+function renderIpoCapturePreview() {
+  const list = window._ipoCapture || [];
+  const rows = list.map((it, i) => `
+    <div style="padding:11px 9px; border-bottom:0.5px solid var(--border-tertiary);">
+      <label style="display:flex; align-items:flex-start; gap:9px; cursor:pointer;">
+        <input type="checkbox" ${it._checked ? 'checked' : ''} onchange="window._ipoCapture[${i}]._checked=this.checked" style="width:18px; height:18px; flex-shrink:0; margin-top:2px;" />
+        <div style="flex:1; min-width:0;">
+          <div style="font-size:13px; font-weight:700;">${escapeHTML(it.name)} ${it._dup ? '<span style="font-size:10px; color:var(--text-warning);">(이미 있음 · 갱신)</span>' : ''}</div>
+          <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px; line-height:1.6;">
+            ${it.subStart ? `🔵 청약 ${it.subStart}${it.subEnd && it.subEnd !== it.subStart ? `~${String(it.subEnd).slice(5)}` : ''}` : '<span style="color:var(--text-danger);">청약일 못 읽음</span>'}
+            ${it.refundDate ? ` · 🟠 ${String(it.refundDate).slice(5)}` : ''}
+            ${it.listDate ? ` · 🟢 ${String(it.listDate).slice(5)}` : ''}
+            ${(Number(it.priceLow) > 0 || Number(it.priceHigh) > 0) ? `<br>공모가 ${Number(it.priceLow || 0).toLocaleString()}~${Number(it.priceHigh || 0).toLocaleString()}원` : ''}
+            ${it.broker ? ` · ${escapeHTML(it.broker)}` : ''}
+          </div>
+        </div>
+      </label>
+    </div>`).join('');
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">취소</button>
+        <h2>📋 공모주 일정 확인</h2>
+        <button class="modal-save" onclick="applyIpoCapture()">반영</button>
+      </div>
+      <div style="padding:10px 12px; background:var(--bg-info); border-radius:10px; margin-bottom:10px; font-size:11px; color:var(--text-info); line-height:1.6;">
+        ${list.length}개 종목을 읽었어요. 날짜가 틀렸으면 반영 후 항목을 눌러 수정하면 돼요.
+        ${window._ipoSourceUsed ? `<br><span style="opacity:0.75;">출처: ${escapeHTML(String(window._ipoSourceUsed).replace(/^https?:\/\//, '').split('/')[0])} · <b>실제 공모주 화면과 한 번 대조해주세요</b></span>` : ''}
+      </div>
+      <div style="border:0.5px solid var(--border-tertiary); border-radius:10px; overflow:hidden; max-height:58vh; overflow-y:auto;">${rows}</div>
+    </div>`;
+  modal.classList.add('show');
+}
+
+function applyIpoCapture() {
+  const picked = (window._ipoCapture || []).filter(x => x._checked);
+  if (picked.length === 0) { showToast('선택된 항목이 없어요'); return; }
+
+  const list = getIpos();
+  let added = 0, updated = 0;
+  const norm = (s) => String(s || '').replace(/\s/g, '');
+
+  picked.forEach(it => {
+    const data = {
+      name: String(it.name).trim(),
+      code: String(it.code || '').trim(),
+      broker: String(it.broker || '').trim(),
+      priceLow: Number(it.priceLow) || 0,
+      priceHigh: Number(it.priceHigh) || 0,
+      subStart: it.subStart || '',
+      subEnd: it.subEnd || it.subStart || '',
+      refundDate: it.refundDate || '',
+      listDate: it.listDate || '',
+    };
+    const exist = list.find(p => norm(p.name) === norm(data.name));
+    if (exist) {
+      // 비어 있는 값으로 기존 입력을 덮어쓰지 않는다 (자동 불러오기가 일부 필드를 못 읽어도 안전)
+      Object.keys(data).forEach(k => {
+        const v = data[k];
+        if (v === '' || v === 0 || v == null) return;
+        exist[k] = v;
+      });
+      updated++;
+    }
+    else { list.push({ id: Date.now() + Math.random(), memo: '', ...data }); added++; }
+  });
+
+  delete window._ipoCapture;
+  delete window._ipoSourceUsed;
+  saveData();
+  closeModal();
+  showToast(`📋 공모주 ${added > 0 ? `${added}건 추가` : ''}${added > 0 && updated > 0 ? ' · ' : ''}${updated > 0 ? `${updated}건 갱신` : ''}`);
+  renderAsset();
+}
+// ══════════════════════════════════════════════════════════════
+// ===== 📋 공모주 (IPO) — 제거 가능 블록 끝 =====
+// ══════════════════════════════════════════════════════════════
+
 // ===== 🔔 목표가 알림 =====
 // 서버가 없어 '앱이 꺼져 있을 때'는 못 보내지만, 시세를 받아올 때마다(앱 열 때·자산탭 진입·수동 갱신)
 // 목표가 도달을 검사해서 배너로 남긴다. 읽기 전까지 사라지지 않으므로 놓치지 않는다.
@@ -21286,6 +22154,20 @@ function openSettingsModal() {
           <i class="ti ti-refresh" style="color:var(--text-tertiary);"></i>
         </div>
       </button>
+      ${settings.ipoHidden ? `
+      <!-- 📋 공모주 탭 다시 켜기 (숨긴 상태일 때만 노출) -->
+      <button onclick="showIpoTab()" style="width:100%; padding:14px; border:0.5px solid var(--border-tertiary); background:white; border-radius:var(--radius-md); cursor:pointer; font-family:inherit; text-align:left; margin-bottom:10px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-size:20px;">📋</span>
+          <div style="flex:1;">
+            <div style="font-size:13px; font-weight:600;">공모주 탭 다시 켜기</div>
+            <div style="font-size:11px; color:var(--text-tertiary); margin-top:1px;">숨겨둔 공모주 일정 기능을 자산 탭에 다시 표시</div>
+          </div>
+          <i class="ti ti-eye" style="color:var(--text-tertiary);"></i>
+        </div>
+      </button>
+      ` : ''}
+
       <!-- 🔍 가계부 누락 점검 -->
       <button onclick="closeModal(); setTimeout(()=>openReconcileModal(12), 150);" style="width:100%; padding:14px; border:0.5px solid var(--border-tertiary); background:white; border-radius:var(--radius-md); cursor:pointer; font-family:inherit; text-align:left; margin-bottom:10px;">
         <div style="display:flex; align-items:center; gap:10px;">
