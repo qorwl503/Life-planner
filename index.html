@@ -15054,15 +15054,16 @@ function renderAsset() {
   const tabs = [
     { id:'holdings', label:'보유' },
     { id:'plan',     label:'플랜' },
-    { id:'analysis', label:'🔍 분석' },
-    ...(settings.ipoHidden ? [] : [{ id:'ipo', label:'📋 공모주' }]), // 📋 공모주 (숨기기 가능)
+    { id:'analysis', label:'분석' },
+    ...(settings.ipoHidden ? [] : [{ id:'ipo', label:'공모주' }]), // 공모주 (숨기기 가능)
     { id:'market',   label:'시장·뉴스' },
     { id:'youtube',  label:'유튜브' },
   ];
-  html += `<div style="display:flex; gap:4px; margin-bottom:14px; border-bottom:0.5px solid var(--border-tertiary); padding-bottom:6px; overflow-x:auto;">`;
+  // 블록(스티커)형 탭 — 개수가 늘어도 줄바꿈되며 잘리지 않음
+  html += `<div style="display:flex; flex-wrap:wrap; gap:5px; margin-bottom:14px;">`;
   tabs.forEach(t => {
     const active = assetTab === t.id;
-    html += `<button onclick="switchAssetTab('${t.id}')" style="flex:1; min-width:64px; padding:10px 4px; border:none; background:transparent; color:${active?'var(--text-primary)':'var(--text-tertiary)'}; font-size:13px; font-weight:${active?'600':'400'}; cursor:pointer; border-bottom:2px solid ${active?'var(--text-info)':'transparent'}; margin-bottom:-7px; font-family:inherit;">${t.label}</button>`;
+    html += `<button onclick="switchAssetTab('${t.id}')" style="flex:0 0 auto; padding:8px 14px; border:0.5px solid ${active?'transparent':'var(--border-tertiary)'}; border-radius:9px; background:${active?'var(--text-primary)':'var(--bg-secondary)'}; color:${active?'white':'var(--text-secondary)'}; font-size:12.5px; font-weight:${active?'700':'500'}; cursor:pointer; font-family:inherit; white-space:nowrap;">${t.label}</button>`;
   });
   html += `</div>`;
 
@@ -18610,6 +18611,11 @@ function renderIpoTab() {
     <div style="display:flex; gap:6px; margin-bottom:12px;">
       <button onclick="fetchIpoScheduleAuto()" style="flex:1; padding:10px; border:0.5px solid var(--border-tertiary); background:white; color:var(--text-secondary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">🔄 일정 자동 불러오기</button>
       <button onclick="openIpoAnalyze()" style="flex:1; padding:10px; border:0.5px solid var(--border-tertiary); background:white; color:var(--text-secondary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">🤖 AI 분석</button>
+    </div>
+    <div style="text-align:right; margin:-6px 0 12px;">
+      <button onclick="setIpoRawProxy()" style="border:none; background:transparent; color:var(--text-tertiary); font-size:10px; cursor:pointer; font-family:inherit; text-decoration:underline;">
+        ⚙️ 자동 불러오기 주소 설정${settings.ipoRawProxy ? ' (지정됨)' : ''}
+      </button>
     </div>`;
 
   // ── 미니 월간 캘린더 ──
@@ -18715,6 +18721,24 @@ function renderIpoTab() {
   </button>`;
 
   return h;
+}
+
+// 원문 바이트를 그대로 넘겨주는 전용 프록시 주소 (직접 만든 Worker 등)
+function setIpoRawProxy() {
+  const cur = settings.ipoRawProxy || '';
+  const v = prompt(
+    '자동 불러오기에 쓸 프록시 주소를 넣어주세요.\n\n' +
+    '예) https://myplanner-raw.내계정.workers.dev/\n\n' +
+    '· 앱이 뒤에 ?url=... 을 붙여서 요청해요\n' +
+    '· 비우고 확인을 누르면 해제됩니다', cur);
+  if (v === null) return; // 취소
+  const t = v.trim();
+  if (!t) { delete settings.ipoRawProxy; saveData(); showToast('전용 주소를 해제했어요'); renderAsset(); return; }
+  if (!/^https:\/\//i.test(t)) { showToast('https:// 로 시작하는 주소여야 해요'); return; }
+  settings.ipoRawProxy = t.replace(/\?$/, '');
+  saveData();
+  showToast('주소를 저장했어요 — 자동 불러오기를 눌러보세요');
+  renderAsset();
 }
 
 function ipoMonthShift(delta) {
@@ -18887,24 +18911,112 @@ function openIpoAnalyze(ipoId) {
   modal.classList.add('show');
 }
 
+// 저장하지 않고 분석만 해보는 임시 종목 (앱 데이터에 남지 않음)
+const IPO_ADHOC_FIELDS = [
+  { k: 'name', label: '종목명', ph: '예: 액스비스', wide: true },
+  { k: 'priceLow', label: '공모가 하단', ph: '18000' },
+  { k: 'priceHigh', label: '공모가 상단', ph: '22000' },
+  { k: 'subStart', label: '청약 시작', ph: '2026-08-05' },
+  { k: 'subEnd', label: '청약 종료', ph: '2026-08-06' },
+  { k: 'refundDate', label: '환불일', ph: '2026-08-10' },
+  { k: 'listDate', label: '상장일', ph: '2026-08-14' },
+  { k: 'broker', label: '주관사', ph: '미래에셋', wide: true },
+];
+
+function ipoAdhoc() {
+  if (!window._ipoAdhoc) window._ipoAdhoc = {};
+  return window._ipoAdhoc;
+}
+
+// 화면을 다시 그리기 전에 입력 중인 값을 잃지 않도록 먼저 걷어둔다
+function captureIpoAdhoc() {
+  if (window._ipoAnalyzeId !== 'adhoc') return;
+  const a = ipoAdhoc();
+  IPO_ADHOC_FIELDS.forEach(f => {
+    const el = document.getElementById(`ipo-ad-${f.k}`);
+    if (el) a[f.k] = el.value.trim();
+  });
+}
+
+function switchIpoAnalyzeTarget(key, val) {
+  captureIpoAdhoc();
+  window._ipoAnalyzeId = (val === 'adhoc') ? 'adhoc' : Number(val);
+  openIpoAnalyzeForm(key);
+}
+
+// 임시 종목을 실제 목록에 저장 (사용자가 원할 때만)
+function saveIpoAdhoc(key) {
+  captureIpoAdhoc();
+  const a = ipoAdhoc();
+  if (!a.name) { showToast('종목명을 먼저 입력해주세요'); return; }
+  const rec = {
+    id: Date.now() + Math.random(), memo: '',
+    name: a.name, code: '', broker: a.broker || '',
+    priceLow: Number(String(a.priceLow || '').replace(/[^\d.]/g, '')) || 0,
+    priceHigh: Number(String(a.priceHigh || '').replace(/[^\d.]/g, '')) || 0,
+    subStart: a.subStart || '', subEnd: a.subEnd || a.subStart || '',
+    refundDate: a.refundDate || '', listDate: a.listDate || '',
+  };
+  getIpos().push(rec);
+  saveData();
+  window._ipoAnalyzeId = rec.id;
+  window._ipoAdhoc = {};
+  showToast(`📋 ${rec.name} 저장했어요`);
+  openIpoAnalyzeForm(key);
+  renderAsset();
+}
+
 function openIpoAnalyzeForm(key) {
   const cfg = IPO_ANALYSES.find(c => c.key === key);
   if (!cfg) return;
   const list = getIpos();
 
-  let p = null;
+  let p = null, adhoc = false;
   if (cfg.scope === 'one') {
-    if (list.length === 0) { showToast('먼저 공모주를 등록해주세요'); return; }
-    p = list.find(x => x.id === window._ipoAnalyzeId) || list[0];
-    window._ipoAnalyzeId = p.id;
+    // 저장된 게 없거나 '직접 입력'을 고르면 임시 종목으로 — 저장 강제하지 않음
+    if (window._ipoAnalyzeId === 'adhoc' || list.length === 0) {
+      window._ipoAnalyzeId = 'adhoc';
+      adhoc = true;
+      const a = ipoAdhoc();
+      p = {
+        name: a.name || '(이름 미입력)', code: '', broker: a.broker || '',
+        priceLow: Number(String(a.priceLow || '').replace(/[^\d.]/g, '')) || 0,
+        priceHigh: Number(String(a.priceHigh || '').replace(/[^\d.]/g, '')) || 0,
+        subStart: a.subStart || '', subEnd: a.subEnd || '',
+        refundDate: a.refundDate || '', listDate: a.listDate || '', memo: '',
+      };
+    } else {
+      p = list.find(x => x.id === window._ipoAnalyzeId) || list[0];
+      window._ipoAnalyzeId = p.id;
+    }
   }
-  const saved = p ? ipoVarStore(p, key) : (settings.ipoVarsAll && settings.ipoVarsAll[key]) || {};
+
+  if (!window._ipoAdhocVars) window._ipoAdhocVars = {};
+  const saved = adhoc ? (window._ipoAdhocVars[key] || {})
+    : p ? ipoVarStore(p, key)
+    : (settings.ipoVarsAll && settings.ipoVarsAll[key]) || {};
 
   const picker = cfg.scope === 'one' ? `
     <label style="font-size:11px; color:var(--text-secondary); font-weight:600;">분석할 종목</label>
-    <select id="ipo-an-target" onchange="window._ipoAnalyzeId=Number(this.value); openIpoAnalyzeForm('${key}')" style="width:100%; padding:11px; border:0.5px solid var(--border-tertiary); border-radius:10px; font-size:13px; font-family:inherit; margin:5px 0 12px; background:white;">
-      ${list.map(x => `<option value="${x.id}" ${x.id === p.id ? 'selected' : ''}>${escapeHTML(x.name)}</option>`).join('')}
+    <select id="ipo-an-target" onchange="switchIpoAnalyzeTarget('${key}', this.value)" style="width:100%; padding:11px; border:0.5px solid var(--border-tertiary); border-radius:10px; font-size:13px; font-family:inherit; margin:5px 0 12px; background:white;">
+      ${list.map(x => `<option value="${x.id}" ${!adhoc && x.id === p.id ? 'selected' : ''}>${escapeHTML(x.name)}</option>`).join('')}
+      <option value="adhoc" ${adhoc ? 'selected' : ''}>✍️ 직접 입력 (저장 안 함)</option>
     </select>` : '';
+
+  const a = ipoAdhoc();
+  const adhocBox = adhoc ? `
+    <div style="padding:11px; background:var(--bg-secondary); border-radius:10px; margin-bottom:12px;">
+      <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:8px; line-height:1.5;">저장하지 않고 이번 분석에만 써요. 아는 것만 채우면 돼요.</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+        ${IPO_ADHOC_FIELDS.map(f => `
+          <div style="${f.wide ? 'grid-column:1/-1;' : ''}">
+            <label style="font-size:10px; color:var(--text-tertiary);">${f.label}</label>
+            <input id="ipo-ad-${f.k}" value="${escapeAttr(a[f.k] || '')}" placeholder="${escapeAttr(f.ph)}"
+              style="width:100%; padding:9px; border:0.5px solid var(--border-tertiary); border-radius:8px; font-size:12px; font-family:inherit; margin-top:3px;" />
+          </div>`).join('')}
+      </div>
+      <button onclick="saveIpoAdhoc('${key}')" style="width:100%; margin-top:9px; padding:8px; border:0.5px solid var(--border-tertiary); background:white; color:var(--text-secondary); border-radius:8px; font-size:11px; font-weight:700; cursor:pointer; font-family:inherit;">💾 이 종목 목록에 저장하기</button>
+    </div>` : '';
 
   const fields = cfg.vars.map(v => `
     <label style="font-size:11px; color:var(--text-secondary); font-weight:600;">${v.label}</label>
@@ -18920,7 +19032,8 @@ function openIpoAnalyzeForm(key) {
         <span style="width:44px;"></span>
       </div>
       ${picker}
-      ${p ? `<div style="padding:9px 11px; background:var(--bg-secondary); border-radius:10px; margin-bottom:12px; font-size:10px; color:var(--text-tertiary); line-height:1.6; white-space:pre-line;">${escapeHTML(ipoFacts(p))}</div>` : ''}
+      ${adhocBox}
+      ${(p && !adhoc) ? `<div style="padding:9px 11px; background:var(--bg-secondary); border-radius:10px; margin-bottom:12px; font-size:10px; color:var(--text-tertiary); line-height:1.6; white-space:pre-line;">${escapeHTML(ipoFacts(p))}</div>` : ''}
       <div style="font-size:11px; color:var(--text-tertiary); margin-bottom:8px;">아는 값만 채워도 돼요. 빈 칸은 "판단 보류"로 넘어가요.</div>
       ${fields}
       <div style="display:flex; gap:6px; margin-top:14px;">
@@ -18932,6 +19045,24 @@ function openIpoAnalyzeForm(key) {
   modal.classList.add('show');
 }
 
+// 분석 대상 — 저장된 종목이거나, 저장 안 한 임시 입력이거나
+function resolveIpoTarget(cfg) {
+  if (cfg.scope !== 'one') return null;
+  if (window._ipoAnalyzeId === 'adhoc') {
+    captureIpoAdhoc();
+    const a = ipoAdhoc();
+    return {
+      _adhoc: true,
+      name: a.name || '', code: '', broker: a.broker || '',
+      priceLow: Number(String(a.priceLow || '').replace(/[^\d.]/g, '')) || 0,
+      priceHigh: Number(String(a.priceHigh || '').replace(/[^\d.]/g, '')) || 0,
+      subStart: a.subStart || '', subEnd: a.subEnd || '',
+      refundDate: a.refundDate || '', listDate: a.listDate || '', memo: '',
+    };
+  }
+  return getIpos().find(x => x.id === window._ipoAnalyzeId) || null;
+}
+
 function collectIpoVars(cfg) {
   const vals = {};
   cfg.vars.forEach(v => {
@@ -18940,6 +19071,12 @@ function collectIpoVars(cfg) {
   });
   // 다음에 또 안 적도록 저장 (사용자가 넣은 값만 보관)
   if (cfg.scope === 'one') {
+    if (window._ipoAnalyzeId === 'adhoc') {
+      // 임시 종목은 앱 데이터에 남기지 않고 화면에만 들고 있는다
+      if (!window._ipoAdhocVars) window._ipoAdhocVars = {};
+      window._ipoAdhocVars[cfg.key] = { ...vals };
+      return vals;
+    }
     const p = getIpos().find(x => x.id === window._ipoAnalyzeId);
     if (p) { ipoVarStore(p, cfg.key); p.vars[cfg.key] = { ...vals }; }
   } else {
@@ -18953,8 +19090,9 @@ function collectIpoVars(cfg) {
 function copyIpoPrompt(key) {
   const cfg = IPO_ANALYSES.find(c => c.key === key);
   if (!cfg) return;
-  const p = cfg.scope === 'one' ? getIpos().find(x => x.id === window._ipoAnalyzeId) : null;
+  const p = resolveIpoTarget(cfg);
   if (cfg.scope === 'one' && !p) { showToast('종목을 선택해주세요'); return; }
+  if (p && p._adhoc && !p.name) { showToast('종목명을 입력해주세요'); return; }
   const text = buildIpoPrompt(cfg, p, collectIpoVars(cfg));
   navigator.clipboard?.writeText(text)
     .then(() => showToast('📋 프롬프트를 복사했어요'))
@@ -18964,8 +19102,9 @@ function copyIpoPrompt(key) {
 async function runIpoAnalyze(key) {
   const cfg = IPO_ANALYSES.find(c => c.key === key);
   if (!cfg) return;
-  const p = cfg.scope === 'one' ? getIpos().find(x => x.id === window._ipoAnalyzeId) : null;
+  const p = resolveIpoTarget(cfg);
   if (cfg.scope === 'one' && !p) { showToast('종목을 선택해주세요'); return; }
+  if (p && p._adhoc && !p.name) { showToast('종목명을 입력해주세요'); return; }
 
   const box = document.getElementById('ipo-an-result');
   const vals = collectIpoVars(cfg);
@@ -18974,7 +19113,7 @@ async function runIpoAnalyze(key) {
 
   if (box) box.innerHTML = `<div style="padding:16px; text-align:center; color:var(--text-tertiary); font-size:12px;">분석 중...</div>`;
   const prompt = buildIpoPrompt(cfg, p, vals);
-  const cacheKey = `ipo-${key}-${p ? p.id : 'all'}-${JSON.stringify(vals)}`;
+  const cacheKey = `ipo-${key}-${p ? (p._adhoc ? `adhoc:${p.name}` : p.id) : 'all'}-${JSON.stringify(vals)}`;
   const result = await askGemini(prompt, { useCache: true, cacheKey, maxRetries: 1 });
 
   if (!box) return;
@@ -19103,9 +19242,25 @@ function deleteIpo(id) {
 //    그래서 ① 프록시로 실제 페이지 HTML을 가져오고 ② 그 텍스트를 AI가 파싱한다.
 //    사이트가 개편/차단되면 멈출 수 있으므로 캡처 방식이 항상 백업으로 남아 있음.
 const IPO_SOURCES = [
-  'https://www.38.co.kr/html/fund/index.htm?o=k',   // 38커뮤니케이션 공모주 청약일정
-  'https://www.38.co.kr/html/fund/',
+  // 네이버 금융 공모청약 — 종목명·공모가밴드·주관사·개인청약일·상장일이 모두 들어있고
+  // 우리 Worker에서 접속이 되는 유일한 소스. (38.co.kr·아이피오스탁은 프록시를 403으로 차단)
+  'https://finance.naver.com/sise/ipo.naver',
 ];
+
+// 국내 공모주 사이트는 대부분 EUC-KR — UTF-8로 읽으면 한글이 깨진다.
+// 두 인코딩으로 디코드해보고 한글이 더 많이 살아난 쪽을 쓴다.
+function ipoDecodeBytes(buf) {
+  let best = '', bestScore = -1;
+  for (const enc of ['utf-8', 'euc-kr']) {
+    let s;
+    try { s = new TextDecoder(enc).decode(buf); } catch (e) { continue; }
+    const ko = (s.match(/[가-힣]/g) || []).length;
+    const bad = (s.match(/�/g) || []).length;
+    const score = ko - bad * 3;
+    if (score > bestScore) { bestScore = score; best = s; }
+  }
+  return best;
+}
 
 function ipoHtmlToText(html) {
   return String(html || '')
@@ -19127,34 +19282,46 @@ async function fetchIpoScheduleAuto() {
   showToast('공모주 일정 불러오는 중...');
 
   const targets = settings.ipoSourceUrl ? [settings.ipoSourceUrl, ...IPO_SOURCES] : IPO_SOURCES;
+  // 원문 바이트를 그대로 주는 프록시를 우선 사용한다.
+  // (JSON으로 감싸는 프록시는 EUC-KR 페이지를 UTF-8로 잘못 디코드해서 한글이 깨진다)
+  // 국내 금융 사이트는 공용 프록시를 대부분 막아서(403/522) 내 Worker가 사실상 유일한 경로다.
+  // Worker에 raw 모드가 있으면 그쪽을 먼저 쓴다 (EUC-KR을 앱에서 직접 디코드하기 위해).
   const proxies = [
-    (u) => ({ url: `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(u)}`, pick: async (r) => (await r.json()).contents }),
-    (u) => ({ url: `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`, pick: async (r) => (await r.json()).contents }),
-    (u) => ({ url: `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`, pick: async (r) => r.text() }),
+    // 사용자가 지정한 전용 프록시(원문 바이트 그대로 주는 Worker)가 있으면 1순위
+    ...(settings.ipoRawProxy ? [{ raw: true, mk: (u) => `${settings.ipoRawProxy}${settings.ipoRawProxy.includes('?') ? '&' : '?'}url=${encodeURIComponent(u)}` }] : []),
+    { raw: true,  mk: (u) => `https://life-planner.qorwl503.workers.dev/raw?url=${encodeURIComponent(u)}` },
+    { raw: false, mk: (u) => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(u)}` },
+    { raw: true,  mk: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}` },
+    { raw: true,  mk: (u) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}` },
   ];
 
-  let pageText = '', usedUrl = '';
+  let pageText = '', usedUrl = '', lastFail = '';
   outer:
   for (const target of targets) {
-    for (const mk of proxies) {
-      const p = mk(target);
+    for (const px of proxies) {
       try {
         const ctrl = new AbortController();
-        const to = setTimeout(() => ctrl.abort(), 9000);
-        const res = await fetch(p.url, { signal: ctrl.signal });
+        const to = setTimeout(() => ctrl.abort(), 12000);
+        const res = await fetch(px.mk(target), { signal: ctrl.signal });
         clearTimeout(to);
-        if (!res.ok) continue;
-        const raw = await p.pick(res);
-        const txt = ipoHtmlToText(raw);
-        // 한글이 깨졌거나(인코딩 문제) 내용이 빈약하면 다음 후보로
+        if (!res.ok) { lastFail = `HTTP ${res.status}`; continue; }
+
+        // 38커뮤니케이션·아이피오스탁은 EUC-KR → 바이트로 받아 인코딩을 골라 디코드
+        const html = px.raw ? ipoDecodeBytes(await res.arrayBuffer()) : (await res.json()).contents;
+        const txt = ipoHtmlToText(html);
         const koreanCount = (txt.match(/[가-힣]/g) || []).length;
-        if (txt.length > 300 && koreanCount > 50) { pageText = txt; usedUrl = target; break outer; }
-      } catch (e) { /* 다음 프록시 */ }
+        if (txt.length < 300) { lastFail = '내용이 너무 짧음'; continue; }
+        // 페이지는 받아왔는데 한글만 깨진 경우 = 프록시가 EUC-KR을 UTF-8로 디코드한 것
+        if (koreanCount < 50) { lastFail = txt.length > 5000 ? '한글 깨짐 — Worker 인코딩 수정 필요' : '한글이 깨짐(인코딩)'; continue; }
+        pageText = txt; usedUrl = target; break outer;
+      } catch (e) {
+        lastFail = (e && e.name === 'AbortError') ? '시간 초과' : (e.message || '연결 실패');
+      }
     }
   }
 
   if (!pageText) {
-    showToast('일정 페이지를 못 가져왔어요 — 캡처로 넣어주세요');
+    showToast(`일정 페이지를 못 가져왔어요 (${lastFail || '원인 불명'}) — 캡처로 넣어주세요`);
     return;
   }
 
