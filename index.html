@@ -83,6 +83,11 @@ const firebaseConfig = {
     --text-warning: #7C5418;
     --text-danger: #9B3A33;
 
+    /* 강조색 — 여태 정의가 없어서 14곳이 폴백(#6B5B96, iOS 밝은 보라)으로 렌더링되고 있었다 */
+    --accent-primary: #6B5B96;
+    --bg-accent: #EBE9F1;
+    --text-accent: #6B5B96;
+
     --border-tertiary: rgba(30,35,40,0.09);
     --border-secondary: rgba(30,35,40,0.17);
 
@@ -241,11 +246,11 @@ const firebaseConfig = {
     align-items: center;
     cursor: pointer;
   }
-  .evt-todo { background: #E0EBF8; border-left-color: #6B9FD9; }
-  .evt-workout { background: #DDEFE3; border-left-color: #6BC495; }
-  .evt-money { background: #FFEDD0; border-left-color: #F5A852; }
-  .evt-asset { background: #E8E3F5; border-left-color: #9C8FE0; }
-  .evt-challenge { background: #F8E0E8; border-left-color: #E091A8; }
+  .evt-todo { background: var(--bg-info); border-left-color: #456E9E; }
+  .evt-workout { background: var(--bg-success); border-left-color: #5E9A7E; }
+  .evt-money { background: var(--bg-warning); border-left-color: #C08A4A; }
+  .evt-asset { background: var(--bg-accent); border-left-color: #9C8FE0; }
+  .evt-challenge { background: var(--bg-danger); border-left-color: #A55265; }
   .evt-icon { font-size: 14px; flex-shrink: 0; }
   .evt-todo .evt-icon { color: #4A82C2; }
   .evt-workout .evt-icon { color: #4DA275; }
@@ -607,7 +612,7 @@ const firebaseConfig = {
     position: absolute;
     top: -40px; right: -40px;
     width: 120px; height: 120px;
-    background: radial-gradient(circle, rgba(255,200,100,0.15) 0%, transparent 70%);
+    background: radial-gradient(circle, rgba(192,138,74,0.15) 0%, transparent 70%);
     pointer-events: none;
   }
   .ai-badge {
@@ -1073,7 +1078,7 @@ function setupOfflineHandler() {
   if (!document.getElementById('offline-banner')) {
     const banner = document.createElement('div');
     banner.id = 'offline-banner';
-    banner.style.cssText = 'position:fixed; top:0; left:0; right:0; background:#FF3B30; color:white; padding:8px 14px; font-size:12px; text-align:center; z-index:9999; display:none; font-family:inherit;';
+    banner.style.cssText = 'position:fixed; top:0; left:0; right:0; background:#9B3A33; color:white; padding:8px 14px; font-size:12px; text-align:center; z-index:9999; display:none; font-family:inherit;';
     banner.innerHTML = '<i class="ti ti-wifi-off" style="vertical-align:-2px;"></i> 인터넷 연결이 끊겼습니다. 일부 기능이 작동하지 않을 수 있어요.';
     document.body.appendChild(banner);
   }
@@ -1456,7 +1461,7 @@ function showLockScreen() {
   const err = ov.querySelector('#lock-err');
   const pad = ov.querySelector('#lock-pad');
   function drawDots() {
-    dots.innerHTML = [0,1,2,3].map(i => `<div style="width:13px; height:13px; border-radius:50%; background:${i < entered.length ? 'var(--accent-primary, #5E5CE6)' : 'var(--border-tertiary, #ccc)'};"></div>`).join('');
+    dots.innerHTML = [0,1,2,3].map(i => `<div style="width:13px; height:13px; border-radius:50%; background:${i < entered.length ? 'var(--accent-primary, #6B5B96)' : 'var(--border-tertiary, #ccc)'};"></div>`).join('');
   }
   drawDots();
   function press(n) {
@@ -1972,7 +1977,7 @@ function renderDdayCard() {
       const isToday = d.diff === 0;
       const label = isToday ? 'D-DAY' : isPast ? `D+${Math.abs(d.diff)}` : `D-${d.diff}`;
       const color = isToday ? 'var(--text-warning)' : isPast ? 'var(--text-tertiary)' : 'var(--text-info)';
-      const bg = isToday ? 'rgba(255,165,0,0.12)' : isPast ? 'var(--bg-secondary)' : 'rgba(70,140,255,0.08)';
+      const bg = isToday ? 'rgba(255,165,0,0.12)' : isPast ? 'var(--bg-secondary)' : 'rgba(69,110,158,0.08)';
       const dateLabel = (() => {
         const dt = new Date(d.date + 'T00:00:00');
         return `${dt.getMonth() + 1}/${dt.getDate()}`;
@@ -2339,7 +2344,7 @@ function renderCalendar() {
   header.innerHTML = `
     <h1>캘린더</h1>
     <div class="header-actions">
-      <button onclick="openSettingsModal()" aria-label="설정" style="position:relative;"><i class="ti ti-settings"></i>${!window.GEMINI_API_KEY ? '<span style="position:absolute; top:6px; right:6px; width:6px; height:6px; border-radius:50%; background:#FF3B30;"></span>' : ''}</button>
+      <button onclick="openSettingsModal()" aria-label="설정" style="position:relative;"><i class="ti ti-settings"></i>${!window.GEMINI_API_KEY ? '<span style="position:absolute; top:6px; right:6px; width:6px; height:6px; border-radius:50%; background:#9B3A33;"></span>' : ''}</button>
       <button onclick="openAddModal()" aria-label="추가"><i class="ti ti-plus"></i></button>
     </div>
   `;
@@ -2380,11 +2385,11 @@ function renderCalendar() {
 
   // 적당히 진한 파스텔 (보기 편한 톤)
   const dotColor = {
-    w:'#6BC495',  // 진한 민트 - 운동
-    m:'#F5A852',  // 진한 살구 - 가계부
-    t:'#6B9FD9',  // 진한 베이비블루 - 할일
+    w:'#5E9A7E',  // 진한 민트 - 운동
+    m:'#C08A4A',  // 진한 살구 - 가계부
+    t:'#456E9E',  // 진한 베이비블루 - 할일
     a:'#9C8FE0',  // 진한 라일락 - 자산
-    c:'#E091A8',  // 진한 베이비핑크 - 챌린지
+    c:'#A55265',  // 진한 베이비핑크 - 챌린지
   };
 
   // 월/주 토글
@@ -2458,13 +2463,13 @@ function renderCalendar() {
 
       html += `
         <div onclick="selectDayFromWeek('${dKey}')" style="cursor:pointer; min-height:130px; background:${isToday ? 'rgba(0,122,255,0.06)' : 'white'}; border:1px solid ${isToday ? 'var(--text-info)' : 'var(--border-tertiary)'}; border-radius:8px; padding:6px 4px; display:flex; flex-direction:column; gap:3px; ${!isInSelectedMonth ? 'opacity:0.4;' : ''}">
-          <div style="font-size:10px; color:${isSun?'#FF6B6B':isSat?'#6B9FD9':'var(--text-tertiary)'}; text-align:center; font-weight:500;">${dayLabels[i]}</div>
-          <div style="font-size:14px; font-weight:${isToday?'700':'600'}; color:${isToday?'var(--text-info)':isSun?'#FF6B6B':isSat?'#6B9FD9':'var(--text-primary)'}; text-align:center; margin-bottom:2px;">${d.getDate()}</div>
-          ${dayWorkout ? `<div style="font-size:10px; padding:2px 4px; background:#DDEFE3; color:#3D8A60; border-radius:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">💪 운동</div>` : ''}
-          ${dayTodos.slice(0, 3).map(t => `<div style="font-size:10px; padding:2px 4px; background:#E0EBF8; color:#3D6FAA; border-radius:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${t.done?'<s>':''}${(t.title||'').substring(0,8)}${t.done?'</s>':''}</div>`).join('')}
+          <div style="font-size:10px; color:${isSun?'#B0574E':isSat?'#456E9E':'var(--text-tertiary)'}; text-align:center; font-weight:500;">${dayLabels[i]}</div>
+          <div style="font-size:14px; font-weight:${isToday?'700':'600'}; color:${isToday?'var(--text-info)':isSun?'#B0574E':isSat?'#456E9E':'var(--text-primary)'}; text-align:center; margin-bottom:2px;">${d.getDate()}</div>
+          ${dayWorkout ? `<div style="font-size:10px; padding:2px 4px; background:var(--bg-success); color:#3D8A60; border-radius:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">💪 운동</div>` : ''}
+          ${dayTodos.slice(0, 3).map(t => `<div style="font-size:10px; padding:2px 4px; background:var(--bg-info); color:#3D6FAA; border-radius:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${t.done?'<s>':''}${(t.title||'').substring(0,8)}${t.done?'</s>':''}</div>`).join('')}
           ${dayTodos.length > 3 ? `<div style="font-size:10px; color:var(--text-tertiary); text-align:center;">+${dayTodos.length-3}</div>` : ''}
-          ${dayExpenses.length > 0 ? `<div style="font-size:10px; padding:2px 4px; background:#FFEDD0; color:#A87836; border-radius:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">💰 ${dayExpenses.length}건</div>` : ''}
-          ${dayChs.length > 0 ? `<div style="font-size:10px; padding:2px 4px; background:#F8E0E8; color:#A05674; border-radius:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">🎯 챌린지</div>` : ''}
+          ${dayExpenses.length > 0 ? `<div style="font-size:10px; padding:2px 4px; background:var(--bg-warning); color:#A87836; border-radius:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">💰 ${dayExpenses.length}건</div>` : ''}
+          ${dayChs.length > 0 ? `<div style="font-size:10px; padding:2px 4px; background:var(--bg-danger); color:#A05674; border-radius:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">🎯 챌린지</div>` : ''}
         </div>
       `;
     }
@@ -2491,10 +2496,10 @@ function renderCalendar() {
 
   html += `
     <div class="cal-legend">
-      <span><span class="ld" style="background:#6BC495"></span>운동</span>
-      <span><span class="ld" style="background:#F5A852"></span>가계부</span>
-      <span><span class="ld" style="background:#6B9FD9"></span>할일</span>
-      <span><span class="ld" style="background:#E091A8"></span>챌린지</span>
+      <span><span class="ld" style="background:#5E9A7E"></span>운동</span>
+      <span><span class="ld" style="background:#C08A4A"></span>가계부</span>
+      <span><span class="ld" style="background:#456E9E"></span>할일</span>
+      <span><span class="ld" style="background:#A55265"></span>챌린지</span>
     </div>`;
 
   const dow = (startOffset + selectedDay - 1) % 7;
@@ -2547,7 +2552,7 @@ function renderCalendar() {
       } else {
         // 🔧 전체일 때만 4개 주제 2x2 카드 (흰 바탕, 색 테두리, 접기/펼치기)
         const groups = [
-          { type: 'todo',      label: '할 일',   icon: 'ti-checkbox',  accent: '#5E5CE6' },
+          { type: 'todo',      label: '할 일',   icon: 'ti-checkbox',  accent: '#6B5B96' },
           { type: 'money',     label: '가계부',  icon: 'ti-wallet',    accent: '#E08A3C' },
           { type: 'workout',   label: '운동',    icon: 'ti-barbell',   accent: '#2D9B5A' },
           { type: 'challenge', label: '챌린지',  icon: 'ti-flame',     accent: '#C9758F' },
@@ -2560,14 +2565,14 @@ function renderCalendar() {
           if (items.length === 0) return; // 빈 주제는 카드 자체를 안 보여줌
           const isOpen = window._calExpanded[g.type] === true; // 기본 닫힘, 누른 것만 펼침
           html += `
-            <div style="background:#FFFFFF; border-radius:13px; border:1.5px solid ${g.accent}; overflow:hidden;">
+            <div style="background:var(--bg-primary); border-radius:13px; border:1.5px solid ${g.accent}; overflow:hidden;">
               <div onclick="window._calExpanded['${g.type}']=(window._calExpanded['${g.type}']!==true); renderCalendar();" style="display:flex; align-items:center; gap:6px; padding:11px 12px; cursor:pointer;">
                 <i class="ti ${g.icon}" style="font-size:14px; color:${g.accent};"></i>
                 <span style="font-size:12px; font-weight:700; color:var(--text-primary);">${g.label}</span>
                 <span style="font-size:11px; font-weight:600; color:${g.accent}; background:${g.accent}1A; border-radius:999px; padding:1px 7px;">${items.length}</span>
                 <i class="ti ti-chevron-${isOpen ? 'up' : 'down'}" style="font-size:14px; color:var(--text-tertiary); margin-left:auto;"></i>
               </div>
-              ${isOpen ? `<div style="padding:0 12px 8px; background:#FFFFFF;">${items.map(renderEvt).join('')}</div>` : ''}
+              ${isOpen ? `<div style="padding:0 12px 8px; background:var(--bg-primary);">${items.map(renderEvt).join('')}</div>` : ''}
             </div>`;
         });
         html += `</div>`;
@@ -4359,7 +4364,7 @@ function showCompletedChallenges() {
   }).length;
 
   const summary = totalCount > 0 ? `
-    <div style="padding:16px; background:linear-gradient(135deg,#E091A8,#C9758F); border-radius:14px; color:white; margin-bottom:14px;">
+    <div style="padding:16px; background:linear-gradient(135deg,#A55265,#C9758F); border-radius:14px; color:white; margin-bottom:14px;">
       <div style="font-size:12px; opacity:0.9; margin-bottom:8px;">🎯 지금까지 해낸 것들</div>
       <div style="display:flex; gap:8px;">
         <div style="flex:1; text-align:center;">
@@ -4392,7 +4397,7 @@ function showCompletedChallenges() {
               ${c.startDate ? ` · ${c.startDate} 시작` : ''}
             </div>
             <div style="height:5px; background:var(--bg-tertiary); border-radius:3px; margin-top:6px; overflow:hidden;">
-              <div style="height:100%; width:${Math.min(100,rate)}%; background:${isPerfect ? '#E091A8' : '#C9A0B0'};"></div>
+              <div style="height:100%; width:${Math.min(100,rate)}%; background:${isPerfect ? '#A55265' : '#C9A0B0'};"></div>
             </div>
           </div>
           <button onclick="deleteChallenge('${c.id}')" style="border:none; background:transparent; color:var(--text-tertiary); font-size:13px; cursor:pointer; font-family:inherit; padding:4px;">🗑️</button>
@@ -5102,7 +5107,7 @@ function renderMoneyInsightCards(opts) {
 
     if (leaks.length > 0) {
       html += `
-        <div style="padding:14px; background:rgba(232,155,74,0.08); border-radius:12px; margin-bottom:10px; border:0.5px solid rgba(232,155,74,0.3);">
+        <div style="padding:14px; background:rgba(184,125,60,0.08); border-radius:12px; margin-bottom:10px; border:0.5px solid rgba(184,125,60,0.3);">
           <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">
             <span style="font-size:14px;">💧</span>
             <span style="font-size:11px; font-weight:700; color:#B86E1E;">새는 돈 탐지</span>
@@ -5146,7 +5151,7 @@ function renderMoneyInsightCards(opts) {
 
       if (surges.length > 0) {
         html += `
-          <div style="padding:14px; background:rgba(232,72,61,0.07); border-radius:12px; margin-bottom:10px; border:0.5px solid rgba(232,72,61,0.25);">
+          <div style="padding:14px; background:rgba(155,58,51,0.07); border-radius:12px; margin-bottom:10px; border:0.5px solid rgba(155,58,51,0.25);">
             <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">
               <span style="font-size:14px;">📈</span>
               <span style="font-size:11px; font-weight:700; color:#C0392B;">전월 대비 급증 (같은 ${dayCut}일까지)</span>
@@ -5247,14 +5252,14 @@ function renderTodayActionsCard() {
   const items = isManual ? custom.items : getAutoActions();
 
   return `
-    <div style="padding:14px; background:rgba(94,92,230,0.06); border-radius:12px; margin-bottom:14px; border:0.5px solid rgba(94,92,230,0.25);">
+    <div style="padding:14px; background:rgba(107,91,150,0.06); border-radius:12px; margin-bottom:14px; border:0.5px solid rgba(107,91,150,0.25);">
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
         <div style="display:flex; align-items:center; gap:6px;">
           <span style="font-size:14px;">🎯</span>
-          <span style="font-size:11px; font-weight:700; color:var(--accent-primary, #5E5CE6);">오늘 이것만 하면 성공</span>
-          ${isManual ? '' : `<span style="font-size:10px; padding:1px 6px; background:rgba(94,92,230,0.12); color:var(--accent-primary, #5E5CE6); border-radius:999px;">자동 추천</span>`}
+          <span style="font-size:11px; font-weight:700; color:var(--accent-primary, #6B5B96);">오늘 이것만 하면 성공</span>
+          ${isManual ? '' : `<span style="font-size:10px; padding:1px 6px; background:rgba(107,91,150,0.12); color:var(--accent-primary, #6B5B96); border-radius:999px;">자동 추천</span>`}
         </div>
-        <button onclick="openTodayActionsEdit()" style="border:none; background:transparent; color:var(--accent-primary, #5E5CE6); font-size:11px; cursor:pointer; font-family:inherit;">
+        <button onclick="openTodayActionsEdit()" style="border:none; background:transparent; color:var(--accent-primary, #6B5B96); font-size:11px; cursor:pointer; font-family:inherit;">
           ${isManual ? '✏️ 수정' : '✏️ 직접 정하기'}
         </button>
       </div>
@@ -5423,10 +5428,10 @@ function renderMonthlyReview(opts) {
   }
 
   return `
-    <div style="padding:16px; background:linear-gradient(135deg, rgba(94,92,230,0.08) 0%, rgba(70,140,255,0.08) 100%); border-radius:14px; margin-bottom:14px; border:0.5px solid rgba(94,92,230,0.2);">
+    <div style="padding:16px; background:linear-gradient(135deg, rgba(107,91,150,0.08) 0%, rgba(69,110,158,0.08) 100%); border-radius:14px; margin-bottom:14px; border:0.5px solid rgba(107,91,150,0.2);">
       <div style="display:flex; align-items:center; gap:6px; margin-bottom:10px;">
         <span style="font-size:16px;">📊</span>
-        <span style="font-size:12px; font-weight:700; color:var(--accent-primary, #5E5CE6);">${monthLabel} 월말 리뷰</span>
+        <span style="font-size:12px; font-weight:700; color:var(--accent-primary, #6B5B96);">${monthLabel} 월말 리뷰</span>
       </div>
 
       <!-- 핵심 숫자: 월급 → 지출(고정+변동) → 투자 → 남은 돈 -->
@@ -5442,7 +5447,7 @@ function renderMonthlyReview(opts) {
         </div>
         <div style="padding:10px; background:var(--bg-primary); border-radius:10px; box-shadow:var(--shadow-card);">
           <div style="font-size:10px; color:var(--text-tertiary);">📈 투자</div>
-          <div style="font-size:14px; font-weight:700; color:var(--accent-primary, #5E5CE6); margin-top:2px;">${investSpent.toLocaleString()}원</div>
+          <div style="font-size:14px; font-weight:700; color:var(--accent-primary, #6B5B96); margin-top:2px;">${investSpent.toLocaleString()}원</div>
         </div>
         <div style="padding:10px; background:var(--bg-primary); border-radius:10px; box-shadow:var(--shadow-card);">
           <div style="font-size:10px; color:var(--text-tertiary);">${saved >= 0 ? '🟢 남은 돈' : '🔴 적자'}</div>
@@ -5490,7 +5495,7 @@ function renderMonthlyReview(opts) {
 
       <!-- 아쉬운 점 -->
       ${badPoints.length > 0 ? `
-        <div style="padding:10px 12px; background:rgba(232,155,74,0.08); border-radius:10px;">
+        <div style="padding:10px 12px; background:rgba(184,125,60,0.08); border-radius:10px;">
           <div style="font-size:11px; font-weight:700; color:#B86E1E; margin-bottom:4px;">💡 다음 달에 신경 쓸 점</div>
           ${badPoints.map(p => `<div style="font-size:11px; padding:2px 0; line-height:1.5;">• ${p}</div>`).join('')}
         </div>
@@ -5691,10 +5696,10 @@ function renderMoney() {
         <div style="display:flex; align-items:center; gap:14px;">
           <div style="flex-shrink:0; position:relative;">
             <svg width="140" height="140" viewBox="0 0 140 140">
-              ${fixedPct > 0 ? `<path d="${fixedArc}" fill="#FF9F0A" />` : ''}
-              ${livingPct > 0 ? `<path d="${livingArc}" fill="#FF6B6B" />` : ''}
-              ${investPct > 0 ? `<path d="${investArc}" fill="#5E5CE6" />` : ''}
-              ${remainPct > 0 ? `<path d="${remainArc}" fill="#34C759" />` : ''}
+              ${fixedPct > 0 ? `<path d="${fixedArc}" fill="#B87D3C" />` : ''}
+              ${livingPct > 0 ? `<path d="${livingArc}" fill="#B0574E" />` : ''}
+              ${investPct > 0 ? `<path d="${investArc}" fill="#6B5B96" />` : ''}
+              ${remainPct > 0 ? `<path d="${remainArc}" fill="#3D8168" />` : ''}
               <circle cx="70" cy="70" r="34" fill="white" />
             </svg>
             <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); text-align:center;">
@@ -5710,53 +5715,53 @@ function renderMoney() {
             </div>
             <div style="display:flex; align-items:center; justify-content:space-between; padding:5px 0; border-bottom:0.5px solid var(--border-tertiary);">
               <div style="display:flex; align-items:center; gap:6px;">
-                <div style="width:8px; height:8px; border-radius:50%; background:#FF9F0A;"></div>
+                <div style="width:8px; height:8px; border-radius:50%; background:#B87D3C;"></div>
                 <span style="font-size:11px;">고정지출</span>
               </div>
-              <div style="font-size:11px; font-weight:600; color:#FF9F0A;">${fixedTotal.toLocaleString()}원 <span style="font-size:10px; color:var(--text-tertiary);">${fixedPct.toFixed(0)}%</span></div>
+              <div style="font-size:11px; font-weight:600; color:#B87D3C;">${fixedTotal.toLocaleString()}원 <span style="font-size:10px; color:var(--text-tertiary);">${fixedPct.toFixed(0)}%</span></div>
             </div>
             <div style="display:flex; align-items:center; justify-content:space-between; padding:5px 0; border-bottom:0.5px solid var(--border-tertiary);">
               <div style="display:flex; align-items:center; gap:6px;">
-                <div style="width:8px; height:8px; border-radius:50%; background:#FF6B6B;"></div>
+                <div style="width:8px; height:8px; border-radius:50%; background:#B0574E;"></div>
                 <span style="font-size:11px;">변동 생활비</span>
               </div>
-              <div style="font-size:11px; font-weight:600; color:#FF6B6B;">${livingSpent.toLocaleString()}원 <span style="font-size:10px; color:var(--text-tertiary);">${livingPct.toFixed(0)}%</span></div>
+              <div style="font-size:11px; font-weight:600; color:#B0574E;">${livingSpent.toLocaleString()}원 <span style="font-size:10px; color:var(--text-tertiary);">${livingPct.toFixed(0)}%</span></div>
             </div>
             ${variableInvestSpent > 0 ? `
             <div style="display:flex; align-items:center; justify-content:space-between; padding:5px 0; border-bottom:0.5px solid var(--border-tertiary);">
               <div style="display:flex; align-items:center; gap:6px;">
-                <div style="width:8px; height:8px; border-radius:50%; background:#5E5CE6;"></div>
+                <div style="width:8px; height:8px; border-radius:50%; background:#6B5B96;"></div>
                 <span style="font-size:11px;">자산 투자 <span style="font-size:10px; color:var(--text-tertiary);">(자동·고정)</span></span>
               </div>
-              <div style="font-size:11px; font-weight:600; color:#5E5CE6;">${fixedInvestTotal.toLocaleString()}원 <span style="font-size:10px; color:var(--text-tertiary);">${pct(fixedInvestTotal).toFixed(0)}%</span></div>
+              <div style="font-size:11px; font-weight:600; color:#6B5B96;">${fixedInvestTotal.toLocaleString()}원 <span style="font-size:10px; color:var(--text-tertiary);">${pct(fixedInvestTotal).toFixed(0)}%</span></div>
             </div>
             <div style="display:flex; align-items:center; justify-content:space-between; padding:5px 0; border-bottom:0.5px solid var(--border-tertiary);">
               <div style="display:flex; align-items:center; gap:6px;">
-                <div style="width:8px; height:8px; border-radius:50%; background:#9D8DF1;"></div>
+                <div style="width:8px; height:8px; border-radius:50%; background:#8B7FAE;"></div>
                 <span style="font-size:11px;">추가 투자 <span style="font-size:10px; color:var(--text-tertiary);">(직접·변동)</span></span>
               </div>
-              <div style="font-size:11px; font-weight:600; color:#9D8DF1;">${variableInvestSpent.toLocaleString()}원 <span style="font-size:10px; color:var(--text-tertiary);">${pct(variableInvestSpent).toFixed(0)}%</span></div>
+              <div style="font-size:11px; font-weight:600; color:#8B7FAE;">${variableInvestSpent.toLocaleString()}원 <span style="font-size:10px; color:var(--text-tertiary);">${pct(variableInvestSpent).toFixed(0)}%</span></div>
             </div>
             ` : `
             <div style="display:flex; align-items:center; justify-content:space-between; padding:5px 0; border-bottom:0.5px solid var(--border-tertiary);">
               <div style="display:flex; align-items:center; gap:6px;">
-                <div style="width:8px; height:8px; border-radius:50%; background:#5E5CE6;"></div>
+                <div style="width:8px; height:8px; border-radius:50%; background:#6B5B96;"></div>
                 <span style="font-size:11px;">자산 투자</span>
               </div>
-              <div style="font-size:11px; font-weight:600; color:#5E5CE6;">${investSpent.toLocaleString()}원 <span style="font-size:10px; color:var(--text-tertiary);">${investPct.toFixed(0)}%</span></div>
+              <div style="font-size:11px; font-weight:600; color:#6B5B96;">${investSpent.toLocaleString()}원 <span style="font-size:10px; color:var(--text-tertiary);">${investPct.toFixed(0)}%</span></div>
             </div>
             `}
             <div style="display:flex; align-items:center; justify-content:space-between; padding:5px 0;">
               <div style="display:flex; align-items:center; gap:6px;">
-                <div style="width:8px; height:8px; border-radius:50%; background:#34C759;"></div>
+                <div style="width:8px; height:8px; border-radius:50%; background:#3D8168;"></div>
                 <span style="font-size:11px; font-weight:600;">월 잔여금</span>
               </div>
-              <div style="font-size:12px; font-weight:700; color:${remaining >= 0 ? '#34C759' : 'var(--text-danger)'};">${remaining >= 0 ? '+' : ''}${remaining.toLocaleString()}원 <span style="font-size:10px; color:var(--text-tertiary);">${remainPct.toFixed(0)}%</span></div>
+              <div style="font-size:12px; font-weight:700; color:${remaining >= 0 ? '#3D8168' : 'var(--text-danger)'};">${remaining >= 0 ? '+' : ''}${remaining.toLocaleString()}원 <span style="font-size:10px; color:var(--text-tertiary);">${remainPct.toFixed(0)}%</span></div>
             </div>
           </div>
         </div>
         ${remaining > 0 ? `
-          <button onclick="moveBudgetRemainToCash(${budgetViewYear}, ${budgetViewMonth + 1}, ${remaining})" style="width:100%; margin-top:12px; border:none; background:linear-gradient(135deg,#34C759,#2BA84A); color:white; padding:10px; border-radius:10px; font-size:11px; font-weight:700; cursor:pointer; font-family:inherit;">
+          <button onclick="moveBudgetRemainToCash(${budgetViewYear}, ${budgetViewMonth + 1}, ${remaining})" style="width:100%; margin-top:12px; border:none; background:linear-gradient(135deg,#3D8168,#2BA84A); color:white; padding:10px; border-radius:10px; font-size:11px; font-weight:700; cursor:pointer; font-family:inherit;">
             💵 ${monthLabel} 잔액 ${remaining.toLocaleString()}원 → 현금 자산으로 보내기
           </button>
           <div style="font-size:10px; color:var(--text-tertiary); margin-top:5px; line-height:1.5; text-align:center;">
@@ -5894,7 +5899,7 @@ function renderMoney() {
 
   if (totalExp > 0) {
     // 카테고리별 색상
-    const catColors = ['#FF6B6B', '#4ECDC4', '#FFD93D', '#6BCF7F', '#A78BFA', '#FF8E72', '#54A0FF', '#FB7185', '#34D399', '#FBBF24', '#A3A3A3'];
+    const catColors = ['#B0574E', '#4ECDC4', '#FFD93D', '#6BCF7F', '#A78BFA', '#FF8E72', '#54A0FF', '#FB7185', '#34D399', '#FBBF24', '#A3A3A3'];
 
     // SVG 도넛 차트
     const size = 140;
@@ -6038,9 +6043,9 @@ function renderMoney() {
       html += `
         <div style="padding:14px 12px 10px; background:var(--bg-secondary); border-radius:12px;">
           <div style="display:flex; gap:12px; margin-bottom:12px; font-size:11px; color:var(--text-secondary);">
-            <span style="display:flex; align-items:center; gap:4px;"><span style="width:9px; height:9px; border-radius:2px; background:#E58AA8;"></span>변동</span>
-            <span style="display:flex; align-items:center; gap:4px;"><span style="width:9px; height:9px; border-radius:2px; background:#F0C896;"></span>고정</span>
-            <span style="display:flex; align-items:center; gap:4px;"><span style="width:9px; height:9px; border-radius:2px; background:#8FB8E8;"></span>투자</span>
+            <span style="display:flex; align-items:center; gap:4px;"><span style="width:9px; height:9px; border-radius:2px; background:#B06B7E;"></span>변동</span>
+            <span style="display:flex; align-items:center; gap:4px;"><span style="width:9px; height:9px; border-radius:2px; background:#DCC29A;"></span>고정</span>
+            <span style="display:flex; align-items:center; gap:4px;"><span style="width:9px; height:9px; border-radius:2px; background:#7C9CC4;"></span>투자</span>
           </div>
           <div style="display:flex; gap:6px;">
             <!-- Y축 눈금 -->
@@ -6065,9 +6070,9 @@ function renderMoney() {
                     <div onclick="window._moneyBarSel = (window._moneyBarSel === ${idx} ? -1 : ${idx}); renderMoney();" style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%; min-width:0; cursor:pointer; position:relative;">
                       <div style="font-size:10px; color:var(--text-secondary); white-space:nowrap; font-weight:500; margin-bottom:2px;">${d.total > 0 ? Math.round(d.total/10000)+'만' : ''}</div>
                       <div style="width:15px; display:flex; flex-direction:column; justify-content:flex-end; ${isSel ? 'outline:2px solid var(--text-info); outline-offset:2px; border-radius:3px;' : ''}">
-                        ${d.variable > 0 ? `<div style="height:${varH}px; background:#E58AA8; border-radius:3px 3px 0 0;"></div>` : ''}
-                        ${d.fixed > 0 ? `<div style="height:${fixH}px; background:#F0C896;"></div>` : ''}
-                        ${d.invest > 0 ? `<div style="height:${invH}px; background:#8FB8E8;"></div>` : ''}
+                        ${d.variable > 0 ? `<div style="height:${varH}px; background:#B06B7E; border-radius:3px 3px 0 0;"></div>` : ''}
+                        ${d.fixed > 0 ? `<div style="height:${fixH}px; background:#DCC29A;"></div>` : ''}
+                        ${d.invest > 0 ? `<div style="height:${invH}px; background:#7C9CC4;"></div>` : ''}
                         ${d.total === 0 ? `<div style="height:2px; background:var(--border-tertiary);"></div>` : ''}
                       </div>
                     </div>`;
@@ -6162,7 +6167,7 @@ function renderMoney() {
         const dowColor = dow === 0 ? 'var(--text-danger)' : dow === 6 ? 'var(--text-info)' : 'var(--text-primary)';
         const dateK = dateKey(calY, calM, d);
 
-        html += `<div onclick="${hasData ? `showDayExpenses('${dateK}')` : ''}" style="min-height:42px; padding:3px; border-radius:5px; ${isToday ? 'background:rgba(70,140,255,0.12);' : hasData ? 'background:var(--bg-info); cursor:pointer;' : 'background:var(--bg-secondary);'} display:flex; flex-direction:column; align-items:center; justify-content:flex-start; font-size:10px;">
+        html += `<div onclick="${hasData ? `showDayExpenses('${dateK}')` : ''}" style="min-height:42px; padding:3px; border-radius:5px; ${isToday ? 'background:rgba(69,110,158,0.12);' : hasData ? 'background:var(--bg-info); cursor:pointer;' : 'background:var(--bg-secondary);'} display:flex; flex-direction:column; align-items:center; justify-content:flex-start; font-size:10px;">
           <span style="font-weight:${isToday ? '700' : '500'}; color:${dowColor};">${d}</span>`;
         if (data) {
           if (data.spent > 0) {
@@ -6656,11 +6661,11 @@ function editFixed(id) {
       </div>
 
       <!-- 투자 카테고리 - 자산 자동매수 옵션 -->
-      <div id="ef-invest-fields" style="display:${f.cat==='투자'?'block':'none'}; padding:12px; background:rgba(94,92,230,0.08); border-radius:var(--radius-md); margin-bottom:14px;">
+      <div id="ef-invest-fields" style="display:${f.cat==='투자'?'block':'none'}; padding:12px; background:rgba(107,91,150,0.08); border-radius:var(--radius-md); margin-bottom:14px;">
         <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; margin-bottom:12px;">
           <input type="checkbox" id="ef-autobuy" ${f.autoBuy?'checked':''} style="width:18px; height:18px; cursor:pointer; flex-shrink:0; margin-top:2px;" />
           <div style="flex:1;">
-            <div style="font-size:12px; font-weight:600; color:#5E5CE6;">🤖 자동매수 (자산에 자동 합산)</div>
+            <div style="font-size:12px; font-weight:600; color:#6B5B96;">🤖 자동매수 (자산에 자동 합산)</div>
             <div style="font-size:11px; color:var(--text-tertiary); margin-top:3px; line-height:1.4;">
               매월 자동으로 자산에 매수 처리됩니다.
             </div>
@@ -6697,11 +6702,11 @@ function editFixed(id) {
 
         <div id="ef-asset-dynamic-fields"></div>
 
-        <button type="button" onclick="document.getElementById('ef-autobuy-capture-input').click()" style="width:100%; margin-top:8px; padding:11px; border:1px dashed #5E5CE6; background:var(--bg-primary); color:#5E5CE6; border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; box-shadow:var(--shadow-card);">
+        <button type="button" onclick="document.getElementById('ef-autobuy-capture-input').click()" style="width:100%; margin-top:8px; padding:11px; border:1px dashed #6B5B96; background:var(--bg-primary); color:#6B5B96; border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; box-shadow:var(--shadow-card);">
           📸 증권사 체결·자동적립 캡처로 다시 정리
         </button>
         <input type="file" id="ef-autobuy-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processAutobuyCapture(this)" />
-        <div class="autobuy-capture-status" style="display:none; margin-top:6px; padding:8px; background:rgba(94,92,230,0.06); border-radius:6px; font-size:11px; color:#5E5CE6; text-align:center;"></div>
+        <div class="autobuy-capture-status" style="display:none; margin-top:6px; padding:8px; background:rgba(107,91,150,0.06); border-radius:6px; font-size:11px; color:#6B5B96; text-align:center;"></div>
         <div style="font-size:10px; color:var(--text-tertiary); margin-top:5px; line-height:1.5;">
           캡처가 이상하게 들어갔으면, 증권사 체결내역을 다시 찍어 올리면 회차가 교체돼요 (2배 안 됨).
         </div>
@@ -7073,7 +7078,7 @@ async function loadAIBudgetCoach(spent, projected, byCategory, lastMonth, forceR
       <div class="ai-text" style="margin-bottom:10px;">
         AI 가계부 분석을 사용하려면 본인 Gemini API 키를 입력해주세요.
       </div>
-      <button onclick="openAIKeyModal()" style="padding:8px 14px; border:none; border-radius:6px; background:#FFD700; color:black; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
+      <button onclick="openAIKeyModal()" style="padding:8px 14px; border:none; border-radius:6px; background:#C9A227; color:black; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
         <i class="ti ti-key" style="font-size:12px; vertical-align:-2px;"></i> AI 키 입력하기
       </button>
     </div>`;
@@ -7134,7 +7139,7 @@ async function loadAIBudgetCoach(spent, projected, byCategory, lastMonth, forceR
       <div class="ai-text" style="margin: 10px 0 12px; line-height:1.6;">
         💡 본인 가계부 패턴 분석을 받으려면 버튼을 눌러주세요.
       </div>
-      <button onclick="loadAIBudgetCoach(${spent}, ${projected}, ${byCategoryStr}, ${lastMonthStr}, true)" style="padding:8px 14px; border:none; border-radius:6px; background:var(--bg-primary); color:#5E5CE6; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; box-shadow:var(--shadow-card);">
+      <button onclick="loadAIBudgetCoach(${spent}, ${projected}, ${byCategoryStr}, ${lastMonthStr}, true)" style="padding:8px 14px; border:none; border-radius:6px; background:var(--bg-primary); color:#6B5B96; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; box-shadow:var(--shadow-card);">
         🔄 AI 분석 받기
       </button>
     </div>`;
@@ -7212,7 +7217,7 @@ ${lastMonthInfo}
     stillContainer.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
       <div class="ai-badge"><i class="ti ti-alert-circle" style="font-size:11px;"></i> AI 분석 실패</div>
       <div class="ai-text">${result.error}</div>
-      ${result.needsKey ? `<button onclick="openAIKeyModal()" style="margin-top:8px; padding:6px 12px; border:none; border-radius:6px; background:#FFD700; color:black; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">AI 키 입력하기</button>` : ''}
+      ${result.needsKey ? `<button onclick="openAIKeyModal()" style="margin-top:8px; padding:6px 12px; border:none; border-radius:6px; background:#C9A227; color:black; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">AI 키 입력하기</button>` : ''}
     </div>`;
     return;
   }
@@ -7298,11 +7303,11 @@ function openFixedAddModal() {
           은행 자동이체 내역, 구독 목록 등을 캡처하면 항목을 자동으로 읽어 추가하거나 기존 항목을 수정해요.
         </div>
 
-        <button type="button" onclick="document.getElementById('autobuy-capture-input').click()" style="width:100%; border:1px dashed #5E5CE6; background:rgba(94,92,230,0.06); color:#5E5CE6; padding:12px; border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; margin-top:8px;">
+        <button type="button" onclick="document.getElementById('autobuy-capture-input').click()" style="width:100%; border:1px dashed #6B5B96; background:rgba(107,91,150,0.06); color:#6B5B96; padding:12px; border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; margin-top:8px;">
           🤖 증권사 자동적립(더모으기) 캡처로 가져오기
         </button>
         <input type="file" id="autobuy-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processAutobuyCapture(this)" />
-        <div class="autobuy-capture-status" style="display:none; margin-top:8px; padding:10px; background:rgba(94,92,230,0.06); border-radius:8px; font-size:11px; color:#5E5CE6; text-align:center;"></div>
+        <div class="autobuy-capture-status" style="display:none; margin-top:8px; padding:10px; background:rgba(107,91,150,0.06); border-radius:8px; font-size:11px; color:#6B5B96; text-align:center;"></div>
         <div style="font-size:10px; color:var(--text-tertiary); margin-top:5px; line-height:1.5;">
           증권사 "정기매수·더모으기·자동적립" 설정 화면을 캡처하면 종목·금액·주기를 읽어 투자 자동매수를 만들어요.
         </div>
@@ -7338,13 +7343,13 @@ function openFixedAddModal() {
       <div class="field" id="fx-weekly-field" style="display:none;">
         <div class="field-label">요일</div>
         <div style="display:flex; gap:4px; justify-content:space-between;" id="fx-dow">
-          <button class="chip" data-dow="0" style="flex:1; color:#FF6B6B;">일</button>
+          <button class="chip" data-dow="0" style="flex:1; color:#B0574E;">일</button>
           <button class="chip active" data-dow="1" style="flex:1;">월</button>
           <button class="chip" data-dow="2" style="flex:1;">화</button>
           <button class="chip" data-dow="3" style="flex:1;">수</button>
           <button class="chip" data-dow="4" style="flex:1;">목</button>
           <button class="chip" data-dow="5" style="flex:1;">금</button>
-          <button class="chip" data-dow="6" style="flex:1; color:#6B9FD9;">토</button>
+          <button class="chip" data-dow="6" style="flex:1; color:#456E9E;">토</button>
         </div>
         <div style="font-size:11px; color:var(--text-tertiary); margin-top:6px;" id="fx-cycle-info">
           매주 월요일 → 한 달에 4~5회 자동 합산
@@ -7370,11 +7375,11 @@ function openFixedAddModal() {
       </div>
 
       <!-- 투자 카테고리 선택 시 자동매수 옵션 -->
-      <div id="fx-invest-fields" style="display:none; padding:12px; background:rgba(94,92,230,0.08); border-radius:var(--radius-md); margin-bottom:14px;">
+      <div id="fx-invest-fields" style="display:none; padding:12px; background:rgba(107,91,150,0.08); border-radius:var(--radius-md); margin-bottom:14px;">
         <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; margin-bottom:12px;">
           <input type="checkbox" id="fx-autobuy" checked style="width:18px; height:18px; cursor:pointer; flex-shrink:0; margin-top:2px;" />
           <div style="flex:1;">
-            <div style="font-size:12px; font-weight:600; color:#5E5CE6;">🤖 자동매수 (자산에 자동 합산)</div>
+            <div style="font-size:12px; font-weight:600; color:#6B5B96;">🤖 자동매수 (자산에 자동 합산)</div>
             <div style="font-size:11px; color:var(--text-tertiary); margin-top:3px; line-height:1.4;">
               매주/매월 자동으로 자산에 매수 처리됩니다.<br>
               정확한 금액/수량은 나중에 *수동 수정* 가능해요.
@@ -8033,7 +8038,7 @@ function renderAssetAnalysis() {
         </div>
       ` : ''}
 
-      <button onclick="runAIStockAnalysis()" style="width:100%; padding:14px; border:none; background:linear-gradient(135deg, #FF6B6B 0%, #FF8E72 100%); color:white; border-radius:12px; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit; margin-bottom:14px;">
+      <button onclick="runAIStockAnalysis()" style="width:100%; padding:14px; border:none; background:linear-gradient(135deg, #B0574E 0%, #FF8E72 100%); color:white; border-radius:12px; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit; margin-bottom:14px;">
         ✨ AI 분석 시작
       </button>
 
@@ -10261,10 +10266,10 @@ function openCalcModal(standalone) {
   `;
   calcModal.innerHTML = `
     <div style="background:var(--bg-primary); width:100%; max-width:500px; border-radius:20px 20px 0 0; padding:16px; max-height:80vh; animation:slideUp 0.25s; box-shadow:var(--shadow-card);">
-      <div style="width:36px; height:4px; background:#D5D5D5; border-radius:2px; margin:0 auto 14px;"></div>
+      <div style="width:36px; height:4px; background:var(--bg-tertiary); border-radius:2px; margin:0 auto 14px;"></div>
 
       <!-- 표시창 (키보드 입력 가능) -->
-      <div style="background:#F4F5F7; border-radius:12px; padding:14px; margin-bottom:14px; min-height:80px;">
+      <div style="background:var(--bg-secondary); border-radius:12px; padding:14px; margin-bottom:14px; min-height:80px;">
         <input id="calc-input" type="text" value="${window._calcCurrentExpr || ''}" placeholder="계산식 입력 (예: 15000+3500)"
           style="width:100%; border:none; background:transparent; font-size:18px; color:#000; outline:none; text-align:right; font-family:inherit;"
           oninput="calcInputChanged()" />
@@ -10275,23 +10280,23 @@ function openCalcModal(standalone) {
       <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:8px;">
         <button type="button" onclick="calcClear()" style="${calcBtnStyle('#FFEEEE', '#D14343')}">C</button>
         <button type="button" onclick="calcBack()" style="${calcBtnStyle('#F4F5F7', '#000')}">⌫</button>
-        <button type="button" onclick="calcAppend('%')" style="${calcBtnStyle('#F4F5F7', '#5E5CE6')}">%</button>
-        <button type="button" onclick="calcAppend('/')" style="${calcBtnStyle('#5E5CE6', 'white')}">÷</button>
+        <button type="button" onclick="calcAppend('%')" style="${calcBtnStyle('#F4F5F7', '#6B5B96')}">%</button>
+        <button type="button" onclick="calcAppend('/')" style="${calcBtnStyle('#6B5B96', 'white')}">÷</button>
 
         <button type="button" onclick="calcAppend('7')" style="${calcBtnStyle('white', '#000')}">7</button>
         <button type="button" onclick="calcAppend('8')" style="${calcBtnStyle('white', '#000')}">8</button>
         <button type="button" onclick="calcAppend('9')" style="${calcBtnStyle('white', '#000')}">9</button>
-        <button type="button" onclick="calcAppend('*')" style="${calcBtnStyle('#5E5CE6', 'white')}">×</button>
+        <button type="button" onclick="calcAppend('*')" style="${calcBtnStyle('#6B5B96', 'white')}">×</button>
 
         <button type="button" onclick="calcAppend('4')" style="${calcBtnStyle('white', '#000')}">4</button>
         <button type="button" onclick="calcAppend('5')" style="${calcBtnStyle('white', '#000')}">5</button>
         <button type="button" onclick="calcAppend('6')" style="${calcBtnStyle('white', '#000')}">6</button>
-        <button type="button" onclick="calcAppend('-')" style="${calcBtnStyle('#5E5CE6', 'white')}">−</button>
+        <button type="button" onclick="calcAppend('-')" style="${calcBtnStyle('#6B5B96', 'white')}">−</button>
 
         <button type="button" onclick="calcAppend('1')" style="${calcBtnStyle('white', '#000')}">1</button>
         <button type="button" onclick="calcAppend('2')" style="${calcBtnStyle('white', '#000')}">2</button>
         <button type="button" onclick="calcAppend('3')" style="${calcBtnStyle('white', '#000')}">3</button>
-        <button type="button" onclick="calcAppend('+')" style="${calcBtnStyle('#5E5CE6', 'white')}">+</button>
+        <button type="button" onclick="calcAppend('+')" style="${calcBtnStyle('#6B5B96', 'white')}">+</button>
 
         <button type="button" onclick="calcAppend('000')" style="${calcBtnStyle('#F4F5F7', '#000')}">000</button>
         <button type="button" onclick="calcAppend('0')" style="${calcBtnStyle('white', '#000')}">0</button>
@@ -10662,20 +10667,20 @@ function openExpenseModal(forDateKey) {
       <!-- 📸 카드 캡처 / 📋 텍스트 자동 입력 -->
       <div style="display:flex; gap:6px; margin-bottom:14px;">
         <input type="file" id="card-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processCardCapture(this)" />
-        <button onclick="document.getElementById('card-capture-input').click()" style="flex:1; padding:12px 8px; border:1.5px dashed var(--text-info); background:rgba(70,140,255,0.06); color:var(--text-info); border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px;">
+        <button onclick="document.getElementById('card-capture-input').click()" style="flex:1; padding:12px 8px; border:1.5px dashed var(--text-info); background:rgba(69,110,158,0.06); color:var(--text-info); border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px;">
           <i class="ti ti-camera" style="font-size:14px;"></i>
           📸 캡처 입력
         </button>
-        <button onclick="closeModal(); setTimeout(openClipboardExpenseModal, 100);" style="flex:1; padding:12px 8px; border:1.5px dashed var(--accent-primary, #5E5CE6); background:rgba(94,92,230,0.06); color:var(--accent-primary, #5E5CE6); border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px;">
+        <button onclick="closeModal(); setTimeout(openClipboardExpenseModal, 100);" style="flex:1; padding:12px 8px; border:1.5px dashed var(--accent-primary, #6B5B96); background:rgba(107,91,150,0.06); color:var(--accent-primary, #6B5B96); border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px;">
           📋 텍스트 붙여넣기
         </button>
       </div>
-      <button onclick="pasteImageForOCR()" style="width:100%; margin-bottom:8px; padding:11px; border:1.5px dashed var(--text-info); background:rgba(70,140,255,0.04); color:var(--text-info); border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px;">
+      <button onclick="pasteImageForOCR()" style="width:100%; margin-bottom:8px; padding:11px; border:1.5px dashed var(--text-info); background:rgba(69,110,158,0.04); color:var(--text-info); border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px;">
         <i class="ti ti-clipboard" style="font-size:14px;"></i>
         📋 캡처 이미지 붙여넣기 (저장 없이)
       </button>
       <input type="file" id="trade-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processTradeCapture(this)" />
-      <button onclick="document.getElementById('trade-capture-input').click()" style="width:100%; margin-bottom:8px; padding:11px; border:1.5px dashed #0D9488; background:rgba(13,148,136,0.05); color:#0D9488; border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px;">
+      <button onclick="document.getElementById('trade-capture-input').click()" style="width:100%; margin-bottom:8px; padding:11px; border:1.5px dashed #3D8168; background:rgba(13,148,136,0.05); color:#3D8168; border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px;">
         <i class="ti ti-chart-candle" style="font-size:14px;"></i>
         📈 매수 체결내역 캡처 (지출 + 자산 동시 기록)
       </button>
@@ -10772,8 +10777,8 @@ function openExpenseModal(forDateKey) {
       </div>
 
       <!-- 투자 카테고리 선택 시 추가 정보 -->
-      <div id="invest-extra-fields" style="display:none; padding:12px; background:rgba(94,92,230,0.08); border-radius:var(--radius-md); margin-bottom:14px;">
-        <div style="font-size:11px; color:#5E5CE6; font-weight:600; margin-bottom:10px;">💎 투자 상세 (자산에 자동 추가됨)</div>
+      <div id="invest-extra-fields" style="display:none; padding:12px; background:rgba(107,91,150,0.08); border-radius:var(--radius-md); margin-bottom:14px;">
+        <div style="font-size:11px; color:#6B5B96; font-weight:600; margin-bottom:10px;">💎 투자 상세 (자산에 자동 추가됨)</div>
         <div class="field">
           <div class="field-label">자산명 <span style="opacity:0.6;">(필수)</span></div>
           <input type="text" id="inv-name" placeholder="예: 삼성전자, 토스 정기예금" />
@@ -11289,7 +11294,7 @@ function openAssetCaptureForCorrection() {
           🖼️ 이미지 파일 선택
         </button>
         ${pasteSupported ? `
-        <button onclick="closeModal(); pasteImageForAssetOCR();" style="width:100%; padding:13px; border:1.5px dashed var(--text-info); background:rgba(70,140,255,0.04); color:var(--text-info); border-radius:10px; font-weight:600; font-family:inherit; margin-bottom:8px; cursor:pointer;">
+        <button onclick="closeModal(); pasteImageForAssetOCR();" style="width:100%; padding:13px; border:1.5px dashed var(--text-info); background:rgba(69,110,158,0.04); color:var(--text-info); border-radius:10px; font-weight:600; font-family:inherit; margin-bottom:8px; cursor:pointer;">
           📋 클립보드에서 붙여넣기
         </button>` : ''}
         <button onclick="closeModal()" style="width:100%; padding:11px; border:none; background:transparent; color:var(--text-tertiary); font-family:inherit; cursor:pointer;">취소</button>
@@ -12668,14 +12673,14 @@ function openAssetReviewModal(items) {
               = <b>${totalStr}</b>
             </div>
             ${(it._suggestQty != null || it._suggestPrice != null || it._suggestPct != null) ? `
-            <div style="font-size:10px; color:#B45309; margin-top:4px; padding:6px 8px; background:#FEF7E8; border-radius:6px; line-height:1.6;">
+            <div style="font-size:10px; color:#7C5418; margin-top:4px; padding:6px 8px; background:var(--bg-warning); border-radius:6px; line-height:1.6;">
               ⚠️ <b>숫자가 서로 안 맞아요</b> (캡처값 그대로 두었어요):
               ${it._suggestQty != null ? `<br>· 수량 ${it.qty} — 매입금액 기준으론 <b>${it._suggestQty}</b>
-                <button onclick="window._assetReviewItems[${i}].qty=${it._suggestQty}; delete window._assetReviewItems[${i}]._suggestQty; window._renderAssetReview();" style="margin-left:4px; padding:2px 8px; border:none; border-radius:6px; background:#B45309; color:white; font-size:10px; font-weight:600; cursor:pointer; font-family:inherit;">적용</button>` : ''}
+                <button onclick="window._assetReviewItems[${i}].qty=${it._suggestQty}; delete window._assetReviewItems[${i}]._suggestQty; window._renderAssetReview();" style="margin-left:4px; padding:2px 8px; border:none; border-radius:6px; background:#7C5418; color:white; font-size:10px; font-weight:600; cursor:pointer; font-family:inherit;">적용</button>` : ''}
               ${it._suggestPrice != null ? `<br>· 매입가 ${it.price} — 현재가·수익률 기준으론 <b>${it._suggestPrice}</b>
-                <button onclick="window._assetReviewItems[${i}].price=${it._suggestPrice}; delete window._assetReviewItems[${i}]._suggestPrice; window._renderAssetReview();" style="margin-left:4px; padding:2px 8px; border:none; border-radius:6px; background:#B45309; color:white; font-size:10px; font-weight:600; cursor:pointer; font-family:inherit;">적용</button>` : ''}
+                <button onclick="window._assetReviewItems[${i}].price=${it._suggestPrice}; delete window._assetReviewItems[${i}]._suggestPrice; window._renderAssetReview();" style="margin-left:4px; padding:2px 8px; border:none; border-radius:6px; background:#7C5418; color:white; font-size:10px; font-weight:600; cursor:pointer; font-family:inherit;">적용</button>` : ''}
               ${it._suggestPct != null ? `<br>· 수익률 ${it.profitPct}% — 손익 금액 부호 기준으론 <b>${it._suggestPct}%</b>
-                <button onclick="window._assetReviewItems[${i}].profitPct=${it._suggestPct}; delete window._assetReviewItems[${i}]._suggestPct; window._renderAssetReview();" style="margin-left:4px; padding:2px 8px; border:none; border-radius:6px; background:#B45309; color:white; font-size:10px; font-weight:600; cursor:pointer; font-family:inherit;">적용</button>` : ''}
+                <button onclick="window._assetReviewItems[${i}].profitPct=${it._suggestPct}; delete window._assetReviewItems[${i}]._suggestPct; window._renderAssetReview();" style="margin-left:4px; padding:2px 8px; border:none; border-radius:6px; background:#7C5418; color:white; font-size:10px; font-weight:600; cursor:pointer; font-family:inherit;">적용</button>` : ''}
               <br><span style="opacity:0.8;">증권사 화면과 대조해서 맞는 쪽을 선택하세요. 입력칸에서 직접 수정도 가능.</span>
             </div>` : ''}
             ${it._priceDerived ? `
@@ -12708,7 +12713,7 @@ function openAssetReviewModal(items) {
             const nt = (t) => (t || '').toUpperCase().replace(/\.(KS|KQ|KQI)$/, '').trim();
             const tickerMismatch = nt(it.ticker) && nt(existing.ticker) && nt(it.ticker) !== nt(existing.ticker);
             if (tickerMismatch) {
-              return `<div style="margin-top:8px; padding:8px; background:#FCEBEB; border:1px solid #E74C3C; border-radius:8px; font-size:11px; color:#C0392B; line-height:1.5;">
+              return `<div style="margin-top:8px; padding:8px; background:var(--bg-danger); border:1px solid #E74C3C; border-radius:8px; font-size:11px; color:#C0392B; line-height:1.5;">
                 🚨 <b>티커가 달라요!</b> 캡처=${escapeHTML(it.ticker)} / 기존=${escapeHTML(existing.ticker)}<br>
                 다른 종목일 수 있어요. 합치지 말고 <b>✨ 신규</b>를 선택하세요.
               </div>`;
@@ -13295,7 +13300,7 @@ function previewClipboardExpense() {
         <input type="text" id="clip-cat" value="${escapeAttr(parsed.category)}" />
       </div>
       <input type="hidden" id="clip-isincome" value="${parsed.isIncome ? '1' : '0'}" />
-      <button onclick="applyClipboardExpense()" style="width:100%; padding:12px; border:none; background:var(--accent-primary, #5E5CE6); color:white; border-radius:10px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit; margin-top:8px;">✨ 가계부에 추가</button>
+      <button onclick="applyClipboardExpense()" style="width:100%; padding:12px; border:none; background:var(--accent-primary, #6B5B96); color:white; border-radius:10px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit; margin-top:8px;">✨ 가계부에 추가</button>
     </div>
   `;
 }
@@ -14697,7 +14702,7 @@ function buildAssetDetailCard(a, live) {
               ${below > 0 ? `📉 ${below.toLocaleString()} 이하면 알림 (매수 기회)` : ''}
               ${below > 0 && above > 0 ? '<br>' : ''}
               ${above > 0 ? `📈 ${above.toLocaleString()} 이상이면 알림` : ''}
-              ${gap != null ? `<br><b style="color:${Math.abs(gap) <= 3 ? '#D85A30' : 'var(--text-tertiary)'};">목표까지 ${Math.abs(gap).toFixed(1)}%</b>` : ''}
+              ${gap != null ? `<br><b style="color:${Math.abs(gap) <= 3 ? '#B87D3C' : 'var(--text-tertiary)'};">목표까지 ${Math.abs(gap).toFixed(1)}%</b>` : ''}
             </div>
           </div>`;
         }
@@ -14705,7 +14710,7 @@ function buildAssetDetailCard(a, live) {
       })() : ''}
 
       <div style="display:flex; gap:8px; margin-top:12px;">
-        <button onclick="editAsset(${a.id})" style="flex:1; border:none; background:var(--accent-primary, #5E5CE6); color:white; padding:12px; border-radius:10px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">✏️ 수정</button>
+        <button onclick="editAsset(${a.id})" style="flex:1; border:none; background:var(--accent-primary, #6B5B96); color:white; padding:12px; border-radius:10px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">✏️ 수정</button>
         ${a.ticker ? `<button onclick="manualRefreshAssetPrices()" style="flex:1; border:none; background:var(--bg-tertiary); color:var(--text-secondary); padding:12px; border-radius:10px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit;">🔄 시세 갱신</button>` : ''}
       </div>
       ${isStock ? `
@@ -14979,7 +14984,7 @@ function renderAsset() {
         <div style="font-size:12px; font-weight:700; color:${on.length ? '#1D9E75' : 'var(--text-secondary)'};">환율·금 목표가 알림 ${on.length ? `(${on.join('·')} 켜짐)` : ''}</div>
         <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${on.length ? '도달하면 배너로 알려드려요' : '환율·금값이 원하는 선에 오면 알림 받기'}</div>
       </div>
-      ${unread > 0 ? `<span onclick="event.stopPropagation(); openAlertCenter();" style="font-size:10px; font-weight:700; background:#D85A30; color:white; padding:3px 8px; border-radius:999px;">${unread}</span>` : `<span style="font-size:11px; color:var(--text-tertiary);">›</span>`}
+      ${unread > 0 ? `<span onclick="event.stopPropagation(); openAlertCenter();" style="font-size:10px; font-weight:700; background:#B87D3C; color:white; padding:3px 8px; border-radius:999px;">${unread}</span>` : `<span style="font-size:11px; color:var(--text-tertiary);">›</span>`}
     </div>`;
   })();
 
@@ -15124,7 +15129,7 @@ function renderAsset() {
         const selCount = (window._assetSelected || []).length;
         html += `<div style="display:flex; gap:6px; margin-bottom:10px; padding:8px; background:var(--bg-secondary); border-radius:8px;">
           <span style="flex:1; font-size:11px; color:var(--text-secondary); align-self:center;">${selCount}개 선택됨</span>
-          <button onclick="openAssetCaptureForCorrection()" style="border:none; background:rgba(94,92,230,0.1); color:#5E5CE6; padding:6px 12px; border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">📸 보정</button>
+          <button onclick="openAssetCaptureForCorrection()" style="border:none; background:rgba(107,91,150,0.1); color:#6B5B96; padding:6px 12px; border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">📸 보정</button>
           <button onclick="mergeSelectedAssets()" style="border:none; background:${selCount >= 2 ? 'var(--bg-info)' : 'var(--bg-tertiary)'}; color:${selCount >= 2 ? 'var(--text-info)' : 'var(--text-tertiary)'}; padding:6px 12px; border-radius:6px; font-size:11px; font-weight:600; cursor:${selCount >= 2 ? 'pointer' : 'default'}; font-family:inherit;">🔗 합치기</button>
           <button onclick="deleteSelectedAssets()" style="border:none; background:${selCount >= 1 ? 'var(--bg-danger)' : 'var(--bg-tertiary)'}; color:${selCount >= 1 ? 'var(--text-danger)' : 'var(--text-tertiary)'}; padding:6px 12px; border-radius:6px; font-size:11px; font-weight:600; cursor:${selCount >= 1 ? 'pointer' : 'default'}; font-family:inherit;">🗑️ 삭제</button>
         </div>`;
@@ -15247,7 +15252,7 @@ function renderAsset() {
         });
         if (linkedFx) {
           const cy = linkedFx.cycle === 'monthly' ? '매월' : linkedFx.cycle === 'weekly' ? '매주' : '격주';
-          extraInfo += `<span style="font-size:10px; color:#5E5CE6; margin-right:6px;">🤖 자동매수: ${cy} ${linkedFx.amt.toLocaleString()}원</span>`;
+          extraInfo += `<span style="font-size:10px; color:#6B5B96; margin-right:6px;">🤖 자동매수: ${cy} ${linkedFx.amt.toLocaleString()}원</span>`;
         }
         if (a.fxDiscount) {
           extraInfo += `<span style="font-size:10px; color:var(--text-success);">💱 환전우대 ${a.fxDiscount}%</span>`;
@@ -15441,7 +15446,7 @@ async function loadMarketIndices() {
   // 김프 상세 정보 (또는 금 1돈 환산)
   if (kimchiPremium !== null && domesticGoldPerG && intlGoldKrwPerG) {
     const kColor = kimchiPremium >= 0 ? 'var(--text-danger)' : 'var(--text-info)';
-    const kBg = kimchiPremium >= 0 ? 'rgba(255,90,90,0.08)' : 'rgba(70,140,255,0.08)';
+    const kBg = kimchiPremium >= 0 ? 'rgba(255,90,90,0.08)' : 'rgba(69,110,158,0.08)';
     h += `<div style="margin-top:6px; padding:8px 10px; background:${kBg}; border-radius:6px; font-size:11px; color:${kColor};">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
         <span style="font-weight:600;">🌶️ 김치 프리미엄</span>
@@ -15518,13 +15523,13 @@ function renderFinancialGoalsCard(currentTotal) {
 
   if (goals.length === 0) {
     return `
-      <div style="background:linear-gradient(135deg, #FFF7E6 0%, #FFEFD5 100%); border:0.5px solid #F4A261; border-radius:14px; padding:14px; margin-bottom:14px; text-align:center;">
-        <div style="font-size:13px; font-weight:600; color:#B45309; margin-bottom:6px;">🎯 재무 목표</div>
+      <div style="background:var(--bg-warning); border:0.5px solid #C08A4A; border-radius:14px; padding:14px; margin-bottom:14px; text-align:center;">
+        <div style="font-size:13px; font-weight:600; color:#7C5418; margin-bottom:6px;">🎯 재무 목표</div>
         <div style="font-size:11px; color:#8B5A1A; line-height:1.5; margin-bottom:10px;">
           큰 꿈을 목표로 설정하고 진행 상황을 확인하세요.<br>
           예: 1억 모으기, 5년 안에 집 구매 등
         </div>
-        <button onclick="openGoalModal()" style="padding:8px 16px; border:none; border-radius:8px; background:#F4A261; color:white; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
+        <button onclick="openGoalModal()" style="padding:8px 16px; border:none; border-radius:8px; background:#C08A4A; color:white; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
           + 목표 만들기
         </button>
       </div>
@@ -16357,7 +16362,7 @@ async function loadAIBriefing(forceRefresh, retryCount = 0) {
         AI 시장 브리핑을 사용하려면 본인 Gemini API 키를 입력해주세요.<br>
         <span style="opacity:0.7; font-size:11px;">키는 무료로 받을 수 있고, 본인 기기에만 안전하게 저장돼요.</span>
       </div>
-      <button onclick="openAIKeyModal()" style="padding:10px 18px; border:none; border-radius:8px; background:#FFD700; color:black; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">
+      <button onclick="openAIKeyModal()" style="padding:10px 18px; border:none; border-radius:8px; background:#C9A227; color:black; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">
         <i class="ti ti-key" style="font-size:13px; vertical-align:-2px;"></i> AI 키 입력하기
       </button>
     </div>`;
@@ -16378,7 +16383,7 @@ async function loadAIBriefing(forceRefresh, retryCount = 0) {
   // 최근 에러 있으면 → 그 에러 화면 그대로 표시 (탭 이동에도 유지)
   if (!forceRefresh && window._aiLastError[briefingCacheKey] && Date.now() - window._aiLastError[briefingCacheKey].time < 10 * 60 * 1000) {
     const errInfo = window._aiLastError[briefingCacheKey];
-    container.innerHTML = `<div style="padding:14px; background:rgba(255,100,100,0.15); border-radius:8px;">
+    container.innerHTML = `<div style="padding:14px; background:rgba(176,87,78,0.15); border-radius:8px;">
       <div style="display:flex; align-items:center; justify-content:space-between;">
         <div style="display:flex; align-items:center; gap:6px; font-size:11px; color:#FFD;">
           <i class="ti ti-alert-circle"></i> ${errInfo.error.includes('429') ? '한도 도달 (잠시 후 재시도)' : '일시 실패'}
@@ -16420,7 +16425,7 @@ async function loadAIBriefing(forceRefresh, retryCount = 0) {
         새 분석을 받으려면 아래 버튼을 눌러주세요.<br>
         <span style="opacity:0.8;">한도 절약을 위해 자동 호출은 비활성화됨</span>
       </div>
-      <button onclick="loadAIBriefing(true)" style="padding:10px 20px; border:none; border-radius:8px; background:var(--bg-primary); color:#5E5CE6; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; box-shadow:var(--shadow-card);">
+      <button onclick="loadAIBriefing(true)" style="padding:10px 20px; border:none; border-radius:8px; background:var(--bg-primary); color:#6B5B96; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; box-shadow:var(--shadow-card);">
         🔄 분석 받기
       </button>
     </div>`;
@@ -16450,7 +16455,7 @@ async function loadAIBriefing(forceRefresh, retryCount = 0) {
     // 네트워크 에러면 8초 후 자동 재시도 (최대 1회만)
     const isNetworkErr = result.error.includes('네트워크') || result.error.includes('시간 초과') || result.error.includes('모든 모델 실패');
     if (isNetworkErr && !forceRefresh && retryCount < 1) {
-      stillContainer.innerHTML = `<div style="padding:12px; background:rgba(255,200,100,0.15); border-radius:8px; font-size:11px; color:#FFD;">
+      stillContainer.innerHTML = `<div style="padding:12px; background:rgba(192,138,74,0.15); border-radius:8px; font-size:11px; color:#FFD;">
         <i class="ti ti-refresh"></i> ${result.error}
         <div style="margin-top:6px; opacity:0.7; font-size:11px;">8초 후 자동 재시도... (마지막 시도)</div>
       </div>`;
@@ -16460,7 +16465,7 @@ async function loadAIBriefing(forceRefresh, retryCount = 0) {
 
     // 그래도 실패하면 - 재시도 버튼 함께 보여주기 + 에러 저장 (탭 이동에도 유지)
     window._aiLastError[briefingCacheKey] = { error: result.error, time: Date.now() };
-    stillContainer.innerHTML = `<div style="padding:14px; background:rgba(255,100,100,0.15); border-radius:8px;">
+    stillContainer.innerHTML = `<div style="padding:14px; background:rgba(176,87,78,0.15); border-radius:8px;">
       <div style="display:flex; align-items:center; justify-content:space-between;">
         <div style="display:flex; align-items:center; gap:6px; font-size:11px; color:#FFD;">
           <i class="ti ti-alert-circle"></i> ${result.error.includes('429') ? '한도 도달 (잠시 후 재시도)' : '일시 실패'}
@@ -16571,7 +16576,7 @@ async function loadAIActionAdvice(forceRefresh = false) {
     const text = aiCache[cacheKey].text;
     container.innerHTML = `<div class="ai-card">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-        <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px; color:#FFD700;"></i> AI 맞춤 분석</div>
+        <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px; color:#C9A227;"></i> AI 맞춤 분석</div>
         <button onclick="delete aiCache['${cacheKey}']; loadAIActionAdvice(true);" style="border:none; background:rgba(255,255,255,0.15); color:white; padding:5px 10px; border-radius:6px; font-size:11px; cursor:pointer; font-family:inherit;">
           <i class="ti ti-refresh" style="font-size:11px;"></i> 새로
         </button>
@@ -16595,7 +16600,7 @@ async function loadAIActionAdvice(forceRefresh = false) {
   // 진행 중인 호출이 있으면 → 로딩 상태 그대로 표시
   if (window._aiInFlightStatus[cacheKey] === 'loading') {
     container.innerHTML = `<div class="ai-card">
-      <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px; color:#FFD700;"></i> AI 분석 중</div>
+      <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px; color:#C9A227;"></i> AI 분석 중</div>
       <div style="display:flex; align-items:center; gap:8px; padding:8px 0;">
         <div class="spinner" style="border-color:rgba(255,255,255,0.3); border-top-color:white;"></div>
         <span style="font-size:11px; opacity:0.8;">맞춤 분석 진행 중... (계속 진행)</span>
@@ -16614,11 +16619,11 @@ async function loadAIActionAdvice(forceRefresh = false) {
   // 자동 호출 차단 - forceRefresh가 false면 안내만
   if (!forceRefresh) {
     container.innerHTML = `<div class="ai-card">
-      <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px; color:#FFD700;"></i> AI 맞춤 분석</div>
+      <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px; color:#C9A227;"></i> AI 맞춤 분석</div>
       <div style="font-size:12px; opacity:0.85; line-height:1.6; margin-bottom:12px; margin-top:8px;">
         💡 본인 자산에 대한 AI 맞춤 분석을 받으려면 아래 버튼을 눌러주세요.
       </div>
-      <button onclick="loadAIActionAdvice(true)" style="padding:8px 16px; border:none; border-radius:6px; background:var(--bg-primary); color:#5E5CE6; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; box-shadow:var(--shadow-card);">
+      <button onclick="loadAIActionAdvice(true)" style="padding:8px 16px; border:none; border-radius:6px; background:var(--bg-primary); color:#6B5B96; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; box-shadow:var(--shadow-card);">
         🔄 AI 분석 받기
       </button>
     </div>`;
@@ -16626,7 +16631,7 @@ async function loadAIActionAdvice(forceRefresh = false) {
   }
 
   container.innerHTML = `<div class="ai-card">
-    <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px; color:#FFD700;"></i> AI 분석 중</div>
+    <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px; color:#C9A227;"></i> AI 분석 중</div>
     <div style="display:flex; align-items:center; gap:8px; padding:8px 0;">
       <div class="spinner" style="border-color:rgba(255,255,255,0.3); border-top-color:white;"></div>
       <span style="font-size:11px; opacity:0.8;">개인 맞춤 액션 분석 중... (10초 정도)</span>
@@ -16660,7 +16665,7 @@ async function loadAIActionAdvice(forceRefresh = false) {
 
   stillContainer.innerHTML = `<div class="ai-card">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-      <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px; color:#FFD700;"></i> AI 맞춤 분석</div>
+      <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px; color:#C9A227;"></i> AI 맞춤 분석</div>
       <button onclick="delete aiCache['${cacheKey}']; loadAIActionAdvice(true);" style="border:none; background:rgba(255,255,255,0.15); color:white; padding:5px 10px; border-radius:6px; font-size:11px; cursor:pointer; font-family:inherit;">
         <i class="ti ti-refresh" style="font-size:11px;"></i> 새로
       </button>
@@ -16770,13 +16775,13 @@ function initStockNewsSummary() {
     return;
   }
   container.innerHTML = `
-    <div style="padding:16px; background:linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 100%); border-radius:var(--radius-md); border:0.5px solid #A5B4FC;">
+    <div style="padding:16px; background:var(--bg-accent); border-radius:var(--radius-md); border:0.5px solid #A5B4FC;">
       <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
         <span style="font-size:14px;">📊</span>
-        <span style="font-size:11px; font-weight:700; color:#4F46E5;">내 종목 AI 뉴스 요약</span>
+        <span style="font-size:11px; font-weight:700; color:#6B5B96;">내 종목 AI 뉴스 요약</span>
       </div>
       <div style="font-size:11px; color:var(--text-secondary); line-height:1.6; margin-bottom:10px;">관심·보유 종목 뉴스와 시장 동향을 AI가 종합 분석해요. 호재🟢/악재🔴/중립⚪로 정리.</div>
-      <button onclick="loadStockNewsSummary(true)" style="width:100%; border:none; border-radius:10px; padding:11px; background:#4F46E5; color:white; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">✨ AI 분석 받기</button>
+      <button onclick="loadStockNewsSummary(true)" style="width:100%; border:none; border-radius:10px; padding:11px; background:#6B5B96; color:white; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">✨ AI 분석 받기</button>
     </div>`;
 }
 
@@ -16804,10 +16809,10 @@ async function loadStockNewsSummary(forceRefresh = false) {
 
 function renderStockNewsSummaryCard(container, text) {
   container.innerHTML = `
-    <div style="padding:16px; background:linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 100%); border-radius:var(--radius-md); border:0.5px solid #A5B4FC;">
+    <div style="padding:16px; background:var(--bg-accent); border-radius:var(--radius-md); border:0.5px solid #A5B4FC;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-        <span style="font-size:11px; font-weight:700; color:#4F46E5;">📊 내 종목 AI 뉴스 요약</span>
-        <button onclick="loadStockNewsSummary(true)" style="border:none; background:rgba(79,70,229,0.12); color:#4F46E5; padding:4px 10px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">🔄 새로고침</button>
+        <span style="font-size:11px; font-weight:700; color:#6B5B96;">📊 내 종목 AI 뉴스 요약</span>
+        <button onclick="loadStockNewsSummary(true)" style="border:none; background:rgba(79,70,229,0.12); color:#6B5B96; padding:4px 10px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">🔄 새로고침</button>
       </div>
       <div style="font-size:12px; color:var(--text-primary); line-height:1.7;">${markdownToHTML(text)}</div>
       <div style="font-size:10px; color:var(--text-tertiary); margin-top:8px;">※ 관심·보유 종목 뉴스 기반 AI 요약. 투자 판단은 본인 책임이에요.</div>
@@ -16872,13 +16877,13 @@ async function loadAINewsSummary(forceRefresh = false) {
   // 캐시 있으면 즉시 표시
   if (!forceRefresh && aiCache[cacheKey] && Date.now() - aiCache[cacheKey].time < AI_CACHE_TIME) {
     const text = aiCache[cacheKey].text;
-    container.innerHTML = `<div style="padding:16px; background:linear-gradient(135deg, #FFF7E6 0%, #FFEFD5 100%); border-radius:var(--radius-md); border:0.5px solid #F4A261; margin-bottom:14px;">
+    container.innerHTML = `<div style="padding:16px; background:var(--bg-warning); border-radius:var(--radius-md); border:0.5px solid #C08A4A; margin-bottom:14px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
         <div style="display:flex; align-items:center; gap:6px;">
-          <i class="ti ti-sparkles" style="font-size:13px; color:#F4A261;"></i>
-          <span style="font-size:11px; font-weight:600; color:#B45309;">AI 뉴스 요약</span>
+          <i class="ti ti-sparkles" style="font-size:13px; color:#C08A4A;"></i>
+          <span style="font-size:11px; font-weight:600; color:#7C5418;">AI 뉴스 요약</span>
         </div>
-        <button onclick="delete aiCache['${cacheKey}']; loadAINewsSummary(true);" style="border:none; background:transparent; color:#B45309; padding:2px 6px; font-size:11px; cursor:pointer; font-family:inherit;">
+        <button onclick="delete aiCache['${cacheKey}']; loadAINewsSummary(true);" style="border:none; background:transparent; color:#7C5418; padding:2px 6px; font-size:11px; cursor:pointer; font-family:inherit;">
           <i class="ti ti-refresh" style="font-size:11px;"></i>
         </button>
       </div>
@@ -16905,12 +16910,12 @@ async function loadAINewsSummary(forceRefresh = false) {
 
   // 자동 호출 차단 - 캐시 없고 forceRefresh도 아니면 안내만
   if (!forceRefresh) {
-    container.innerHTML = `<div style="padding:14px; background:linear-gradient(135deg, #FFF7E6 0%, #FFEFD5 100%); border-radius:var(--radius-md); border:0.5px solid #F4A261; margin-bottom:14px; text-align:center;">
-      <div style="font-size:12px; color:#B45309; margin-bottom:10px; line-height:1.5;">
+    container.innerHTML = `<div style="padding:14px; background:var(--bg-warning); border-radius:var(--radius-md); border:0.5px solid #C08A4A; margin-bottom:14px; text-align:center;">
+      <div style="font-size:12px; color:#7C5418; margin-bottom:10px; line-height:1.5;">
         📰 AI 뉴스 요약 대기 중<br>
         <span style="font-size:11px; opacity:0.8;">새 분석을 받으려면 버튼을 눌러주세요</span>
       </div>
-      <button onclick="loadAINewsSummary(true)" style="padding:8px 16px; border:none; border-radius:6px; background:#F4A261; color:white; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
+      <button onclick="loadAINewsSummary(true)" style="padding:8px 16px; border:none; border-radius:6px; background:#C08A4A; color:white; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
         🔄 뉴스 분석 받기
       </button>
     </div>`;
@@ -16956,13 +16961,13 @@ async function loadAINewsSummary(forceRefresh = false) {
   // 캐시 저장
   localStorage.setItem('ai_cache_today', JSON.stringify(aiCache));
 
-  stillContainer.innerHTML = `<div style="padding:16px; background:linear-gradient(135deg, #FFF7E6 0%, #FFEFD5 100%); border-radius:var(--radius-md); border:0.5px solid #F4A261; margin-bottom:14px;">
+  stillContainer.innerHTML = `<div style="padding:16px; background:var(--bg-warning); border-radius:var(--radius-md); border:0.5px solid #C08A4A; margin-bottom:14px;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
       <div style="display:flex; align-items:center; gap:6px;">
-        <i class="ti ti-sparkles" style="font-size:13px; color:#F4A261;"></i>
-        <span style="font-size:11px; font-weight:600; color:#B45309;">AI 뉴스 요약</span>
+        <i class="ti ti-sparkles" style="font-size:13px; color:#C08A4A;"></i>
+        <span style="font-size:11px; font-weight:600; color:#7C5418;">AI 뉴스 요약</span>
       </div>
-      <button onclick="delete aiCache['${cacheKey}']; loadAINewsSummary(true);" style="border:none; background:transparent; color:#B45309; padding:2px 6px; font-size:11px; cursor:pointer; font-family:inherit;">
+      <button onclick="delete aiCache['${cacheKey}']; loadAINewsSummary(true);" style="border:none; background:transparent; color:#7C5418; padding:2px 6px; font-size:11px; cursor:pointer; font-family:inherit;">
         <i class="ti ti-refresh" style="font-size:11px;"></i>
       </button>
     </div>
@@ -17199,7 +17204,7 @@ function renderMacroTrend(d) {
       <div style="font-size:11px; color:var(--text-secondary); line-height:1.8; padding:10px 12px; background:var(--bg-tertiary); border-radius:10px;">
         ${signals.length ? signals.join('<br>') : '뚜렷한 방향 신호는 적은 편이에요.'}
       </div>
-      ${moveHint ? `<div style="font-size:11px; color:var(--text-primary); line-height:1.7; margin-top:10px; padding:10px 12px; background:#EEF2FF; border-radius:10px; border-left:3px solid #6366F1;">🧭 <b>흐름 방향</b><br>${moveHint}</div>` : ''}
+      ${moveHint ? `<div style="font-size:11px; color:var(--text-primary); line-height:1.7; margin-top:10px; padding:10px 12px; background:var(--bg-accent); border-radius:10px; border-left:3px solid #6366F1;">🧭 <b>흐름 방향</b><br>${moveHint}</div>` : ''}
       ` : `
       <div style="font-size:11px; color:var(--text-tertiary); line-height:1.6; margin-top:6px;">
         추세 데이터가 아직 충분하지 않아요. (Worker /macro에 추세 필드가 추가되면 표시돼요)
@@ -17343,7 +17348,7 @@ async function renderMacroScenario(forceRefresh = false) {
   const fmtYoY = v => v != null ? (v >= 0 ? '+' : '') + v.toFixed(1) + '%' : '-';
 
   box.innerHTML = `
-    ${a.cpiMissing ? `<div style="padding:11px 14px; background:#FEF3C7; border:1px solid #FCD34D; border-radius:12px; margin-bottom:12px; font-size:11px; color:#92400E; line-height:1.6;">⚠️ CPI(물가) 데이터를 일시적으로 못 받아, 물가 판단은 추세·금리로 보조 중이에요. 잠시 후 갱신하면 정확해져요.</div>` : ''}
+    ${a.cpiMissing ? `<div style="padding:11px 14px; background:var(--bg-warning); border:1px solid #FCD34D; border-radius:12px; margin-bottom:12px; font-size:11px; color:#92400E; line-height:1.6;">⚠️ CPI(물가) 데이터를 일시적으로 못 받아, 물가 판단은 추세·금리로 보조 중이에요. 잠시 후 갱신하면 정확해져요.</div>` : ''}
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
       <span style="font-size:13px; font-weight:700;">📊 시장 국면 매트릭스</span>
       <button onclick="renderMacroScenario(true)" style="border:none; background:rgba(128,128,128,0.12); color:var(--text-secondary); padding:5px 12px; border-radius:999px; font-size:11px; cursor:pointer; font-family:inherit;">🔄 갱신</button>
@@ -17483,8 +17488,8 @@ async function loadMacroAIComment(d, a) {
     const result = await askGemini(prompt, { useCache: true, cacheKey });
     if (result.error || !result.text) { box.innerHTML = ''; return; }
     box.innerHTML = `
-      <div style="padding:16px; background:linear-gradient(135deg,#EEF2FF 0%,#E0E7FF 100%); border-radius:14px; border:0.5px solid #A5B4FC;">
-        <div style="font-size:11px; font-weight:700; color:#4F46E5; margin-bottom:8px;">🤖 AI 국면 해석</div>
+      <div style="padding:16px; background:var(--bg-accent); border-radius:14px; border:0.5px solid #A5B4FC;">
+        <div style="font-size:11px; font-weight:700; color:#6B5B96; margin-bottom:8px;">🤖 AI 국면 해석</div>
         <div style="font-size:12px; color:var(--text-primary); line-height:1.7;">${escapeHTML(result.text)}</div>
         <div style="font-size:10px; color:var(--text-tertiary); margin-top:8px;">※ 참고용 해석이며 투자 권유가 아니에요.</div>
       </div>`;
@@ -18626,9 +18631,9 @@ function renderIpoTab() {
 
   let h = `
     <div style="display:flex; gap:6px; margin-bottom:12px;">
-      <button onclick="openIpoModal()" style="flex:1; padding:11px; border:none; background:var(--accent-primary, #5E5CE6); color:white; border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">+ 공모주 추가</button>
+      <button onclick="openIpoModal()" style="flex:1; padding:11px; border:none; background:var(--accent-primary, #6B5B96); color:white; border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">+ 공모주 추가</button>
       <input type="file" id="ipo-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processIpoCapture(this)" />
-      <button onclick="document.getElementById('ipo-capture-input').click()" style="flex:1; padding:11px; border:1px dashed var(--text-info); background:rgba(70,140,255,0.06); color:var(--text-info); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">📸 일정 캡처</button>
+      <button onclick="document.getElementById('ipo-capture-input').click()" style="flex:1; padding:11px; border:1px dashed var(--text-info); background:rgba(69,110,158,0.06); color:var(--text-info); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">📸 일정 캡처</button>
     </div>
     <div style="display:flex; gap:6px; margin-bottom:12px;">
       <button onclick="fetchIpoScheduleAuto()" style="flex:1; padding:10px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit; box-shadow:var(--shadow-card);">🔄 일정 자동 불러오기</button>
@@ -18928,7 +18933,7 @@ function openIpoAnalyze(ipoId) {
       </div>
       ${(() => {
         const sel = list.find(x => x.id === window._ipoAnalyzeId);
-        return sel ? `<div style="padding:9px 12px; background:#F0EBFC; border:0.5px solid #6B5B9633; border-radius:10px; margin-bottom:10px; font-size:12px; font-weight:700; color:#6B5B96;">${escapeHTML(sel.name)} <span style="font-weight:500; opacity:0.75;">· 분석 종류를 고르세요</span></div>` : '';
+        return sel ? `<div style="padding:9px 12px; background:var(--bg-accent); border:0.5px solid #6B5B9633; border-radius:10px; margin-bottom:10px; font-size:12px; font-weight:700; color:#6B5B96;">${escapeHTML(sel.name)} <span style="font-weight:500; opacity:0.75;">· 분석 종류를 고르세요</span></div>` : '';
       })()}
       <div style="padding:10px 12px; background:var(--bg-info); border-radius:10px; margin-bottom:12px; font-size:11px; color:var(--text-info); line-height:1.6;">
         숫자는 <b>직접 입력한 값만</b> 사용해요. AI가 경쟁률·물량을 스스로 찾아오지는 못하니, 공시나 증권사 화면에서 보고 채워주세요.
@@ -19069,7 +19074,7 @@ function openIpoAnalyzeForm(key) {
       ${fields}
       <div style="display:flex; gap:6px; margin-top:14px;">
         <button onclick="copyIpoPrompt('${key}')" style="flex:1; padding:12px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit; box-shadow:var(--shadow-card);">📋 프롬프트 복사</button>
-        <button onclick="runIpoAnalyze('${key}')" style="flex:1.4; padding:12px; border:none; background:var(--accent-primary, #5E5CE6); color:white; border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">🤖 분석 요청</button>
+        <button onclick="runIpoAnalyze('${key}')" style="flex:1.4; padding:12px; border:none; background:var(--accent-primary, #6B5B96); color:white; border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">🤖 분석 요청</button>
       </div>
       <div id="ipo-an-result" style="margin-top:12px;"></div>
     </div>`;
@@ -19156,8 +19161,8 @@ async function runIpoAnalyze(key) {
     return;
   }
   box.innerHTML = `
-    <div style="padding:15px; background:linear-gradient(135deg,#EEF2FF 0%,#E0E7FF 100%); border-radius:14px; border:0.5px solid #A5B4FC;">
-      <div style="font-size:11px; font-weight:700; color:#4F46E5; margin-bottom:8px;">${cfg.icon} ${cfg.title}${result.cached ? ' <span style="opacity:0.6; font-weight:500;">(저장된 결과)</span>' : ''}</div>
+    <div style="padding:15px; background:var(--bg-accent); border-radius:14px; border:0.5px solid #A5B4FC;">
+      <div style="font-size:11px; font-weight:700; color:#6B5B96; margin-bottom:8px;">${cfg.icon} ${cfg.title}${result.cached ? ' <span style="opacity:0.6; font-weight:500;">(저장된 결과)</span>' : ''}</div>
       <div style="font-size:12px; color:var(--text-primary); line-height:1.75; white-space:pre-wrap;">${escapeHTML(result.text)}</div>
       <div style="font-size:10px; color:var(--text-tertiary); margin-top:10px;">※ 입력한 값만 근거로 한 참고용 정리이며 투자 권유가 아니에요.</div>
     </div>`;
@@ -19857,7 +19862,7 @@ function renderAlertBanner() {
   }
   const top = unread[0];
   const dir = top.kind === 'below' ? '↓ 목표가 이하' : '↑ 목표가 이상';
-  const color = top.kind === 'below' ? '#1D9E75' : '#D85A30';
+  const color = top.kind === 'below' ? '#1D9E75' : '#B87D3C';
   el.innerHTML = `
     <div onclick="openAlertCenter()" style="background:${color}; color:white; border-radius:12px; padding:11px 13px; box-shadow:0 4px 16px rgba(0,0,0,0.2); display:flex; align-items:center; gap:10px; cursor:pointer;">
       <span style="font-size:18px;">🔔</span>
@@ -19881,7 +19886,7 @@ function openAlertCenter() {
     ? `<div style="padding:24px; text-align:center; color:var(--text-tertiary); font-size:12px;">아직 도달 기록이 없어요.</div>`
     : list.map(h => {
         const dir = h.kind === 'below' ? '↓ 이하 도달 (매수 기회)' : '↑ 이상 도달';
-        const col = h.kind === 'below' ? '#1D9E75' : '#D85A30';
+        const col = h.kind === 'below' ? '#1D9E75' : '#B87D3C';
         const dt = new Date(h.at);
         return `<div style="padding:11px 8px; border-bottom:0.5px solid var(--border-tertiary); ${h.read ? 'opacity:0.5;' : ''}">
           <div style="display:flex; justify-content:space-between; align-items:baseline;">
@@ -20120,7 +20125,7 @@ async function renderWatchlist() {
   let html = '';
   const crashCount = results.filter(r => r.price != null && r.changePct <= -5).length;
   if (crashCount > 0) {
-    html += `<div style="padding:8px 12px; margin-bottom:8px; background:#E8483D; color:white; border-radius:8px; font-size:11px; font-weight:600;">🔻 관심종목 ${crashCount}개가 5% 이상 급락했어요</div>`;
+    html += `<div style="padding:8px 12px; margin-bottom:8px; background:#9B3A33; color:white; border-radius:8px; font-size:11px; font-weight:600;">🔻 관심종목 ${crashCount}개가 5% 이상 급락했어요</div>`;
   }
 
   results.forEach(({ w, price, changePct, currency, news, fiftyTwoWeekHigh }) => {
@@ -20133,12 +20138,12 @@ async function renderWatchlist() {
     const isOpen = window._watchExpanded && window._watchExpanded[w.id];
 
     html += `
-      <div style="margin-bottom:8px; background:${isCrash ? 'rgba(232,72,61,0.06)' : 'var(--bg-secondary)'}; border-radius:var(--radius-md); border:${isCrash ? '1px solid rgba(232,72,61,0.3)' : '0.5px solid var(--border-tertiary)'}; overflow:hidden;">
+      <div style="margin-bottom:8px; background:${isCrash ? 'rgba(155,58,51,0.06)' : 'var(--bg-secondary)'}; border-radius:var(--radius-md); border:${isCrash ? '1px solid rgba(155,58,51,0.3)' : '0.5px solid var(--border-tertiary)'}; overflow:hidden;">
         <div onclick="toggleWatchExpand(${w.id})" style="padding:11px 12px; display:flex; align-items:center; gap:10px; cursor:pointer;">
           <div style="flex:1; min-width:0;">
             <div style="font-size:13px; font-weight:600; display:flex; align-items:center; gap:6px;">
               ${escapeHTML(w.name)}
-              ${isCrash ? `<span style="font-size:10px; font-weight:700; color:white; background:#E8483D; padding:1px 6px; border-radius:4px;">🔻 급락</span>` : ''}
+              ${isCrash ? `<span style="font-size:10px; font-weight:700; color:white; background:#9B3A33; padding:1px 6px; border-radius:4px;">🔻 급락</span>` : ''}
             </div>
             <div style="font-size:11px; color:var(--text-tertiary); margin-top:1px;">${escapeHTML(w.ticker)}${related.length > 0 ? ` · 관련기사 ${related.length} ${isOpen ? '▲' : '▼'}` : ''}</div>
           </div>
@@ -20190,7 +20195,7 @@ function renderWatchlistFromCache() {
   let html = '';
   const crashCount = results.filter(r => r.price != null && r.changePct <= -5).length;
   if (crashCount > 0) {
-    html += `<div style="padding:8px 12px; margin-bottom:8px; background:#E8483D; color:white; border-radius:8px; font-size:11px; font-weight:600;">🔻 관심종목 ${crashCount}개가 5% 이상 급락했어요</div>`;
+    html += `<div style="padding:8px 12px; margin-bottom:8px; background:#9B3A33; color:white; border-radius:8px; font-size:11px; font-weight:600;">🔻 관심종목 ${crashCount}개가 5% 이상 급락했어요</div>`;
   }
   results.forEach(({ w, price, changePct, currency, news, fiftyTwoWeekHigh }) => {
     const isCrash = price != null && changePct <= -5;
@@ -20202,12 +20207,12 @@ function renderWatchlistFromCache() {
     const isOpen = window._watchExpanded && window._watchExpanded[w.id];
 
     html += `
-      <div style="margin-bottom:8px; background:${isCrash ? 'rgba(232,72,61,0.06)' : 'var(--bg-secondary)'}; border-radius:var(--radius-md); border:${isCrash ? '1px solid rgba(232,72,61,0.3)' : '0.5px solid var(--border-tertiary)'}; overflow:hidden;">
+      <div style="margin-bottom:8px; background:${isCrash ? 'rgba(155,58,51,0.06)' : 'var(--bg-secondary)'}; border-radius:var(--radius-md); border:${isCrash ? '1px solid rgba(155,58,51,0.3)' : '0.5px solid var(--border-tertiary)'}; overflow:hidden;">
         <div onclick="toggleWatchExpand(${w.id})" style="padding:11px 12px; display:flex; align-items:center; gap:10px; cursor:pointer;">
           <div style="flex:1; min-width:0;">
             <div style="font-size:13px; font-weight:600; display:flex; align-items:center; gap:6px;">
               ${escapeHTML(w.name)}
-              ${isCrash ? `<span style="font-size:10px; font-weight:700; color:white; background:#E8483D; padding:1px 6px; border-radius:4px;">🔻 급락</span>` : ''}
+              ${isCrash ? `<span style="font-size:10px; font-weight:700; color:white; background:#9B3A33; padding:1px 6px; border-radius:4px;">🔻 급락</span>` : ''}
             </div>
             <div style="font-size:11px; color:var(--text-tertiary); margin-top:1px;">${escapeHTML(w.ticker)}${related.length > 0 ? ` · 관련기사 ${related.length} ${isOpen ? '▲' : '▼'}` : ''}</div>
           </div>
@@ -20931,7 +20936,7 @@ function renderAssetMarket(total, byType) {
       <div style="padding:18px; background:linear-gradient(135deg, #1A1A1A 0%, #2D2D2D 100%); border-radius:14px; color:white;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
           <div style="display:flex; align-items:center; gap:6px;">
-            <i class="ti ti-sparkles" style="font-size:14px; color:#FFD700;"></i>
+            <i class="ti ti-sparkles" style="font-size:14px; color:#C9A227;"></i>
             <span style="font-size:11px; font-weight:600; letter-spacing:0.5px;">AI 시장 브리핑</span>
           </div>
           <button onclick="loadAIBriefing(true)" style="border:none; background:rgba(255,255,255,0.15); color:white; padding:5px 10px; border-radius:6px; font-size:11px; cursor:pointer; font-family:inherit;">
@@ -21060,14 +21065,14 @@ async function loadNewsRSS() {
   if (growthNews.length > 0) {
     growthHtml = `
       <div style="margin-bottom:14px; padding:12px; background:linear-gradient(135deg, #EAF7EF, #F5FBF7); border:0.5px solid #BFE3CC; border-radius:12px;">
-        <div style="font-size:12px; font-weight:700; color:#2D8A56; margin-bottom:8px;">📈 성장·호재 뉴스 <span style="font-size:11px; font-weight:500; opacity:0.7;">(증설·진출·수주·신규고객)</span></div>
+        <div style="font-size:12px; font-weight:700; color:#3D8168; margin-bottom:8px;">📈 성장·호재 뉴스 <span style="font-size:11px; font-weight:500; opacity:0.7;">(증설·진출·수주·신규고객)</span></div>
         ${growthNews.slice(0, 8).map(item => {
           const pubDate = item.pubDate ? timeAgo(new Date(item.pubDate).toISOString()) : '';
           const hit = growthKeywords.find(kw => (item.title || '').includes(kw)) || '';
           return `<div onclick="openExt(${jsString(item.link)})" style="padding:8px 0; border-bottom:0.5px solid rgba(0,0,0,0.05); cursor:pointer;">
             <div style="font-size:12px; font-weight:500; line-height:1.4; color:var(--text-primary);">${escapeHTML(item.title)}</div>
             <div style="display:flex; gap:6px; align-items:center; font-size:10px; color:var(--text-tertiary); margin-top:3px;">
-              <span style="padding:1px 6px; border-radius:3px; background:#2D8A56; color:white; font-weight:600;">${hit}</span>
+              <span style="padding:1px 6px; border-radius:3px; background:#3D8168; color:white; font-weight:600;">${hit}</span>
               <span>${escapeHTML(item.source)}</span>
               ${pubDate ? `<span>·</span><span>${pubDate}</span>` : ''}
             </div>
@@ -21394,7 +21399,7 @@ async function loadAIAssetCoach(total, byType, expected1Y, expected3Y, expected1
       <div class="ai-text" style="margin-bottom:10px;">
         AI 자산 분석을 사용하려면 본인 Gemini API 키를 입력해주세요.
       </div>
-      <button onclick="openAIKeyModal()" style="padding:8px 14px; border:none; border-radius:6px; background:#FFD700; color:black; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
+      <button onclick="openAIKeyModal()" style="padding:8px 14px; border:none; border-radius:6px; background:#C9A227; color:black; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
         <i class="ti ti-key" style="font-size:12px; vertical-align:-2px;"></i> AI 키 입력하기
       </button>
     </div>`;
@@ -21446,7 +21451,7 @@ async function loadAIAssetCoach(total, byType, expected1Y, expected3Y, expected1
       <div class="ai-text" style="margin: 10px 0 12px; line-height:1.6;">
         💎 본인 포트폴리오 분석을 받으려면 버튼을 눌러주세요.
       </div>
-      <button onclick="loadAIAssetCoach(${total}, ${byTypeStr}, ${expected1Y}, ${expected3Y}, ${expected10Y}, true)" style="padding:8px 14px; border:none; border-radius:6px; background:var(--bg-primary); color:#5E5CE6; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; box-shadow:var(--shadow-card);">
+      <button onclick="loadAIAssetCoach(${total}, ${byTypeStr}, ${expected1Y}, ${expected3Y}, ${expected10Y}, true)" style="padding:8px 14px; border:none; border-radius:6px; background:var(--bg-primary); color:#6B5B96; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; box-shadow:var(--shadow-card);">
         🔄 AI 분석 받기
       </button>
     </div>`;
@@ -21573,7 +21578,7 @@ ${target ? `## 목표 대비 현재 차이 (이 차이를 바탕으로 조언할
     stillContainer.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
       <div class="ai-badge"><i class="ti ti-alert-circle" style="font-size:11px;"></i> AI 분석 실패</div>
       <div class="ai-text">${result.error}</div>
-      ${result.needsKey ? `<button onclick="openAIKeyModal()" style="margin-top:8px; padding:6px 12px; border:none; border-radius:6px; background:#FFD700; color:black; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">AI 키 입력하기</button>` : ''}
+      ${result.needsKey ? `<button onclick="openAIKeyModal()" style="margin-top:8px; padding:6px 12px; border:none; border-radius:6px; background:#C9A227; color:black; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">AI 키 입력하기</button>` : ''}
     </div>`;
     return;
   }
@@ -21614,7 +21619,7 @@ function openAIKeyModal() {
 
       <div style="padding:14px; background:linear-gradient(135deg, #1A1A1A 0%, #2D2D2D 100%); border-radius:12px; color:white; margin-bottom:14px;">
         <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">
-          <i class="ti ti-sparkles" style="font-size:13px; color:#FFD700;"></i>
+          <i class="ti ti-sparkles" style="font-size:13px; color:#C9A227;"></i>
           <span style="font-size:11px; font-weight:600;">Gemini AI 설정</span>
         </div>
         <div style="font-size:12px; line-height:1.6; opacity:0.9;">
@@ -22337,7 +22342,7 @@ function openSettingsModal() {
             <div style="font-size:13px; font-weight:600;">AI 설정 (Gemini API)</div>
             <div style="font-size:11px; color:var(--text-tertiary); margin-top:1px;">${window.GEMINI_API_KEY ? '✓ 설정됨' : '키 입력 필요'}</div>
           </div>
-          ${!window.GEMINI_API_KEY ? `<span style="width:7px; height:7px; border-radius:50%; background:#FF3B30; margin-right:6px;"></span>` : ''}
+          ${!window.GEMINI_API_KEY ? `<span style="width:7px; height:7px; border-radius:50%; background:#9B3A33; margin-right:6px;"></span>` : ''}
           <i class="ti ti-chevron-right" style="color:var(--text-tertiary);"></i>
         </div>
       </button>
@@ -22710,11 +22715,11 @@ function openAssetAddModal() {
       <!-- 📸 캡처로 자동 입력 -->
       <div style="margin-bottom:14px;">
         <input type="file" id="asset-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processAssetCapture(this)" />
-        <button onclick="document.getElementById('asset-capture-input').click()" style="width:100%; padding:12px; border:1.5px dashed var(--text-info); background:rgba(70,140,255,0.06); color:var(--text-info); border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:8px;">
+        <button onclick="document.getElementById('asset-capture-input').click()" style="width:100%; padding:12px; border:1.5px dashed var(--text-info); background:rgba(69,110,158,0.06); color:var(--text-info); border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:8px;">
           <i class="ti ti-camera" style="font-size:16px;"></i>
           📸 증권/은행 앱 캡처 자동 입력
         </button>
-        <button onclick="pasteImageForAssetOCR()" style="width:100%; margin-top:6px; padding:11px; border:1.5px dashed var(--accent-primary, #5E5CE6); background:rgba(94,92,230,0.05); color:var(--accent-primary, #5E5CE6); border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px;">
+        <button onclick="pasteImageForAssetOCR()" style="width:100%; margin-top:6px; padding:11px; border:1.5px dashed var(--accent-primary, #6B5B96); background:rgba(107,91,150,0.05); color:var(--accent-primary, #6B5B96); border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px;">
           <i class="ti ti-clipboard" style="font-size:14px;"></i>
           📋 캡처 이미지 붙여넣기 (저장 없이)
         </button>
@@ -23398,31 +23403,31 @@ function editAsset(id) {
         });
 
         if (linkedFixed) {
-          return `<div style="margin-top:10px; padding:12px; background:rgba(94,92,230,0.08); border-radius:10px;">
-            <div style="font-size:11px; font-weight:600; color:#5E5CE6; margin-bottom:6px;">🤖 자동매수 연결됨</div>
+          return `<div style="margin-top:10px; padding:12px; background:rgba(107,91,150,0.08); border-radius:10px;">
+            <div style="font-size:11px; font-weight:600; color:#6B5B96; margin-bottom:6px;">🤖 자동매수 연결됨</div>
             <div style="font-size:11px; color:var(--text-secondary); line-height:1.5; margin-bottom:10px;">
               "${linkedFixed.name}" · 매${linkedFixed.cycle === 'monthly' ? '월' : linkedFixed.cycle === 'weekly' ? '주' : '2주'} ${linkedFixed.amt.toLocaleString()}원<br>
               <span style="color:var(--text-tertiary);">시세 받아서 정확한 수량으로 누적 매수됩니다</span>
             </div>
             <div style="display:flex; gap:6px;">
-              <button onclick="closeModal(); setTimeout(()=>editFixed(${linkedFixed.id}), 200);" style="flex:1; padding:8px; border:0.5px solid #5E5CE6; background:var(--bg-primary); color:#5E5CE6; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; box-shadow:var(--shadow-card);">✏️ 자동매수 수정</button>
-              <button onclick="recalcAutoBuy(${a.id}, ${linkedFixed.id})" style="flex:1; padding:8px; border:0.5px solid #5E5CE6; background:#5E5CE6; color:white; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">🔄 재계산</button>
+              <button onclick="closeModal(); setTimeout(()=>editFixed(${linkedFixed.id}), 200);" style="flex:1; padding:8px; border:0.5px solid #6B5B96; background:var(--bg-primary); color:#6B5B96; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; box-shadow:var(--shadow-card);">✏️ 자동매수 수정</button>
+              <button onclick="recalcAutoBuy(${a.id}, ${linkedFixed.id})" style="flex:1; padding:8px; border:0.5px solid #6B5B96; background:#6B5B96; color:white; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">🔄 재계산</button>
             </div>
-            <button type="button" onclick="document.getElementById('asset-autobuy-capture-input').click()" style="width:100%; margin-top:6px; padding:8px; border:1px dashed #5E5CE6; background:var(--bg-primary); color:#5E5CE6; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; box-shadow:var(--shadow-card);">📸 체결내역 캡처로 회차 정리</button>
+            <button type="button" onclick="document.getElementById('asset-autobuy-capture-input').click()" style="width:100%; margin-top:6px; padding:8px; border:1px dashed #6B5B96; background:var(--bg-primary); color:#6B5B96; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; box-shadow:var(--shadow-card);">📸 체결내역 캡처로 회차 정리</button>
             <input type="file" id="asset-autobuy-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processAutobuyCapture(this)" />
-            <div class="autobuy-capture-status" style="display:none; margin-top:6px; padding:8px; background:rgba(94,92,230,0.06); border-radius:6px; font-size:11px; color:#5E5CE6; text-align:center;"></div>
+            <div class="autobuy-capture-status" style="display:none; margin-top:6px; padding:8px; background:rgba(107,91,150,0.06); border-radius:6px; font-size:11px; color:#6B5B96; text-align:center;"></div>
           </div>`;
         } else {
           // 자동매수 연결 X → 추가 버튼 + 캡처
-          return `<div style="margin-top:10px; padding:12px; background:rgba(94,92,230,0.06); border-radius:10px; border:1px dashed rgba(94,92,230,0.3);">
+          return `<div style="margin-top:10px; padding:12px; background:rgba(107,91,150,0.06); border-radius:10px; border:1px dashed rgba(107,91,150,0.3);">
             <div style="font-size:11px; color:var(--text-secondary); margin-bottom:8px; line-height:1.5;">
               🤖 이 자산에 <b>자동매수</b>를 설정하시겠어요?<br>
               <span style="font-size:10px; color:var(--text-tertiary);">매월/매주 정기적으로 자동 누적 매수됩니다</span>
             </div>
-            <button onclick="addAutoBuyForAsset(${a.id})" style="width:100%; padding:9px; border:none; background:#5E5CE6; color:white; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; margin-bottom:6px;">+ 자동매수 설정</button>
-            <button type="button" onclick="document.getElementById('asset-autobuy-capture-input').click()" style="width:100%; padding:9px; border:1px dashed #5E5CE6; background:var(--bg-primary); color:#5E5CE6; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; box-shadow:var(--shadow-card);">📸 증권사 체결·자동적립 캡처</button>
+            <button onclick="addAutoBuyForAsset(${a.id})" style="width:100%; padding:9px; border:none; background:#6B5B96; color:white; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; margin-bottom:6px;">+ 자동매수 설정</button>
+            <button type="button" onclick="document.getElementById('asset-autobuy-capture-input').click()" style="width:100%; padding:9px; border:1px dashed #6B5B96; background:var(--bg-primary); color:#6B5B96; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; box-shadow:var(--shadow-card);">📸 증권사 체결·자동적립 캡처</button>
             <input type="file" id="asset-autobuy-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processAutobuyCapture(this)" />
-            <div class="autobuy-capture-status" style="display:none; margin-top:6px; padding:8px; background:rgba(94,92,230,0.06); border-radius:6px; font-size:11px; color:#5E5CE6; text-align:center;"></div>
+            <div class="autobuy-capture-status" style="display:none; margin-top:6px; padding:8px; background:rgba(107,91,150,0.06); border-radius:6px; font-size:11px; color:#6B5B96; text-align:center;"></div>
           </div>`;
         }
       })()}
@@ -23464,18 +23469,18 @@ function editAsset(id) {
 
         ${hasLots ? `
           <!-- 매수 기록 (lots) -->
-          <div style="margin-top:14px; padding:12px; background:rgba(94,92,230,0.06); border-radius:10px; border:0.5px solid rgba(94,92,230,0.2);">
+          <div style="margin-top:14px; padding:12px; background:rgba(107,91,150,0.06); border-radius:10px; border:0.5px solid rgba(107,91,150,0.2);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-              <div style="font-size:11px; font-weight:600; color:#5E5CE6;">📋 매수 기록 ${lots.length}건</div>
+              <div style="font-size:11px; font-weight:600; color:#6B5B96;">📋 매수 기록 ${lots.length}건</div>
               <div style="display:flex; gap:6px;">
-                <button onclick="closeModal(); setTimeout(()=>openAssetCaptureForCorrection(), 60);" style="border:none; background:rgba(94,92,230,0.15); color:#5E5CE6; padding:4px 10px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">📸 잔고 캡처 보정</button>
-                <button onclick="document.getElementById('asset-lot-autobuy-input').click()" style="border:none; background:rgba(94,92,230,0.08); color:#5E5CE6; padding:4px 10px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">🤖 회차</button>
-                <button onclick="addManualLot(${a.id})" style="border:none; background:#5E5CE6; color:white; padding:4px 10px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">+ 추가</button>
+                <button onclick="closeModal(); setTimeout(()=>openAssetCaptureForCorrection(), 60);" style="border:none; background:rgba(107,91,150,0.15); color:#6B5B96; padding:4px 10px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">📸 잔고 캡처 보정</button>
+                <button onclick="document.getElementById('asset-lot-autobuy-input').click()" style="border:none; background:rgba(107,91,150,0.08); color:#6B5B96; padding:4px 10px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">🤖 회차</button>
+                <button onclick="addManualLot(${a.id})" style="border:none; background:#6B5B96; color:white; padding:4px 10px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">+ 추가</button>
               </div>
             </div>
             <input type="file" id="asset-lot-autobuy-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processAutobuyCapture(this)" />
             <input type="file" id="asset-lot-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processAssetCapture(this)" />
-            <div class="autobuy-capture-status" style="display:none; margin-top:6px; padding:8px; background:rgba(94,92,230,0.06); border-radius:6px; font-size:11px; color:#5E5CE6; text-align:center;"></div>
+            <div class="autobuy-capture-status" style="display:none; margin-top:6px; padding:8px; background:rgba(107,91,150,0.06); border-radius:6px; font-size:11px; color:#6B5B96; text-align:center;"></div>
             ${(() => {
               // 🔧 자동매수와 수동 기록 분리
               const autoLots = lots.filter(l => l.autoBuy);
@@ -23493,15 +23498,15 @@ function editAsset(id) {
                 const firstDate = autoDates[0] || '';
                 const lastDate = autoDates[autoDates.length - 1] || '';
 
-                lotHtml += `<div style="padding:10px 12px; background:linear-gradient(135deg, rgba(94,92,230,0.1), rgba(94,92,230,0.04)); border-radius:8px; margin-bottom:6px; border:0.5px solid rgba(94,92,230,0.25);">
+                lotHtml += `<div style="padding:10px 12px; background:linear-gradient(135deg, rgba(107,91,150,0.1), rgba(107,91,150,0.04)); border-radius:8px; margin-bottom:6px; border:0.5px solid rgba(107,91,150,0.25);">
                   <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div style="font-weight:700; font-size:11px; color:#5E5CE6;">🤖 자동매수 ${autoLots.length}회차</div>
+                    <div style="font-weight:700; font-size:11px; color:#6B5B96;">🤖 자동매수 ${autoLots.length}회차</div>
                     <div style="font-weight:700; font-size:11px;">${Math.round(autoCost).toLocaleString()}원</div>
                   </div>
                   <div style="font-size:10px; color:var(--text-tertiary); margin-top:3px;">
                     ${firstDate}${lastDate && lastDate !== firstDate ? ` ~ ${lastDate}` : ''} · ${autoQty.toFixed(4).replace(/\.?0+$/, '')}주 · 평균 ${Math.round(autoAvg).toLocaleString()}원
                   </div>
-                  <button onclick="toggleAutoLotDetail(${a.id})" style="margin-top:6px; border:none; background:transparent; color:#5E5CE6; font-size:10px; cursor:pointer; font-family:inherit; padding:0; text-decoration:underline;">회차별 상세 보기 ▾</button>
+                  <button onclick="toggleAutoLotDetail(${a.id})" style="margin-top:6px; border:none; background:transparent; color:#6B5B96; font-size:10px; cursor:pointer; font-family:inherit; padding:0; text-decoration:underline;">회차별 상세 보기 ▾</button>
                   ${(() => {
                     // 연결된 자동매수가 '정수 매매'인데 소수점 회차가 있으면 보정 버튼 표시
                     const lf = (budget.fixed || []).find(f =>
@@ -23518,11 +23523,11 @@ function editAsset(id) {
                       <button onclick="fixAutoLotsToInteger(${a.id})" style="width:100%; border:none; background:var(--text-warning); color:white; padding:7px; border-radius:6px; font-size:11px; font-weight:700; cursor:pointer; font-family:inherit;">🔢 자동매수 회차 정수로 보정</button>
                     </div>`;
                   })()}
-                  <div id="auto-lot-detail-${a.id}" style="display:none; margin-top:6px; padding-top:6px; border-top:0.5px dashed rgba(94,92,230,0.25);">
+                  <div id="auto-lot-detail-${a.id}" style="display:none; margin-top:6px; padding-top:6px; border-top:0.5px dashed rgba(107,91,150,0.25);">
                     <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:4px; line-height:1.5;">
                       💡 회차가 증권사와 다르면 ✏️를 눌러 <b>체결수량·총 체결금액</b>을 증권사 화면 그대로 입력하세요. 1원도 안 틀려요.
                     </div>
-                    <button onclick="openBulkLotEdit(${a.id})" style="width:100%; margin-bottom:6px; padding:8px; border:1px solid #5E5CE6; background:rgba(94,92,230,0.06); color:#5E5CE6; border-radius:8px; font-size:11px; font-weight:700; cursor:pointer; font-family:inherit;">
+                    <button onclick="openBulkLotEdit(${a.id})" style="width:100%; margin-bottom:6px; padding:8px; border:1px solid #6B5B96; background:rgba(107,91,150,0.06); color:#6B5B96; border-radius:8px; font-size:11px; font-weight:700; cursor:pointer; font-family:inherit;">
                       📋 증권사 화면 보고 회차 한번에 입력
                     </button>
                     ${autoLots.slice().sort((x, y) => (y.date || '').localeCompare(x.date || '')).map((lot, idx) => {
@@ -23577,20 +23582,20 @@ function editAsset(id) {
               if (isLargeList) {
                 const remaining = manualLots.length - shownCount;
                 if (remaining > 0) {
-                  lotHtml += `<button onclick="showMoreLots(${a.id})" style="width:100%; margin-top:6px; padding:8px; border:0.5px dashed rgba(94,92,230,0.4); background:transparent; color:#5E5CE6; border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
+                  lotHtml += `<button onclick="showMoreLots(${a.id})" style="width:100%; margin-top:6px; padding:8px; border:0.5px dashed rgba(107,91,150,0.4); background:transparent; color:#6B5B96; border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
                     ▼ 수동 기록 ${remaining}건 더 보기
                   </button>`;
                 } else if (shownCount > LOT_PAGE_SIZE) {
-                  lotHtml += `<button onclick="collapseLots(${a.id})" style="width:100%; margin-top:6px; padding:8px; border:0.5px dashed rgba(94,92,230,0.4); background:transparent; color:var(--text-secondary); border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
+                  lotHtml += `<button onclick="collapseLots(${a.id})" style="width:100%; margin-top:6px; padding:8px; border:0.5px dashed rgba(107,91,150,0.4); background:transparent; color:var(--text-secondary); border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">
                     ▲ 접기
                   </button>`;
                 }
               }
               return lotHtml;
             })()}
-            <div style="margin-top:8px; padding-top:8px; border-top:0.5px solid rgba(94,92,230,0.2); display:flex; justify-content:space-between; font-size:11px;">
+            <div style="margin-top:8px; padding-top:8px; border-top:0.5px solid rgba(107,91,150,0.2); display:flex; justify-content:space-between; font-size:11px;">
               <span style="color:var(--text-secondary);">총 합계 (자동 계산)</span>
-              <span style="font-weight:700; color:#5E5CE6;">${Number(a.qty).toFixed(4).replace(/\.?0+$/, '')}주 평균 ${Number(a.price).toLocaleString()}원</span>
+              <span style="font-weight:700; color:#6B5B96;">${Number(a.qty).toFixed(4).replace(/\.?0+$/, '')}주 평균 ${Number(a.price).toLocaleString()}원</span>
             </div>
           </div>
 
@@ -23636,7 +23641,7 @@ function editAsset(id) {
           </div>
           ${quickAmtButtons('e-price')}
           <div style="margin-top:6px;">
-            <button onclick="addManualLot(${a.id})" style="border:none; background:rgba(94,92,230,0.12); color:#5E5CE6; padding:8px 14px; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">📋 매수 기록 시스템 사용</button>
+            <button onclick="addManualLot(${a.id})" style="border:none; background:rgba(107,91,150,0.12); color:#6B5B96; padding:8px 14px; border-radius:8px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">📋 매수 기록 시스템 사용</button>
             <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px;">증권사별/날짜별로 매수 기록 관리하기</div>
           </div>
         `}
@@ -24240,7 +24245,7 @@ function renderMergePreview() {
 
   // 티커 충돌 경고
   if (tickerConflict) {
-    h += `<div style="margin-bottom:12px; padding:10px; background:#FCEBEB; border:1px solid #E74C3C; border-radius:8px; font-size:11px; color:#C0392B; line-height:1.5;">
+    h += `<div style="margin-bottom:12px; padding:10px; background:var(--bg-danger); border:1px solid #E74C3C; border-radius:8px; font-size:11px; color:#C0392B; line-height:1.5;">
       🚨 <b>티커가 서로 달라요</b> (${tickers.join(', ')})<br>
       QQQ와 QQQM처럼 다른 종목일 수 있어요. 정말 같은 자산이 맞는지 꼭 확인하세요.
     </div>`;
@@ -24710,7 +24715,7 @@ if (window._fb) {
       if (authScreen) {
         authScreen.classList.remove('hidden');
         const errBox = document.createElement('div');
-        errBox.style.cssText = 'margin:16px; padding:14px; background:#FCEBEB; color:#C0392B; border-radius:10px; font-size:13px; line-height:1.6; text-align:center;';
+        errBox.style.cssText = 'margin:16px; padding:14px; background:var(--bg-danger); color:#C0392B; border-radius:10px; font-size:13px; line-height:1.6; text-align:center;';
         errBox.innerHTML = '⚠️ 서버 연결에 실패했어요.<br>네트워크 상태를 확인하고 새로고침해 주세요.';
         authScreen.appendChild(errBox);
       }
@@ -25114,7 +25119,7 @@ function openTossSyncModal() {
         </div>
         <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px;">처음이면 목록 버튼을 눌러 계좌를 선택하세요.</div>
       </div>
-      <button onclick="loadTossSyncPreview()" style="width:100%; padding:13px; border:none; background:#0D9488; color:white; border-radius:10px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">
+      <button onclick="loadTossSyncPreview()" style="width:100%; padding:13px; border:none; background:#3D8168; color:white; border-radius:10px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">
         토스 잔고 불러오기
       </button>
       ${syncedCount > 0 ? `
@@ -25178,9 +25183,9 @@ function renderTossSyncPreview(diff, holdingsOverview, usdKrw) {
   const fmtQty = (n) => Number(n || 0).toFixed(4).replace(/\.?0+$/, '');
   const summaryRate = tossNum(holdingsOverview?.profitLoss?.rate) * 100;
   const rowsHtml = diff.map((r, i) => {
-    const diffColor = r.qtyDiff === 0 ? 'var(--text-secondary)' : (r.qtyDiff > 0 ? '#0D9488' : '#DC2626');
+    const diffColor = r.qtyDiff === 0 ? 'var(--text-secondary)' : (r.qtyDiff > 0 ? '#3D8168' : '#DC2626');
     const diffLabel = r.qtyDiff === 0 ? '일치' : (r.qtyDiff > 0 ? `+${fmtQty(r.qtyDiff)}` : fmtQty(r.qtyDiff));
-    const badge = r.isNew ? `<span style="font-size:10px; color:#0D9488; margin-left:4px;">신규</span>` : '';
+    const badge = r.isNew ? `<span style="font-size:10px; color:#3D8168; margin-left:4px;">신규</span>` : '';
     return `
       <label style="display:flex; align-items:flex-start; gap:10px; padding:11px 8px; border-bottom:0.5px solid var(--border-tertiary); cursor:pointer;">
         <input type="checkbox" ${r._approved ? 'checked' : ''} onchange="window._tossDiff[${i}]._approved = this.checked" style="width:18px; height:18px; flex-shrink:0; margin-top:2px;" />
