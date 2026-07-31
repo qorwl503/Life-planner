@@ -15059,12 +15059,26 @@ function renderAsset() {
     { id:'market',   label:'시장·뉴스' },
     { id:'youtube',  label:'유튜브' },
   ];
-  // 블록(스티커)형 탭 — 개수가 늘어도 줄바꿈되며 잘리지 않음
+  // 인덱스 스티커형 탭 — 탭마다 고유 색을 줘서 지금 어디인지 한눈에 보이게.
+  // 위쪽 모서리만 크게 둥글려 색인 탭(인덱스지) 느낌을 낸다.
+  const TAB_COLORS = {
+    holdings: { solid: '#3B6FE0', tint: '#EAF0FD' }, // 파랑
+    plan:     { solid: '#2E9E76', tint: '#E6F5EF' }, // 초록
+    analysis: { solid: '#7A5AD9', tint: '#F0EBFC' }, // 보라
+    ipo:      { solid: '#E08A2E', tint: '#FDF1E3' }, // 주황
+    market:   { solid: '#D2506A', tint: '#FCEBEF' }, // 자주
+    youtube:  { solid: '#5B6B7C', tint: '#EDF0F3' }, // 회청
+  };
   html += `<div style="display:flex; flex-wrap:wrap; gap:5px; margin-bottom:14px;">`;
   tabs.forEach(t => {
     const active = assetTab === t.id;
-    html += `<button onclick="switchAssetTab('${t.id}')" style="flex:0 0 auto; padding:8px 14px; border:0.5px solid ${active?'transparent':'var(--border-tertiary)'}; border-radius:9px; background:${active?'var(--text-primary)':'var(--bg-secondary)'}; color:${active?'white':'var(--text-secondary)'}; font-size:12.5px; font-weight:${active?'700':'500'}; cursor:pointer; font-family:inherit; white-space:nowrap;">${t.label}</button>`;
+    const c = TAB_COLORS[t.id] || { solid: '#5B6B7C', tint: '#EDF0F3' };
+    const style = active
+      ? `background:${c.solid}; color:white; border:1px solid ${c.solid}; box-shadow:0 2px 5px ${c.solid}44; font-weight:700;`
+      : `background:${c.tint}; color:${c.solid}; border:1px solid ${c.solid}33; font-weight:600;`;
+    html += `<button onclick="switchAssetTab('${t.id}')" style="flex:0 0 auto; padding:9px 15px; border-radius:11px 11px 4px 4px; font-size:12.5px; cursor:pointer; font-family:inherit; white-space:nowrap; transition:none; ${style}">${t.label}</button>`;
   });
+  html += `<div style="width:100%; height:2px; background:${(TAB_COLORS[assetTab] || { solid: '#5B6B7C' }).solid}; border-radius:2px; margin-top:-1px; opacity:0.35;"></div>`;
   html += `</div>`;
 
   if (assetTab === 'holdings') {
@@ -19358,30 +19372,52 @@ async function fetchIpoScheduleAuto() {
 ${snippet}`;
 
   const models = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
-  const body = { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0, maxOutputTokens: 6000 } };
-  let data = null, lastErr = '';
-  for (const model of models) {
-    try {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${window.GEMINI_API_KEY}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-      });
-      if (res.status === 429 || res.status === 503 || res.status === 404) { lastErr = `HTTP ${res.status}`; continue; }
-      const d = await res.json();
-      if (!res.ok || d.error) { lastErr = d.error?.message || `HTTP ${res.status}`; continue; }
-      data = d; break;
-    } catch (e) { lastErr = e.message; }
-  }
-  if (!data) { showToast(`AI 분석 실패: ${lastErr}`); return; }
+  // 종목 15개 × 9필드면 응답이 길다 → 잘려서 JSON이 깨지지 않게 넉넉히
+  const baseCfg = { temperature: 0, maxOutputTokens: 16000 };
+  let text = '', lastErr = '';
+  // 1차: JSON 강제 모드 / 2차: 거부하는 모델 대비 일반 모드
+  outerAI:
+  for (const cfg of [{ ...baseCfg, responseMimeType: 'application/json' }, baseCfg]) {
+    for (const model of models) {
+      try {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${window.GEMINI_API_KEY}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: cfg }),
+        });
+        if (res.status === 429 || res.status === 503 || res.status === 404) { lastErr = `HTTP ${res.status}`; continue; }
+        const d = await res.json();
+        if (!res.ok || d.error) { lastErr = d.error?.message || `HTTP ${res.status}`; continue; }
 
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        // 최신 모델은 응답을 여러 조각으로 나눠 주고 첫 조각이 사고 과정일 수 있다 → 전부 합친다
+        const cand = d.candidates?.[0];
+        const parts = cand?.content?.parts || [];
+        const t = parts.filter(p => !p.thought).map(p => p.text || '').join('').trim();
+        const fin = cand?.finishReason;
+        console.log(`📋 공모주 ${model}: finishReason=${fin}, parts=${parts.length}, textLen=${t.length}`);
+
+        if (!t) {
+          lastErr = fin === 'MAX_TOKENS' ? '응답이 너무 길어 잘림'
+            : fin && fin !== 'STOP' ? `${fin}` : '빈 응답';
+          continue;
+        }
+        text = t; break outerAI;
+      } catch (e) { lastErr = e.message; }
+    }
+  }
+  if (!text) { showToast(`AI 분석 실패: ${lastErr || '원인 불명'}`); return; }
+
   let parsed;
   try {
-    const js = text.trim().replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+    const js = text.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
     parsed = JSON.parse(js);
   } catch (e) {
     const m = text.match(/\{[\s\S]*\}/);
-    if (!m) { showToast('결과를 읽지 못했어요 — 캡처로 넣어주세요'); return; }
-    try { parsed = JSON.parse(m[0]); } catch (e2) { showToast('결과를 읽지 못했어요'); return; }
+    if (m) { try { parsed = JSON.parse(m[0]); } catch (e2) { /* 아래에서 처리 */ } }
+  }
+  if (!parsed) {
+    console.log('📋 공모주 파싱 실패 — 원문 앞부분:', text.slice(0, 400));
+    showToast(`결과를 읽지 못했어요 (응답 ${text.length}자) — 캡처로 넣어주세요`);
+    return;
   }
 
   const items = (parsed.items || []).filter(it => it && it.name);
