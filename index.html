@@ -19329,7 +19329,7 @@ async function fetchIpoScheduleAuto() {
   let snippet = pageText;
   const anchor = snippet.search(/공모주|청약일정|수요예측|공모가/);
   if (anchor > 2000) snippet = snippet.slice(anchor - 500);
-  snippet = snippet.slice(0, 24000);
+  snippet = snippet.slice(0, 32000); // 네이버 공모청약 전체가 약 24,500자 — 끝 종목이 잘리지 않게 여유
 
   const thisYear = new Date().getFullYear();
   const prompt = `아래는 공모주(IPO) 청약일정 웹페이지에서 추출한 텍스트야. 여기서 청약 예정/진행 종목을 뽑아 JSON으로 반환해.
