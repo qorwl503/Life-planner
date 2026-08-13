@@ -66,15 +66,16 @@ const firebaseConfig = {
   :root {
     /* 잉크 & 린넨 — 종이질감 배경 + 먹빛 글자.
        카드를 순백 대신 살짝 따뜻한 흰색으로 두고 그림자로 띄워 평면감을 없앤다. */
-    /* 페이지를 한 단계 더 눕히고 카드를 밝게 — 둘 대비가 1.11 뿐이라 화면이 허옇게 보였다 */
-    --bg-page: #E9E5DB;
-    --bg-primary: #FDFCFA;
-    --bg-secondary: #DFDACE;
-    --bg-tertiary: #D0CABB;
-    --bg-info: #E4EDF2;
-    --bg-success: #E5EEDF;
-    --bg-warning: #F5EBDB;
-    --bg-danger: #F6E7E4;
+    /* 바탕은 확실히 눕히고 카드도 순백이 아닌 미색으로 — 흰 화면의 눈부심을 줄인다.
+       카드 밝기 97% → 89%. 페이지와의 대비는 1.11 → 1.35 로 올려 카드가 또렷하게 뜬다. */
+    --bg-page: #E0D9C8;
+    --bg-primary: #F6F2E9;
+    --bg-secondary: #E4DDCA;
+    --bg-tertiary: #CFC6AF;
+    --bg-info: #DDE8EE;
+    --bg-success: #DFE9D7;
+    --bg-warning: #EFE2CB;
+    --bg-danger: #F0DED8;
 
     --text-primary: #1F2224;
     --text-secondary: #565A5E;
@@ -103,11 +104,11 @@ const firebaseConfig = {
 
   /* 탭마다 바탕에 아주 옅은 색조를 얹어 화면이 서로 구분되게 한다.
      카드는 그대로 밝게 두고 '바닥'만 물들이므로 글자 대비는 영향받지 않는다. */
-  body[data-tab="calendar"] { --bg-page: #E6E6DF; --accent-tab: #456E9E; }
-  body[data-tab="todo"]     { --bg-page: #E8E4DE; --accent-tab: #6B5B96; }
-  body[data-tab="workout"]  { --bg-page: #E4E8DF; --accent-tab: #3D8168; }
-  body[data-tab="money"]    { --bg-page: #EBE6D9; --accent-tab: #B87D3C; }
-  body[data-tab="asset"]    { --bg-page: #E6E8E4; --accent-tab: #456E9E; }
+  body[data-tab="calendar"] { --bg-page: #CFD4CE; --accent-tab: #456E9E; }
+  body[data-tab="todo"]     { --bg-page: #D6D0C6; --accent-tab: #6B5B96; }
+  body[data-tab="workout"]  { --bg-page: #CDD6C6; --accent-tab: #3D8168; }
+  body[data-tab="money"]    { --bg-page: #DCD2BB; --accent-tab: #B87D3C; }
+  body[data-tab="asset"]    { --bg-page: #CFD6D2; --accent-tab: #456E9E; }
 
   /* 섹션 제목 왼쪽에 탭 색 막대 — 목록이 밋밋하게 이어지지 않게 */
   .sec-title {
@@ -158,7 +159,8 @@ const firebaseConfig = {
     flex-direction: column;
     max-width: 480px;
     margin: 0 auto;
-    background: var(--bg-primary);
+    /* 여기가 카드색이면 앱 전체가 흰 판이 된다 — 바탕은 페이지색이어야 카드가 떠 보인다 */
+    background: var(--bg-page);
     position: relative;
   }
 
