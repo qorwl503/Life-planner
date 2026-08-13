@@ -66,10 +66,11 @@ const firebaseConfig = {
   :root {
     /* 잉크 & 린넨 — 종이질감 배경 + 먹빛 글자.
        카드를 순백 대신 살짝 따뜻한 흰색으로 두고 그림자로 띄워 평면감을 없앤다. */
-    --bg-page: #EFEEE9;
-    --bg-primary: #FBFAF7;
-    --bg-secondary: #E7E5DE;
-    --bg-tertiary: #DBD8CF;
+    /* 페이지를 한 단계 더 눕히고 카드를 밝게 — 둘 대비가 1.11 뿐이라 화면이 허옇게 보였다 */
+    --bg-page: #E9E5DB;
+    --bg-primary: #FDFCFA;
+    --bg-secondary: #DFDACE;
+    --bg-tertiary: #D0CABB;
     --bg-info: #E4EDF2;
     --bg-success: #E5EEDF;
     --bg-warning: #F5EBDB;
@@ -77,7 +78,7 @@ const firebaseConfig = {
 
     --text-primary: #1F2224;
     --text-secondary: #565A5E;
-    --text-tertiary: #656768;  /* 2.65:1 → 4.51:1. 작은 글씨가 뿌옇게 보이던 원인 */
+    --text-tertiary: #5E6061;  /* 배경을 눕힌 만큼 다시 맞춤 — 가장 밝은 박스 위에서도 4.53:1 */
     --text-info: #2E5F73;
     --text-success: #40693A;
     --text-warning: #7C5418;
@@ -98,6 +99,24 @@ const firebaseConfig = {
     --radius-md: 8px;
     --radius-lg: 12px;
     --font: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', sans-serif;
+  }
+
+  /* 탭마다 바탕에 아주 옅은 색조를 얹어 화면이 서로 구분되게 한다.
+     카드는 그대로 밝게 두고 '바닥'만 물들이므로 글자 대비는 영향받지 않는다. */
+  body[data-tab="calendar"] { --bg-page: #E6E6DF; --accent-tab: #456E9E; }
+  body[data-tab="todo"]     { --bg-page: #E8E4DE; --accent-tab: #6B5B96; }
+  body[data-tab="workout"]  { --bg-page: #E4E8DF; --accent-tab: #3D8168; }
+  body[data-tab="money"]    { --bg-page: #EBE6D9; --accent-tab: #B87D3C; }
+  body[data-tab="asset"]    { --bg-page: #E6E8E4; --accent-tab: #456E9E; }
+
+  /* 섹션 제목 왼쪽에 탭 색 막대 — 목록이 밋밋하게 이어지지 않게 */
+  .sec-title {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 14px; font-weight: 700; margin: 18px 0 8px;
+  }
+  .sec-title::before {
+    content: ''; width: 3px; height: 14px; border-radius: 2px;
+    background: var(--accent-tab, var(--text-secondary));
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -1680,6 +1699,37 @@ function todoDoneOn(t, dayK) {
   return !!t.done;
 }
 
+// 🚫 '안 함' 처리 — 사정이 있어 못 한 일. 완료는 아니지만 밀린 일로도 계속 뜨지 않는다.
+//    반복 할일은 그 날짜만 넘기고, 단발 할일은 항목 전체를 넘긴다.
+function todoSkippedOn(t, dayK) {
+  if (!t) return false;
+  if (t.repeat) return !!(t.skipDates && t.skipDates[dayK]);
+  return !!t.skipped;
+}
+
+// 완료도 아니고 넘긴 것도 아닌 = 아직 남아있는 일
+function todoOpenOn(t, dayK) {
+  return !todoDoneOn(t, dayK) && !todoSkippedOn(t, dayK);
+}
+
+function skipTodo(id, e, dayK) {
+  if (e) e.stopPropagation();
+  const t = todos.find(x => x.id === id);
+  if (!t) return;
+  const dk = dayK || t.dateKey || todayKey();
+
+  if (t.repeat && t.repeat.type) {
+    if (!t.skipDates) t.skipDates = {};
+    if (t.skipDates[dk]) { delete t.skipDates[dk]; showToast('다시 할 일로 되돌렸어요'); }
+    else { t.skipDates[dk] = Date.now(); showToast(`"${t.title}" 이 날은 넘김`); }
+  } else {
+    if (t.skipped) { delete t.skipped; delete t.skippedAt; showToast('다시 할 일로 되돌렸어요'); }
+    else { t.skipped = true; t.skippedAt = todayKey(); showToast(`"${t.title}" 안 함으로 정리했어요`); }
+  }
+  saveData();
+  render();
+}
+
 // 🔧 기간 일정 지원 — 할일이 특정 날짜에 '걸쳐 있는지' (여행 등 시작~종료 기간)
 //    + 반복 할일(루틴)도 함께 판정
 function todoOnDay(t, dayK) {
@@ -1919,6 +1969,10 @@ document.querySelectorAll('.tab-btn').forEach(b => {
 });
 
 function render() {
+  // 탭별 바탕색 전환 (CSS의 body[data-tab=...] 규칙이 받아간다)
+  try { document.body.dataset.tab = currentTab; } catch (e) {}
+  // 🔔 오늘 일정 알림 — 하루 한 번만 뜨도록 안에서 막고 있어 매번 불러도 안전
+  try { checkTodayScheduleAlert(); } catch (e) { console.warn('오늘 일정 알림 실패:', e); }
   if (currentTab === 'calendar') renderCalendar();
   if (currentTab === 'todo') renderTodo();
   if (currentTab === 'workout') renderWorkout();
@@ -2532,11 +2586,20 @@ function renderCalendar() {
     } else {
       const renderEvt = (e) => {
         const clickHandler = e.todoId !== undefined ? `onclick="toggleTodoFromCal(${e.todoId})"`
+          : e.challengeId !== undefined ? `onclick="toggleChallengeDate(${e.challengeId}, '${e.challengeDateKey}')" style="cursor:pointer;"`
           : e.expenseId !== undefined ? `onclick="editExpense(${e.expenseId})" style="cursor:pointer;"`
           : '';
+        // 챌린지는 성공/실패/미체크 3상태 — 체크박스 모양으로 바로 보이게
+        const chBox = e.challengeId === undefined ? '' :
+          e.challengeState === 'ok'
+            ? `<div class="evt-check done"><i class="ti ti-check"></i></div>`
+            : e.challengeState === 'fail'
+            ? `<div class="evt-check" style="border-color:var(--text-danger); color:var(--text-danger); display:flex; align-items:center; justify-content:center;"><i class="ti ti-x"></i></div>`
+            : `<div class="evt-check"></div>`;
         return `<div class="evt evt-${e.type}" ${clickHandler}>
           ${e.todoId !== undefined
             ? `<div class="evt-check ${e.done?'done':''}">${e.done?'<i class="ti ti-check"></i>':''}</div>`
+            : e.challengeId !== undefined ? chBox
             : `<i class="evt-icon ti ${e.icon}"></i>`}
           <div class="evt-body">
             <div class="title ${e.done ? 'checked' : ''}">${escapeHTML(e.title)}</div>
@@ -2689,6 +2752,11 @@ function getEventsForDay(d) {
       icon: c.type === 'forbidden' ? 'ti-ban' : 'ti-flag',
       title: c.title,
       sub: `${dayDiff}일차 / ${c.totalDays}일 · ${statusText}`,
+      // 캘린더에서 바로 체크할 수 있도록 식별자와 상태를 함께 넘긴다
+      challengeId: c.id,
+      challengeDateKey: k,
+      challengeState: check === true ? 'ok' : check === 'fail' ? 'fail' : 'none',
+      challengeForbidden: c.type === 'forbidden',
     });
   });
 
@@ -2958,7 +3026,7 @@ function renderTodo() {
   const todayTodos = todos.filter(t => todoOnDay(t, todayK)); // 🔧 기간 일정·반복 할일 포함
   const todayDone = todayTodos.filter(t => todoDoneOn(t, todayK)).length;
 
-  const pastTodos = todos.filter(t => todoGroupOf(t) === 'past' && !t.done); // 🔧 기간 진행 중이면 밀린 일정 아님
+  const pastTodos = todos.filter(t => todoGroupOf(t) === 'past' && !t.done && !todoSkippedOn(t, t.dateKey || todayKey())); // 🔧 기간 진행 중이면 밀린 일정 아님
   const pastDoneAll = todos.filter(t => t.dateKey && t.dateKey < todayK && t.done);
 
   // 본인이 선택한 주 (todoWeekOffset 기준)
@@ -2995,7 +3063,7 @@ function renderTodo() {
 
   html += `
     <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin: 18px 0 8px;">
-      <span style="font-size:14px; font-weight:600;">📋 할일</span>
+      <span class="sec-title" style="margin:0;">📋 할일</span>
       <button onclick="openTodoModal('${todayK}')" style="display:flex; align-items:center; gap:4px; border:none; background:var(--bg-info); color:var(--text-info); padding:5px 12px; border-radius:999px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">
         <i class="ti ti-plus" style="font-size:13px;"></i> 추가
       </button>
@@ -3004,7 +3072,7 @@ function renderTodo() {
     <!-- 4가지 카드 통계 -->
     <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap:8px; margin-bottom:14px;">
       <!-- 오늘 -->
-      <div style="padding:12px; border-radius:12px; background:var(--bg-info); border:0.5px solid rgba(0,122,255,0.2);">
+      <div onclick="openTodoGroup('today')" style="cursor:pointer; padding:12px; border-radius:12px; background:var(--bg-info); border:0.5px solid rgba(0,122,255,0.2);">
         <div style="display:flex; align-items:center; justify-content:space-between;">
           <span style="font-size:11px; color:var(--text-info); font-weight:600;">📅 오늘</span>
           ${todayTodos.length > 0 && todayDone === todayTodos.length ? '<span style="font-size:14px;">✨</span>' : ''}
@@ -3018,7 +3086,7 @@ function renderTodo() {
       </div>
 
       <!-- 주간 통계 -->
-      <div style="padding:12px; border-radius:12px; background:var(--bg-secondary); border:0.5px solid var(--border-tertiary);">
+      <div onclick="openTodoGroup('week')" style="cursor:pointer; padding:12px; border-radius:12px; background:var(--bg-secondary); border:0.5px solid var(--border-tertiary);">
         <div style="display:flex; align-items:center; justify-content:space-between;">
           <span style="font-size:11px; color:var(--text-secondary); font-weight:600;">📊 ${weekLabel}</span>
           <span style="font-size:10px; color:var(--text-tertiary);">${weekPct}%</span>
@@ -3032,7 +3100,7 @@ function renderTodo() {
       </div>
 
       <!-- 곧 마감 (3일 이내) -->
-      <div style="padding:12px; border-radius:12px; background:${soonDueTodos.length > 0 ? 'rgba(245,168,82,0.12)' : 'var(--bg-secondary)'}; border:0.5px solid ${soonDueTodos.length > 0 ? 'rgba(245,168,82,0.3)' : 'var(--border-tertiary)'};">
+      <div onclick="openTodoGroup('soon')" style="cursor:pointer; padding:12px; border-radius:12px; background:${soonDueTodos.length > 0 ? 'rgba(245,168,82,0.12)' : 'var(--bg-secondary)'}; border:0.5px solid ${soonDueTodos.length > 0 ? 'rgba(245,168,82,0.3)' : 'var(--border-tertiary)'};">
         <div style="display:flex; align-items:center; justify-content:space-between;">
           <span style="font-size:11px; color:${soonDueTodos.length > 0 ? '#C9863A' : 'var(--text-secondary)'}; font-weight:600;">⏱️ 곧 마감</span>
         </div>
@@ -3045,7 +3113,7 @@ function renderTodo() {
       </div>
 
       <!-- 지난 미완료 -->
-      <div style="padding:12px; border-radius:12px; background:${pastTodos.length > 0 ? 'var(--bg-danger)' : 'var(--bg-secondary)'}; border:0.5px solid ${pastTodos.length > 0 ? 'rgba(255,59,48,0.2)' : 'var(--border-tertiary)'};">
+      <div onclick="openTodoGroup('past')" style="cursor:pointer; padding:12px; border-radius:12px; background:${pastTodos.length > 0 ? 'var(--bg-danger)' : 'var(--bg-secondary)'}; border:0.5px solid ${pastTodos.length > 0 ? 'rgba(255,59,48,0.2)' : 'var(--border-tertiary)'};">
         <div style="display:flex; align-items:center; justify-content:space-between;">
           <span style="font-size:11px; color:${pastTodos.length > 0 ? 'var(--text-danger)' : 'var(--text-secondary)'}; font-weight:600;">⏰ 밀린</span>
         </div>
@@ -3071,6 +3139,17 @@ function renderTodo() {
       const el = document.getElementById('todo-search-input');
       if (el && window._todoSearchFocus) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
     }, 20);
+    return;
+  }
+
+  // 🗓️ 월간 뷰를 고른 경우 — 달력으로 밀도를 보고 날짜를 눌러 상세를 본다
+  if ((window._todoView || 'week') === 'month') {
+    html += renderTodoMonth();
+    // 밀린 일은 달력에 붉게 표시되고 상단 '밀린' 카드를 눌러 한 번에 처리할 수 있다
+    if (pastTodos.length > 0) {
+      html += `<button onclick="openTodoGroup('past')" style="width:100%; margin-top:12px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-danger); color:var(--text-danger); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">⏰ 밀린 일 ${pastTodos.length}개 보기</button>`;
+    }
+    screen.innerHTML = html;
     return;
   }
 
@@ -3234,7 +3313,7 @@ function renderTodo() {
 // 🔧 밀린 할일 일괄 처리
 function bulkMovePastTodos() {
   const today = todayKey();
-  const past = todos.filter(t => todoGroupOf(t) === 'past' && !t.done);
+  const past = todos.filter(t => todoGroupOf(t) === 'past' && !t.done && !todoSkippedOn(t, t.dateKey || todayKey()));
   if (past.length === 0) return;
   if (!confirm(`밀린 일 ${past.length}개를 모두 오늘 날짜로 옮길까요?`)) return;
   past.forEach(t => { t.dateKey = today; });
@@ -3243,7 +3322,7 @@ function bulkMovePastTodos() {
   renderTodo();
 }
 function bulkDonePastTodos() {
-  const past = todos.filter(t => todoGroupOf(t) === 'past' && !t.done);
+  const past = todos.filter(t => todoGroupOf(t) === 'past' && !t.done && !todoSkippedOn(t, t.dateKey || todayKey()));
   if (past.length === 0) return;
   if (!confirm(`밀린 일 ${past.length}개를 모두 완료 처리할까요?`)) return;
   past.forEach(t => { t.done = true; t.completedAt = Date.now(); });
@@ -3252,7 +3331,7 @@ function bulkDonePastTodos() {
   renderTodo();
 }
 function bulkDeletePastTodos() {
-  const past = todos.filter(t => todoGroupOf(t) === 'past' && !t.done);
+  const past = todos.filter(t => todoGroupOf(t) === 'past' && !t.done && !todoSkippedOn(t, t.dateKey || todayKey()));
   if (past.length === 0) return;
   if (!confirm(`밀린 일 ${past.length}개를 모두 삭제할까요? 되돌릴 수 없어요.`)) return;
   const ids = new Set(past.map(t => t.id));
@@ -3326,8 +3405,269 @@ function renderTodoToolbar() {
         ${chip(sort === 'priority', '🚩 우선순위', `setTodoSort('priority')`)}
         ${chip(sort === 'recent', '🆕 최근', `setTodoSort('recent')`)}
         ${chip(filter === 'important', '🔴 중요만', `setTodoFilter('${filter === 'important' ? 'all' : 'important'}')`)}
+        <button onclick="openTodoReview()" class="chip" style="font-size:11px; padding:6px 11px; margin-left:auto;">📖 돌아보기</button>
+      </div>
+      <div style="display:flex; gap:4px; margin-top:8px;">
+        ${[['week','주간'],['month','월간']].map(([v,label]) => {
+          const on = (window._todoView || 'week') === v;
+          return `<button onclick="setTodoView('${v}')" style="flex:1; padding:8px; border:0.5px solid ${on?'transparent':'var(--border-tertiary)'}; border-radius:9px; background:${on?'var(--text-primary)':'var(--bg-secondary)'}; color:${on?'white':'var(--text-secondary)'}; font-size:12px; font-weight:${on?'700':'500'}; cursor:pointer; font-family:inherit;">${label}</button>`;
+        }).join('')}
       </div>
     </div>`;
+}
+
+// ===== 🗓️ 할일 월간 뷰 — 어느 날에 뭐가 몰려 있는지 한눈에 =====
+//   주간 뷰와 같은 데이터를 쓰되, 한 달을 펼쳐 밀도를 보여준다.
+function setTodoView(v) { window._todoView = v; renderTodo(); }
+function todoMonthShift(delta) {
+  if (window._todoMonthY == null) { const d = new Date(); window._todoMonthY = d.getFullYear(); window._todoMonthM = d.getMonth(); }
+  let m = window._todoMonthM + delta, y = window._todoMonthY;
+  if (m < 0) { m = 11; y--; } else if (m > 11) { m = 0; y++; }
+  window._todoMonthM = m; window._todoMonthY = y;
+  renderTodo();
+}
+
+function renderTodoMonth() {
+  if (window._todoMonthY == null) { const d = new Date(); window._todoMonthY = d.getFullYear(); window._todoMonthM = d.getMonth(); }
+  const y = window._todoMonthY, m = window._todoMonthM;
+  const tk = todayKey();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const startOffset = new Date(y, m, 1).getDay();
+  const sel = window._todoMonthSel || tk;
+
+  let h = `
+    <div style="background:var(--bg-primary); border:0.5px solid var(--border-tertiary); border-radius:14px; padding:12px; margin-bottom:12px; box-shadow:var(--shadow-card);">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <button onclick="todoMonthShift(-1)" style="border:none; background:transparent; padding:4px 10px; cursor:pointer; color:var(--text-secondary); font-family:inherit;">◀</button>
+        <span style="font-size:13px; font-weight:700;">${y}년 ${m + 1}월</span>
+        <button onclick="todoMonthShift(1)" style="border:none; background:transparent; padding:4px 10px; cursor:pointer; color:var(--text-secondary); font-family:inherit;">▶</button>
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(7,1fr); gap:2px; text-align:center; font-size:10px; color:var(--text-tertiary); margin-bottom:4px;">
+        ${['일','월','화','수','목','금','토'].map(d => `<div>${d}</div>`).join('')}
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(7,1fr); gap:3px;">
+        ${Array(startOffset).fill('<div></div>').join('')}`;
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const k = dateKey(y, m, d);
+    const items = todos.filter(t => todoOnDay(t, k));
+    const open = items.filter(t => todoOpenOn(t, k)).length;
+    const done = items.filter(t => todoDoneOn(t, k)).length;
+    const isToday = k === tk;
+    const isSel = k === sel;
+    const overdue = open > 0 && k < tk;
+
+    // 남은 일이 많을수록 진하게 — 어느 날이 빡센지 색으로 보이게
+    const heat = open === 0 ? 'transparent'
+      : open === 1 ? 'rgba(69,110,158,0.13)'
+      : open === 2 ? 'rgba(69,110,158,0.24)'
+      : 'rgba(69,110,158,0.36)';
+    const bg = overdue ? 'rgba(155,58,51,0.14)' : heat;
+
+    h += `<div onclick="window._todoMonthSel='${k}'; renderTodo();" style="aspect-ratio:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; border-radius:8px; cursor:pointer; background:${bg};
+      ${isSel ? 'box-shadow:inset 0 0 0 2px var(--text-primary);' : isToday ? 'box-shadow:inset 0 0 0 1.5px var(--text-info);' : ''}">
+      <span style="font-size:11px; font-weight:${isToday ? '700' : '500'}; color:${items.length ? 'var(--text-primary)' : 'var(--text-tertiary)'};">${d}</span>
+      ${items.length ? `<span style="font-size:10px; font-weight:700; color:${overdue ? 'var(--text-danger)' : open ? 'var(--text-info)' : 'var(--text-success)'};">${open ? open : '✓'}</span>` : '<span style="height:12px;"></span>'}
+    </div>`;
+  }
+
+  h += `</div>
+      <div style="display:flex; gap:9px; justify-content:center; margin-top:9px; font-size:10px; color:var(--text-tertiary);">
+        <span>숫자 = 남은 일</span><span>✓ = 다 함</span><span style="color:var(--text-danger);">■ 밀린 날</span>
+      </div>
+    </div>`;
+
+  // 선택한 날 상세
+  const dayItems = todos.filter(t => todoOnDay(t, sel));
+  h += `<div style="font-size:12px; font-weight:700; margin:0 0 8px;">${dateLabel(sel)} <span style="color:var(--text-tertiary); font-weight:500;">${dayItems.length}건</span></div>`;
+  if (dayItems.length === 0) {
+    h += `<div style="padding:20px 14px; text-align:center; font-size:12px; color:var(--text-tertiary); background:var(--bg-secondary); border-radius:12px;">
+      이 날은 할일이 없어요
+      <div style="margin-top:10px;"><button onclick="openTodoModal('${sel}')" style="padding:8px 16px; border:none; border-radius:8px; background:var(--bg-info); color:var(--text-info); font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">+ 이 날에 추가</button></div>
+    </div>`;
+  } else {
+    h += sortTodosByTime(dayItems).map(t => renderTodoRow(t, sel)).join('');
+  }
+  return h;
+}
+
+// ===== 요약 카드(오늘·주간·곧 마감·밀린)를 눌러 내용 확인 =====
+//   renderTodo 안의 계산과 같은 기준을 쓰도록 한 곳에 모아둔다 (기준이 갈라지면 숫자와 목록이 어긋남)
+function todoGroupItems(kind) {
+  const tk = todayKey();
+  if (kind === 'today') return todos.filter(t => todoOnDay(t, tk));
+  if (kind === 'past')  return todos.filter(t => todoGroupOf(t) === 'past' && !t.done && !todoSkippedOn(t, t.dateKey || tk));
+  if (kind === 'soon') {
+    const d = new Date(); const d3 = new Date(); d3.setDate(d.getDate() + 3);
+    const a = dateKey(d.getFullYear(), d.getMonth(), d.getDate());
+    const b = dateKey(d3.getFullYear(), d3.getMonth(), d3.getDate());
+    return todos.filter(t => !t.done && t.dateKey && t.dateKey >= a && t.dateKey <= b);
+  }
+  if (kind === 'week') {
+    const base = new Date();
+    base.setDate(base.getDate() + (window.todoWeekOffset || 0) * 7);
+    const ws = new Date(base); ws.setDate(base.getDate() - base.getDay());
+    const we = new Date(ws);   we.setDate(ws.getDate() + 6);
+    const a = dateKey(ws.getFullYear(), ws.getMonth(), ws.getDate());
+    const b = dateKey(we.getFullYear(), we.getMonth(), we.getDate());
+    return todos.filter(t => t.dateKey && t.dateKey >= a && t.dateKey <= b);
+  }
+  return [];
+}
+
+const TODO_GROUP_META = {
+  today: { title: '📅 오늘 할일',   color: 'var(--text-info)',    empty: '오늘은 등록된 할일이 없어요' },
+  week:  { title: '📊 이번 주 할일', color: 'var(--text-primary)', empty: '이번 주엔 등록된 할일이 없어요' },
+  soon:  { title: '⏱️ 곧 마감',      color: 'var(--text-warning)', empty: '3일 이내 마감인 일이 없어요' },
+  past:  { title: '⏰ 밀린 일정',    color: 'var(--text-danger)',  empty: '밀린 일이 없어요 ✨' },
+};
+
+function openTodoGroup(kind) {
+  const meta = TODO_GROUP_META[kind]; if (!meta) return;
+  const list = todoGroupItems(kind);
+  const tk = todayKey();
+  const sorted = list.slice().sort((a, b) => (a.dateKey || '').localeCompare(b.dateKey || '') || (a.time || '').localeCompare(b.time || ''));
+
+  const rows = sorted.map(t => {
+    const dk = (kind === 'today') ? tk : (t.dateKey || tk);
+    const done = todoDoneOn(t, dk);
+    const pm = priorityMeta(todoPriority(t));
+    return `
+      <div style="display:flex; align-items:center; gap:9px; padding:10px 11px; background:var(--bg-primary); border:0.5px solid var(--border-tertiary); border-left:3px solid ${done ? 'var(--border-secondary)' : pm.color}; border-radius:10px; margin-bottom:5px; box-shadow:var(--shadow-card); ${done ? 'opacity:0.62;' : ''}">
+        <div onclick="toggleTodo(${t.id}, event, '${dk}'); openTodoGroup('${kind}');"
+             style="width:22px; height:22px; flex-shrink:0; border-radius:7px; border:1.5px solid ${done ? 'var(--text-success)' : 'var(--border-secondary)'}; background:${done ? 'var(--text-success)' : 'transparent'}; color:white; font-size:12px; display:flex; align-items:center; justify-content:center; cursor:pointer;">${done ? '✓' : ''}</div>
+        <div onclick="closeModal(); editTodo(${t.id});" style="flex:1; min-width:0; cursor:pointer;">
+          <div style="font-size:12.5px; font-weight:600; ${done ? 'text-decoration:line-through; color:var(--text-tertiary);' : ''}">${t.time ? `<span style="color:var(--text-info); font-weight:700; margin-right:5px;">${escapeHTML(t.time)}</span>` : ''}${escapeHTML(t.title)}</div>
+          <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">${t.dateKey ? dateLabel(t.dateKey) : '날짜 없음'}${t.tag ? ' · ' + escapeHTML(t.tag) : ''}</div>
+        </div>
+        ${done ? '' : `<button onclick="skipTodo(${t.id}, event, '${dk}'); openTodoGroup('${kind}');" style="flex:0 0 auto; padding:4px 9px; border:0.5px solid var(--border-tertiary); background:var(--bg-secondary); color:var(--text-tertiary); border-radius:7px; font-size:11px; cursor:pointer; font-family:inherit;">안 함</button>`}
+      </div>`;
+  }).join('');
+
+  const doneN = sorted.filter(t => todoDoneOn(t, (kind === 'today') ? tk : (t.dateKey || tk))).length;
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+        <h2 style="font-size:15px;">${meta.title}</h2>
+        <span style="width:44px;"></span>
+      </div>
+      ${sorted.length === 0
+        ? `<div style="padding:26px 14px; text-align:center; font-size:12px; color:var(--text-tertiary); background:var(--bg-secondary); border-radius:12px;">${meta.empty}</div>`
+        : `<div style="font-size:11px; color:var(--text-tertiary); margin-bottom:9px;">${sorted.length}개 · 완료 ${doneN}개</div>${rows}
+           ${kind === 'past' ? `<button onclick="closeModal(); bulkMovePastTodos();" style="width:100%; margin-top:10px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-secondary); color:var(--text-secondary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">밀린 일 전부 오늘로 옮기기</button>` : ''}`}
+    </div>`;
+  modal.classList.add('show');
+}
+
+// ===== 📖 돌아보기 — 완료한 일 · 안 한 일 · 밀린 일을 한 화면에서 =====
+//   반복 할일은 날짜별로 한 건씩 펼쳐서 "언제 했고 언제 넘겼는지"가 남게 한다.
+const REVIEW_PERIODS = [
+  { key: 'week',  label: '이번 주',  days: 7 },
+  { key: 'month', label: '이번 달',  days: 30 },
+  { key: 'all',   label: '전체',     days: 3650 },
+];
+
+function reviewCutoff(periodKey) {
+  const p = REVIEW_PERIODS.find(x => x.key === periodKey) || REVIEW_PERIODS[0];
+  const d = new Date();
+  d.setDate(d.getDate() - p.days);
+  return dateKey(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function collectTodoReview(periodKey) {
+  const from = reviewCutoff(periodKey);
+  const tk = todayKey();
+  const done = [], skipped = [], overdue = [];
+  const stamp = ms => { const d = new Date(Number(ms) || 0); return dateKey(d.getFullYear(), d.getMonth(), d.getDate()); };
+
+  todos.forEach(t => {
+    if (t.repeat && t.repeat.type) {
+      // 반복 — 날짜별 기록을 각각 한 건으로
+      Object.entries(t.doneDates || {}).forEach(([dk]) => { if (dk >= from) done.push({ t, date: dk, repeat: true }); });
+      Object.entries(t.skipDates || {}).forEach(([dk]) => { if (dk >= from) skipped.push({ t, date: dk, repeat: true }); });
+      return;
+    }
+    const base = t.dateKey || '';
+    if (t.done) {
+      const dk = t.completedAt ? stamp(t.completedAt) : base;
+      if (dk >= from) done.push({ t, date: dk });
+    } else if (t.skipped) {
+      const dk = t.skippedAt || base;
+      if (dk >= from) skipped.push({ t, date: dk });
+    } else if (base && base < tk) {
+      overdue.push({ t, date: base });   // 밀린 일은 기간과 무관하게 전부 보여준다
+    }
+  });
+
+  const byDateDesc = (a, b) => (b.date || '').localeCompare(a.date || '');
+  return { done: done.sort(byDateDesc), skipped: skipped.sort(byDateDesc), overdue: overdue.sort(byDateDesc) };
+}
+
+function setTodoReviewPeriod(k) { window._todoReviewPeriod = k; openTodoReview(); }
+
+function openTodoReview() {
+  const period = window._todoReviewPeriod || 'week';
+  const { done, skipped, overdue } = collectTodoReview(period);
+  const total = done.length + skipped.length;
+  const rate = total > 0 ? Math.round(done.length / total * 100) : 0;
+
+  const chip = (on, label, act) =>
+    `<button onclick="${act}" style="padding:6px 12px; border:0.5px solid ${on ? 'transparent' : 'var(--border-tertiary)'}; border-radius:8px; background:${on ? 'var(--text-primary)' : 'var(--bg-secondary)'}; color:${on ? 'white' : 'var(--text-secondary)'}; font-size:11px; font-weight:${on ? '700' : '500'}; cursor:pointer; font-family:inherit;">${label}</button>`;
+
+  const section = (title, rows, color, empty, showUndo) => {
+    if (rows.length === 0) return `
+      <div style="font-size:12px; font-weight:700; margin:16px 0 7px; color:${color};">${title} <span style="color:var(--text-tertiary); font-weight:500;">0</span></div>
+      <div style="padding:14px; text-align:center; font-size:11px; color:var(--text-tertiary); background:var(--bg-secondary); border-radius:10px;">${empty}</div>`;
+    return `
+      <div style="font-size:12px; font-weight:700; margin:16px 0 7px; color:${color};">${title} <span style="color:var(--text-tertiary); font-weight:500;">${rows.length}</span></div>
+      ${rows.map(r => `
+        <div style="display:flex; align-items:center; gap:9px; padding:9px 11px; background:var(--bg-primary); border:0.5px solid var(--border-tertiary); border-left:3px solid ${color}; border-radius:10px; margin-bottom:5px; box-shadow:var(--shadow-card);">
+          <div style="flex:1; min-width:0;">
+            <div style="font-size:12.5px; font-weight:600;">${escapeHTML(r.t.title)}${r.repeat ? ' <span style="font-size:10px; color:var(--text-tertiary); font-weight:500;">🔁</span>' : ''}</div>
+            <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">${r.date || '날짜 없음'}${r.t.tag ? ' · ' + escapeHTML(r.t.tag) : ''}</div>
+          </div>
+          ${showUndo ? `<button onclick="skipTodo(${r.t.id}, event, '${r.date}'); closeModal();" style="flex:0 0 auto; padding:4px 9px; border:0.5px solid var(--border-tertiary); background:var(--bg-secondary); color:var(--text-secondary); border-radius:7px; font-size:11px; cursor:pointer; font-family:inherit;">되돌리기</button>` : ''}
+        </div>`).join('')}`;
+  };
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+        <h2>📖 돌아보기</h2>
+        <span style="width:44px;"></span>
+      </div>
+
+      <div style="display:flex; gap:5px; margin-bottom:12px;">
+        ${REVIEW_PERIODS.map(p => chip(period === p.key, p.label, `setTodoReviewPeriod('${p.key}')`)).join('')}
+      </div>
+
+      <div style="display:flex; gap:6px; margin-bottom:4px;">
+        <div style="flex:1; background:var(--bg-secondary); border-radius:10px; padding:11px 12px;">
+          <div style="font-size:10px; color:var(--text-tertiary);">해낸 비율</div>
+          <div style="font-size:22px; font-weight:700; color:var(--text-success);">${rate}%</div>
+          <div style="font-size:10px; color:var(--text-tertiary);">완료 ${done.length} · 안 함 ${skipped.length}</div>
+        </div>
+        <div style="flex:1; background:var(--bg-secondary); border-radius:10px; padding:11px 12px;">
+          <div style="font-size:10px; color:var(--text-tertiary);">아직 남은 일</div>
+          <div style="font-size:22px; font-weight:700; color:${overdue.length ? 'var(--text-warning)' : 'var(--text-secondary)'};">${overdue.length}</div>
+          <div style="font-size:10px; color:var(--text-tertiary);">지난 날짜 기준</div>
+        </div>
+      </div>
+
+      ${section('✅ 해낸 일', done, 'var(--text-success)', '아직 없어요')}
+      ${section('🚫 안 하기로 한 일', skipped, 'var(--text-tertiary)', '넘긴 일이 없어요', true)}
+      ${section('⏳ 아직 남은 일', overdue, 'var(--text-warning)', '밀린 일이 없어요 👏')}
+
+      <div style="margin-top:14px; padding:10px 12px; background:var(--bg-info); border-radius:10px; font-size:11px; color:var(--text-info); line-height:1.6;">
+        못 한 일을 <b>안 함</b>으로 정리하면 밀린 목록에서 빠지고 여기에 기록으로 남아요. 되돌리기를 누르면 다시 할 일로 돌아와요.
+      </div>
+    </div>`;
+  modal.classList.add('show');
 }
 
 // 🔍 검색 결과 (주간 뷰 대신 표시)
@@ -3408,6 +3748,7 @@ function renderTodoRow(t, dayK) {
   // 🔁 반복 할일은 '그 날짜'의 완료 여부를 따로 본다 (dayK 없으면 원래 날짜/오늘 기준)
   const dk = dayK || t.dateKey || todayKey();
   const isDone = todoDoneOn(t, dk);
+  const isSkipped = todoSkippedOn(t, dk);
   const pr = todoPriority(t);
   const pm = priorityMeta(pr);
   const st = subtaskStats(t);
@@ -3422,12 +3763,12 @@ function renderTodoRow(t, dayK) {
         </div>`).join('')}
     </div>` : '';
 
-  return `<div class="todo-row ${isDone?'done':''}" onclick="editTodo(${t.id})" style="${pr <= 2 ? `border-left:3px solid ${pm.color};` : ''}">
+  return `<div class="todo-row ${isDone?'done':''}" onclick="editTodo(${t.id})" style="${pr <= 2 && !isSkipped ? `border-left:3px solid ${pm.color};` : ''}${isSkipped ? 'opacity:0.62; border-left:3px solid var(--border-secondary);' : ''}">
     <div class="todo-check ${isDone?'done':''}" onclick="event.stopPropagation(); toggleTodo(${t.id}, event, '${dk}')">
       ${isDone ? '<i class="ti ti-check"></i>' : ''}
     </div>
     <div style="flex:1; min-width:0;">
-      <div class="todo-title">${pr <= 2 ? `<span style="font-size:10px; margin-right:3px;">${pm.icon}</span>` : ''}${t.time ? `<span style="color:var(--text-info); font-weight:700; margin-right:5px;">${escapeHTML(t.time)}</span>` : ''}${escapeHTML(t.title)}</div>
+      <div class="todo-title" style="${isSkipped ? 'text-decoration:line-through; text-decoration-color:var(--text-tertiary); color:var(--text-tertiary);' : ''}">${isSkipped ? '<span style="font-size:10px; font-weight:700; color:var(--text-tertiary); margin-right:4px;">안 함</span>' : ''}${pr <= 2 && !isSkipped ? `<span style="font-size:10px; margin-right:3px;">${pm.icon}</span>` : ''}${t.time ? `<span style="color:var(--text-info); font-weight:700; margin-right:5px;">${escapeHTML(t.time)}</span>` : ''}${escapeHTML(t.title)}</div>
       <div class="todo-meta">
         <span class="tag">${escapeHTML(t.tag)}</span>
         ${st.total > 0 ? `<span class="meta-mini" onclick="toggleTodoExpand(${t.id}, event)" style="font-size:11px; color:${st.done === st.total ? 'var(--text-success)' : 'var(--text-secondary)'}; font-weight:600; cursor:pointer;"><i class="ti ti-list-check" style="font-size:11px;"></i> ${st.done}/${st.total} ${expanded ? '▲' : '▼'}</span>` : ''}
@@ -3441,6 +3782,7 @@ function renderTodoRow(t, dayK) {
       ${subHtml}
     </div>
     ${t.flag ? '<i class="ti ti-flag" style="font-size:14px; color:var(--text-danger);"></i>' : ''}
+    <button class="todo-del" onclick="event.stopPropagation(); skipTodo(${t.id}, event, '${dk}')" aria-label="${isSkipped ? '다시 할 일로' : '안 함으로'}" title="${isSkipped ? '다시 할 일로' : '못 했어요 — 안 함으로 정리'}"><i class="ti ti-${isSkipped ? 'arrow-back-up' : 'circle-minus'}"></i></button>
     <button class="todo-del" onclick="event.stopPropagation(); delTodo(${t.id}, event)" aria-label="삭제"><i class="ti ti-trash"></i></button>
   </div>`;
 }
@@ -3554,7 +3896,7 @@ function renderChallengeSection() {
   finalizeEndedChallenges(); // 🔧 렌더 전에 끝난 챌린지 정리
 
   let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin: 4px 0 10px;">
-    <span style="font-size:14px; font-weight:600;">🎯 챌린지</span>
+    <span class="sec-title" style="margin:0;">🎯 챌린지</span>
     <button onclick="openChallengeModal()" style="border:none; background:transparent; font-size:12px; color:var(--text-info); cursor:pointer; font-family:inherit; font-weight:500;">+ 추가</button>
   </div>`;
 
@@ -3948,8 +4290,9 @@ function toggleChallengeDate(id, dateKeyStr) {
   }
 
   saveData();
-  showToast(`${dateKeyStr} 변경됨`);
-  renderTodo();
+  const now = c.checks[dateKeyStr];
+  showToast(now === true ? '✓ 성공으로 기록' : now === 'fail' ? '✗ 실패로 기록' : '체크 해제');
+  render(); // 캘린더에서 눌러도 그 화면이 갱신되도록 (예전엔 할일 탭만 다시 그렸음)
 }
 
 function openChallengeModal() {
@@ -5858,7 +6201,7 @@ function renderMoney() {
 
   html += `<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
     <div onclick="window.fixedExpanded = !window.fixedExpanded; renderMoney();" style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-      <span style="font-size:14px; font-weight:600;">등록된 고정지출 ${budget.fixed.length}개</span>
+      <span class="sec-title" style="margin:0;">등록된 고정지출 ${budget.fixed.length}개</span>
       <span style="font-size:11px; color:var(--text-tertiary);">${window.fixedExpanded ? '▲' : '▼'}</span>
     </div>
     <div style="display:flex; gap:8px;">
@@ -6192,7 +6535,7 @@ function renderMoney() {
 
   html += `<div style="display:flex; justify-content:space-between; align-items:center; margin: 18px 0 8px;">
     <div onclick="if (!${isEditMode}) { window.expenseListExpanded = !window.expenseListExpanded; renderMoney(); }" style="display:flex; align-items:center; gap:6px; cursor:${isEditMode ? 'default' : 'pointer'};">
-      <span style="font-size:14px; font-weight:600;">${isCurrentMonth ? '내역' : `${monthLabel} 내역`} (${allMonthExp.length}건)</span>
+      <span class="sec-title" style="margin:0;">${isCurrentMonth ? '내역' : `${monthLabel} 내역`} (${allMonthExp.length}건)</span>
       ${!isEditMode ? `<span style="font-size:11px; color:var(--text-tertiary);">${listExpanded ? '▲' : '▼'}</span>` : ''}
     </div>
     <div style="display:flex; align-items:center; gap:6px;">
@@ -12334,6 +12677,7 @@ function saveAutobuyReview() {
           profitPct: (it.profitPct != null && isFinite(Number(it.profitPct))) ? Number(it.profitPct) : (asset.ocrSnapshot?.profitPct ?? null),
           profitAmount: (it.profitAmount != null && isFinite(Number(it.profitAmount))) ? Number(it.profitAmount) : (asset.ocrSnapshot?.profitAmount ?? null),
         };
+        setEvalCalibration(asset, Number(it.evalAmount) || 0);
         addedLots += newLots.length;
       }
     }
@@ -13010,6 +13354,8 @@ function saveAssetReviewItems() {
           profitAmount: (it.profitAmount != null && isFinite(Number(it.profitAmount)))
             ? Number(it.profitAmount) : null,
         };
+        // 증권사 평가금액과의 차이를 비율로 기억 → 다음부터 총액이 계속 어긋나지 않는다
+        setEvalCalibration(existing, evalAmt);
         // lot이 원화 환산 저장됐으므로 자산은 원화 기준
         if (isStockLikeType(existing.type)) {
           existing.priceCurrency = 'KRW';
@@ -19719,6 +20065,42 @@ function recordAlertHits(hits) {
   return hits.length;
 }
 
+// ===== 🔔 오늘 일정 알림 =====
+//   앱을 연 시점에 오늘 할 일이 남아 있으면 하루 한 번만 알린다.
+//   (앱이 꺼져 있을 땐 코드가 돌지 않으므로 '열었을 때 알려주는' 방식이 한계이자 최선)
+function checkTodayScheduleAlert() {
+  const tk = todayKey();
+  if (settings.todayAlertOn === false) return 0;      // 설정에서 끌 수 있음
+  if (settings.todayAlertShownOn === tk) return 0;    // 오늘 이미 알림
+
+  const open = (todos || []).filter(t => todoOnDay(t, tk) && todoOpenOn(t, tk));
+  if (open.length === 0) {
+    settings.todayAlertShownOn = tk;                  // 할 일이 없어도 오늘은 검사 끝
+    saveData();
+    return 0;
+  }
+
+  const timed = open.filter(t => t.time).sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+  const first = timed[0];
+  const hit = {
+    id: 'today-' + tk,
+    kind: 'today',
+    name: '오늘 일정',
+    at: Date.now(),
+    read: false,
+    msg: `오늘 할 일 ${open.length}개${first ? ` · 첫 일정 ${first.time} ${first.title}` : ''}`,
+  };
+
+  settings.todayAlertShownOn = tk;
+  if (!settings.alertHits) settings.alertHits = [];
+  settings.alertHits = [hit].concat(settings.alertHits).slice(0, 30);
+  saveData();
+  sendSystemNotification(hit);
+  showToast(`📅 ${hit.msg}`);
+  renderAlertBanner();
+  return 1;
+}
+
 // ===== 🔔 시장 지표 알림 (환율 · 금) =====
 // 보유 자산이 아니어서 별도 관리. 시장 지수를 불러올 때마다 검사한다.
 function evalMarketAlert(cfg, price, name, unit, out) {
@@ -21987,6 +22369,36 @@ function getAllocationBuckets7() {
 
 // 자산 1개의 원화 평가액
 //  우선순위: 라이브 시세 > OCR 평가금액 > lots 원가 합 > qty*price
+// 증권사 평가금액과 앱 계산값의 구조적 차이(장외 시세·환율 스프레드 등)를 비율로 기억한다.
+// 이 범위를 벗어나면 보정이 아니라 다른 문제(수량 오류 등)이므로 적용하지 않는다.
+const EVAL_CALIB_MIN = 0.85, EVAL_CALIB_MAX = 1.15;
+
+// 캡처로 읽은 증권사 평가금액을 기준으로 보정 비율을 세운다.
+// 시세를 아직 못 받았으면 대기시켰다가 assetKrwValue 에서 확정한다.
+function setEvalCalibration(asset, brokerEval) {
+  const be = Number(brokerEval) || 0;
+  if (be <= 0) return;
+  if (DEPOSIT_TYPES.includes(asset.type)) return;   // 납입형은 잔액이 곧 평가액
+  const raw = Number(liveAssetData[asset.id]?.krwValue) || 0;
+  if (raw > 0) {
+    const ratio = be / raw;
+    if (ratio > EVAL_CALIB_MIN && ratio < EVAL_CALIB_MAX) {
+      asset.evalCalib = { ratio, at: todayKey(), broker: be, raw };
+    } else {
+      delete asset.evalCalib;   // 차이가 너무 크면 보정으로 덮지 않고 그대로 보여준다
+    }
+    delete asset.evalCalibPending;
+  } else {
+    asset.evalCalibPending = be;
+  }
+}
+
+// 수동으로 값을 고쳤을 때는 이전 보정이 남아 이중으로 어긋나지 않게 지운다
+function clearEvalCalibration(asset) {
+  delete asset.evalCalib;
+  delete asset.evalCalibPending;
+}
+
 function assetKrwValue(a) {
   // 🔧 납입형(청약·예적금·현금·부동산)은 '잔액(price)'이 곧 평가금액 — 시세가 없는 자산이라
   //    오래된 캡처 스냅샷(evalAmount)이 잔액을 덮어쓰면 안 됨.
@@ -21996,7 +22408,21 @@ function assetKrwValue(a) {
   }
 
   const live = liveAssetData[a.id];
-  if (live?.hasLive && Number(live.krwValue) > 0) return Number(live.krwValue);
+  if (live?.hasLive && Number(live.krwValue) > 0) {
+    const raw = Number(live.krwValue);
+    // 캡처 당시 시세를 못 받았으면 보정 비율을 지금 확정한다
+    if (Number(a.evalCalibPending) > 0) {
+      const r0 = Number(a.evalCalibPending) / raw;
+      if (r0 > EVAL_CALIB_MIN && r0 < EVAL_CALIB_MAX) {
+        a.evalCalib = { ratio: r0, at: a.ocrSnapshot?.date || todayKey(), broker: Number(a.evalCalibPending), raw };
+      }
+      delete a.evalCalibPending;
+    }
+    const r = Number(a.evalCalib?.ratio);
+    // 증권사 화면과 계속 어긋나지 않게 캡처 때의 차이를 비율로 유지 (시세는 그대로 따라감)
+    if (r > EVAL_CALIB_MIN && r < EVAL_CALIB_MAX) return raw * r;
+    return raw;
+  }
 
   // 시세가 없을 때만: 토스/증권사 스냅샷 평가금액 폴백
   const brokerSnap = a.brokerSnapshot;
@@ -23946,7 +24372,7 @@ function updateAsset(id) {
   const manualPriceEl = document.getElementById('e-manual-price');
   if (manualPriceEl) {
     const mp = Number(manualPriceEl.value) || 0;
-    if (mp > 0) { a.manualPrice = mp; a.manualPriceAt = todayKey(); }
+    if (mp > 0) { a.manualPrice = mp; a.manualPriceAt = todayKey(); clearEvalCalibration(a); }
     else { delete a.manualPrice; delete a.manualPriceAt; }
     liveAssetData = {};              // 시세 캐시 비워 즉시 재평가
     window._lastAssetRefresh = 0;
@@ -23992,6 +24418,7 @@ function updateAsset(id) {
 
   if (_totalsEdited) {
     a.lots = []; // 사용자가 합계를 직접 바꿨으므로 입력값이 기준이 됨
+    clearEvalCalibration(a); // 옛 캡처 보정이 남아 이중으로 어긋나지 않게
   }
   // 합계를 안 건드렸으면 lots 그대로 유지 → 아래에서 qty/price도 덮어쓰지 않음
 
