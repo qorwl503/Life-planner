@@ -66,16 +66,16 @@ const firebaseConfig = {
   :root {
     /* 잉크 & 린넨 — 종이질감 배경 + 먹빛 글자.
        카드를 순백 대신 살짝 따뜻한 흰색으로 두고 그림자로 띄워 평면감을 없앤다. */
-    /* 바탕은 확실히 눕히고 카드도 순백이 아닌 미색으로 — 흰 화면의 눈부심을 줄인다.
-       카드 밝기 97% → 89%. 페이지와의 대비는 1.11 → 1.35 로 올려 카드가 또렷하게 뜬다. */
-    --bg-page: #E0D9C8;
-    --bg-primary: #F6F2E9;
-    --bg-secondary: #E4DDCA;
-    --bg-tertiary: #CFC6AF;
-    --bg-info: #DDE8EE;
-    --bg-success: #DFE9D7;
-    --bg-warning: #EFE2CB;
-    --bg-danger: #F0DED8;
+    /* 바탕은 밝게 유지하되 카드를 한 단계 더 밝혀 구분이 되게 한다.
+       (배경을 어둡게 해서 대비를 만들면 화면이 칙칙해진다 — 카드 쪽을 올리는 게 맞다) */
+    --bg-page: #EBE7DB;
+    --bg-primary: #FFFCF6;
+    --bg-secondary: #E2DCCC;
+    --bg-tertiary: #D3CCB9;
+    --bg-info: #E3EDF3;
+    --bg-success: #E5EEDE;
+    --bg-warning: #F4E9D6;
+    --bg-danger: #F6E6E1;
 
     --text-primary: #1F2224;
     --text-secondary: #565A5E;
@@ -104,11 +104,11 @@ const firebaseConfig = {
 
   /* 탭마다 바탕에 아주 옅은 색조를 얹어 화면이 서로 구분되게 한다.
      카드는 그대로 밝게 두고 '바닥'만 물들이므로 글자 대비는 영향받지 않는다. */
-  body[data-tab="calendar"] { --bg-page: #CFD4CE; --accent-tab: #456E9E; }
-  body[data-tab="todo"]     { --bg-page: #D6D0C6; --accent-tab: #6B5B96; }
-  body[data-tab="workout"]  { --bg-page: #CDD6C6; --accent-tab: #3D8168; }
-  body[data-tab="money"]    { --bg-page: #DCD2BB; --accent-tab: #B87D3C; }
-  body[data-tab="asset"]    { --bg-page: #CFD6D2; --accent-tab: #456E9E; }
+  body[data-tab="calendar"] { --bg-page: #E6E9EC; --accent-tab: #456E9E; }
+  body[data-tab="todo"]     { --bg-page: #EAE6EC; --accent-tab: #6B5B96; }
+  body[data-tab="workout"]  { --bg-page: #E5EBE2; --accent-tab: #3D8168; }
+  body[data-tab="money"]    { --bg-page: #F0EAD9; --accent-tab: #B87D3C; }
+  body[data-tab="asset"]    { --bg-page: #E5EBE8; --accent-tab: #456E9E; }
 
   /* 섹션 제목 왼쪽에 탭 색 막대 — 목록이 밋밋하게 이어지지 않게 */
   .sec-title {
@@ -20213,9 +20213,17 @@ async function saveMarketAlerts() {
 function sendSystemNotification(h) {
   try {
     if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    // 목표가 알림이 아닌 종류(오늘 일정 등)도 들어온다 — 값이 없으면 msg 를 쓴다
+    if (!(Number(h.target) > 0 && Number(h.price) > 0)) {
+      new Notification(`🔔 ${h.name || '알림'}`, {
+        body: h.msg || '',
+        tag: `alert-${h.kind || 'etc'}-${h.id || ''}`,
+      });
+      return;
+    }
     const dir = h.kind === 'below' ? '이하로 내려왔어요 (매수 기회)' : '이상으로 올라왔어요';
     new Notification(`🔔 ${h.name} 목표가 도달`, {
-      body: `목표 ${h.target.toLocaleString()} · 현재 ${h.price.toLocaleString()}\n${dir}`,
+      body: `목표 ${Number(h.target).toLocaleString()} · 현재 ${Number(h.price).toLocaleString()}\n${dir}`,
       tag: `price-${h.ticker || h.name}`,
     });
   } catch (e) { /* 알림 미지원 환경 무시 */ }
@@ -20245,14 +20253,24 @@ function renderAlertBanner() {
     document.body.appendChild(el);
   }
   const top = unread[0];
-  const dir = top.kind === 'below' ? '↓ 목표가 이하' : '↑ 목표가 이상';
-  const color = top.kind === 'below' ? '#1D9E75' : '#B87D3C';
+  // 목표가 알림 외의 종류(오늘 일정 등)가 섞여도 안전하게
+  const isPrice = Number(top.target) > 0 && Number(top.price) > 0;
+  const dir = top.kind === 'today' ? '📅 오늘 일정'
+    : top.kind === 'below' ? '↓ 목표가 이하' : '↑ 목표가 이상';
+  const color = top.kind === 'today' ? '#456E9E'
+    : top.kind === 'below' ? '#127153' : '#895B29';
+  const headline = top.kind === 'today'
+    ? escapeHTML(top.name || '오늘 일정')
+    : `${escapeHTML(top.name || '알림')} 목표가 도달`;
+  const sub = isPrice
+    ? `${dir} · 목표 ${Number(top.target).toLocaleString()} → 현재 ${Number(top.price).toLocaleString()}`
+    : escapeHTML(top.msg || dir);
   el.innerHTML = `
     <div onclick="openAlertCenter()" style="background:${color}; color:white; border-radius:12px; padding:11px 13px; box-shadow:0 4px 16px rgba(0,0,0,0.2); display:flex; align-items:center; gap:10px; cursor:pointer;">
       <span style="font-size:18px;">🔔</span>
       <div style="flex:1; min-width:0;">
-        <div style="font-size:12px; font-weight:800;">${escapeHTML(top.name)} 목표가 도달 ${unread.length > 1 ? `외 ${unread.length - 1}건` : ''}</div>
-        <div style="font-size:10px; opacity:0.92; margin-top:1px;">${dir} · 목표 ${top.target.toLocaleString()} → 현재 ${top.price.toLocaleString()}</div>
+        <div style="font-size:12px; font-weight:800;">${headline} ${unread.length > 1 ? `외 ${unread.length - 1}건` : ''}</div>
+        <div style="font-size:10px; opacity:0.92; margin-top:1px;">${sub}</div>
       </div>
       <button onclick="event.stopPropagation(); dismissAllAlerts();" style="border:none; background:rgba(255,255,255,0.25); color:white; width:26px; height:26px; border-radius:50%; font-size:13px; cursor:pointer; font-family:inherit; flex-shrink:0;">✕</button>
     </div>`;
@@ -20269,17 +20287,23 @@ function openAlertCenter() {
   const rows = list.length === 0
     ? `<div style="padding:24px; text-align:center; color:var(--text-tertiary); font-size:12px;">아직 도달 기록이 없어요.</div>`
     : list.map(h => {
-        const dir = h.kind === 'below' ? '↓ 이하 도달 (매수 기회)' : '↑ 이상 도달';
-        const col = h.kind === 'below' ? '#1D9E75' : '#B87D3C';
         const dt = new Date(h.at);
+        const when = `${dt.getMonth()+1}/${dt.getDate()} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
+        // 알림 종류가 목표가 도달만 있는 게 아니다 (오늘 일정 등) → 값이 없으면 설명문으로 대체
+        const isPrice = Number(h.target) > 0 && Number(h.price) > 0;
+        const dir = h.kind === 'today' ? '📅 오늘 일정'
+          : h.kind === 'below' ? '↓ 이하 도달 (매수 기회)' : '↑ 이상 도달';
+        const col = h.kind === 'today' ? 'var(--text-info)'
+          : h.kind === 'below' ? '#127153' : '#895B29';
+        const detail = isPrice
+          ? `목표 ${Number(h.target).toLocaleString()} → 도달가 ${Number(h.price).toLocaleString()} · ${when}`
+          : `${escapeHTML(h.msg || '')}${h.msg ? ' · ' : ''}${when}`;
         return `<div style="padding:11px 8px; border-bottom:0.5px solid var(--border-tertiary); ${h.read ? 'opacity:0.82;' : ''}">
-          <div style="display:flex; justify-content:space-between; align-items:baseline;">
-            <span style="font-size:13px; font-weight:700;">${escapeHTML(h.name)}</span>
-            <span style="font-size:11px; font-weight:700; color:${col};">${dir}</span>
+          <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;">
+            <span style="font-size:13px; font-weight:700;">${escapeHTML(h.name || '알림')}</span>
+            <span style="font-size:11px; font-weight:700; color:${col}; white-space:nowrap;">${dir}</span>
           </div>
-          <div style="font-size:11px; color:var(--text-tertiary); margin-top:3px;">
-            목표 ${h.target.toLocaleString()} → 도달가 ${h.price.toLocaleString()} · ${dt.getMonth()+1}/${dt.getDate()} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}
-          </div>
+          <div style="font-size:11px; color:var(--text-tertiary); margin-top:3px;">${detail}</div>
         </div>`;
       }).join('');
 
