@@ -11694,6 +11694,14 @@ async function shrinkImageForOcr(file, maxSide = 1600, quality = 0.88) {
   return { base64: out.split(',')[1], mimeType: 'image/jpeg' };
 }
 
+function copyCardOcrRaw() {
+  const raw = window._cardOcrLastRaw || '';
+  if (!raw) { showToast('복사할 내용이 없어요'); return; }
+  navigator.clipboard?.writeText(raw)
+    .then(() => showToast('📋 복사했어요'))
+    .catch(() => showToast('복사에 실패했어요'));
+}
+
 // 캡처 실패 원인을 폰에서도 확인할 수 있게 — AI가 실제로 뭘 돌려줬는지 보여준다
 function showCardOcrDebug() {
   const raw = window._cardOcrLastRaw || '';
@@ -11710,7 +11718,7 @@ function showCardOcrDebug() {
           AI가 돌려준 내용이에요. 이게 JSON 형태가 아니면 이미지를 잘못 읽은 거예요.
         </div>
         <pre style="white-space:pre-wrap; word-break:break-all; font-size:11px; line-height:1.6; padding:11px; background:var(--bg-secondary); border-radius:10px; max-height:50vh; overflow-y:auto; font-family:ui-monospace,monospace;">${escapeHTML(raw.slice(0, 3000))}</pre>
-        <button onclick="navigator.clipboard?.writeText(${JSON.stringify(JSON.stringify(raw.slice(0, 3000)))}).then(()=>showToast('복사했어요'))" style="width:100%; margin-top:10px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">📋 복사하기</button>`
+        <button onclick="copyCardOcrRaw()" style="width:100%; margin-top:10px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">📋 복사하기</button>`
       : `<div style="padding:22px 14px; text-align:center; font-size:12px; color:var(--text-tertiary); background:var(--bg-secondary); border-radius:12px; line-height:1.7;">
           AI 응답이 아예 없었어요.<br>
           <span style="font-size:11px;">네트워크 오류, 시간 초과, 또는 API 한도 초과일 수 있어요.</span>
@@ -13878,18 +13886,14 @@ async function processCardCapture(input) {
    - category: 다음 중 가장 가까운 것 - 식비, 카페, 교통, 쇼핑, 도서, 의료, 문화, 통신, 학습, 기타
 2. 입금/입금취소는 건너뛰고 지출만 추출
 
-3. ⚠️ 취소 처리 (중요 — 여기서 멈추지 말고 끝까지 진행할 것)
-   - 항목 아래에 "거래취소", "취소", "승인취소", "환불" 이라고 붙어 있으면 → 그 항목 하나만 빼고 나머지는 그대로 추출
-   - ❗금액이 같다는 이유로 다른 항목을 짝지어 지우지 말 것.
-     취소 표시는 그 항목 자신에게만 적용된다. (예: "이니시스 4,100 거래취소" 가 있어도
-     취소 표시가 없는 "할리스커피 4,100" 은 정상 지출이므로 반드시 포함)
-   - 취소 건이 섞여 있다는 이유로 전체를 실패 처리하지 말 것
-   - 모든 항목이 취소여서 남는 게 없으면 {"items":[]} 로 반환 (error 없이)
+3. 취소 처리
+   - 항목 바로 아래에 "거래취소/취소/승인취소/환불" 이 붙은 항목만 제외한다
+   - 금액이 같다는 이유로 다른 항목을 함께 지우지 말 것 (취소 표시는 그 항목에만 적용)
+   - 남는 게 없으면 {"items":[]} (error 없이)
 
 3-1. 화면 구조
-   - "8. 15(토) · 오늘" 같은 날짜 머리글 아래의 항목들은 모두 그 날짜다
-   - 각 항목은 [가맹점명] [금액] / 그 아래 [시간 · 카드명 · 할부구분] 형태
-   - 가맹점명에 " - 회사명" 이 붙어 있으면 앞부분만 쓴다 (예: "쿠팡_쿠페이 - 쿠팡페이 주식회사" → "쿠팡")
+   - "8. 15(토) · 오늘" 같은 날짜 머리글 아래 항목은 모두 그 날짜
+   - 가맹점명에 " - 회사명" 이 붙으면 앞부분만 (예: "쿠팡_쿠페이 - 쿠팡페이 주식회사" → "쿠팡")
 
 4. 결과는 반드시 다음 JSON 형식으로만 (다른 설명 없이):
 {"items":[{"date":"${_today}","store":"스타벅스","amount":4500,"category":"카페"}]}
@@ -13905,8 +13909,10 @@ async function processCardCapture(input) {
         }],
         generationConfig: {
           temperature: 0,
-          // 취소 내역이 섞이면 목록이 길어져 2000 으로는 잘렸다 → JSON 이 깨지고 "못 읽음"으로 보임
-          maxOutputTokens: 8000,
+          // ⚠️ Gemini 3.x 는 '사고 과정'도 이 예산을 쓴다. 취소 판단 같은 걸 고민하다
+          //    예산을 다 써서 JSON 이 중간에 잘렸다 (Expected ']') → 넉넉히 + 사고 끄기
+          maxOutputTokens: 24000,
+          thinkingConfig: { thinkingBudget: 0 },   // 표 읽기에는 사고 과정이 필요 없다
           responseMimeType: 'application/json',
         }
       };
@@ -13914,8 +13920,12 @@ async function processCardCapture(input) {
       // 🔧 모델 폴백 추가 — 최신 모델 우선, 한도(429)/혼잡(503)이면 기존 경량 모델로 강등
       const cardModels = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
       let data = null, lastErr = '';
-      // JSON 강제 모드를 거부하는 모델이 있을 수 있어 일반 모드로 한 번 더 시도한다
-      const cardCfgs = [body.generationConfig, { temperature: 0, maxOutputTokens: 8000 }];
+      // 옵션을 거부하는 모델이 있을 수 있어 단계적으로 완화하며 재시도한다
+      const cardCfgs = [
+        body.generationConfig,
+        { temperature: 0, maxOutputTokens: 24000, thinkingConfig: { thinkingBudget: 0 } },
+        { temperature: 0, maxOutputTokens: 24000 },
+      ];
       outerCard:
       for (const cfg of cardCfgs) {
       for (const model of cardModels) {
@@ -13940,6 +13950,12 @@ async function processCardCapture(input) {
           const fin = cand?.finishReason;
           if (!joined) {
             lastErr = fin === 'MAX_TOKENS' ? '응답이 잘림' : (fin && fin !== 'STOP' ? String(fin) : '빈 응답');
+            continue;
+          }
+          // 내용이 있어도 잘렸으면 JSON 이 깨진다 → 다음 설정으로 재시도 (이번 실패의 실제 원인)
+          if (fin === 'MAX_TOKENS') {
+            lastErr = '응답이 잘림 (길이 초과)';
+            window._cardOcrLastRaw = joined;
             continue;
           }
           data = d; window._cardOcrText = joined;
