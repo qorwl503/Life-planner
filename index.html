@@ -2587,8 +2587,9 @@ function renderCalendar() {
       html += `<div class="empty-state" style="padding:20px;"><span style="font-size:11px;">이 카테고리에 기록이 없어요</span></div>`;
     } else {
       const renderEvt = (e) => {
-        const clickHandler = e.todoId !== undefined ? `onclick="toggleTodoFromCal(${e.todoId})"`
+        const clickHandler = e.todoId !== undefined ? `onclick="toggleTodoFromCal(${e.todoId}, '${e.dateKeyStr}')" style="cursor:pointer;"`
           : e.challengeId !== undefined ? `onclick="toggleChallengeDate(${e.challengeId}, '${e.challengeDateKey}')" style="cursor:pointer;"`
+          : e.workoutDateKey !== undefined ? `onclick="toggleWorkoutFromCal('${e.workoutDateKey}')" style="cursor:pointer;"`
           : e.expenseId !== undefined ? `onclick="editExpense(${e.expenseId})" style="cursor:pointer;"`
           : '';
         // 챌린지는 성공/실패/미체크 3상태 — 체크박스 모양으로 바로 보이게
@@ -2598,16 +2599,23 @@ function renderCalendar() {
             : e.challengeState === 'fail'
             ? `<div class="evt-check" style="border-color:var(--text-danger); color:var(--text-danger); display:flex; align-items:center; justify-content:center;"><i class="ti ti-x"></i></div>`
             : `<div class="evt-check"></div>`;
-        return `<div class="evt evt-${e.type}" ${clickHandler}>
+        const woBox = e.workoutDateKey === undefined ? '' :
+          `<div class="evt-check ${e.workoutDone ? 'done' : ''}">${e.workoutDone ? '<i class="ti ti-check"></i>' : ''}</div>`;
+        const skipped = !!e.skipped;
+        return `<div class="evt evt-${e.type}" ${clickHandler} ${skipped ? 'style="opacity:0.6; cursor:pointer;"' : ''}>
           ${e.todoId !== undefined
             ? `<div class="evt-check ${e.done?'done':''}">${e.done?'<i class="ti ti-check"></i>':''}</div>`
             : e.challengeId !== undefined ? chBox
+            : e.workoutDateKey !== undefined ? woBox
             : `<i class="evt-icon ti ${e.icon}"></i>`}
           <div class="evt-body">
-            <div class="title ${e.done ? 'checked' : ''}">${escapeHTML(e.title)}</div>
+            <div class="title ${e.done ? 'checked' : ''}" ${skipped ? 'style="text-decoration:line-through; color:var(--text-tertiary);"' : ''}>${skipped ? '<span style="font-size:10px; font-weight:700; margin-right:4px;">안 함</span>' : ''}${escapeHTML(e.title)}</div>
             <div class="sub">${escapeHTML(e.sub)}</div>
           </div>
           ${e.amount ? `<div class="evt-amount">${e.amount}</div>` : ''}
+          ${e.todoId !== undefined && !e.done
+            ? `<button onclick="event.stopPropagation(); skipTodoFromCal(${e.todoId}, '${e.dateKeyStr}')" style="flex:0 0 auto; margin-left:6px; padding:3px 8px; border:0.5px solid var(--border-tertiary); background:var(--bg-secondary); color:var(--text-tertiary); border-radius:7px; font-size:11px; cursor:pointer; font-family:inherit;">${skipped ? '되돌리기' : '안 함'}</button>`
+            : ''}
         </div>`;
       };
 
@@ -2670,19 +2678,33 @@ function getEventsForDay(d) {
       title: t.title,
       sub,
       done: todoDoneOn(t, k), // 🔁 반복은 그 날짜의 완료 여부
+      skipped: todoSkippedOn(t, k),
       todoId: t.id,
+      dateKeyStr: k,          // 반복 할일을 그 날짜 기준으로 토글하려면 날짜가 필요하다
       amount: t.money
     });
   });
 
-  // 운동
+  // 운동 — 기록이 없는 날도 캘린더에서 바로 체크할 수 있게 항상 표시
   const w = workoutLog[k];
+  const isFuture = k > todayKey();
   if (w?.done) {
     events.push({
       type: 'workout',
       icon: 'ti-barbell',
       title: w.note || '운동 완료',
       sub: `${w.minutes || 0}분 · ${w.kcal || 0} kcal`,
+      workoutDone: true,
+      workoutDateKey: k,
+    });
+  } else if (!isFuture) {
+    events.push({
+      type: 'workout',
+      icon: 'ti-barbell',
+      title: '운동 안 함',
+      sub: '눌러서 완료로 기록',
+      workoutDone: false,
+      workoutDateKey: k,
     });
   }
 
@@ -2944,13 +2966,30 @@ function jumpToMonth(y, m) {
   renderCalendar();
 }
 
-function toggleTodoFromCal(todoId) {
-  const t = todos.find(x => x.id === todoId);
-  if (t) {
-    t.done = !t.done;
-    saveData();
-    showToast(t.done ? `"${t.title}" 완료!` : `"${t.title}" 되돌림`);
+// 캘린더에서 할일 체크 — 반복 할일은 그 날짜만 토글되어야 하므로 toggleTodo 에 위임한다.
+// (예전엔 t.done 을 직접 뒤집어서 반복 할일이 모든 날짜에 영향을 주고 완료일도 안 남았음)
+function toggleTodoFromCal(todoId, dayK) {
+  toggleTodo(todoId, null, dayK);
+  renderCalendar();
+}
+
+// 캘린더에서 '안 함' 처리
+function skipTodoFromCal(todoId, dayK) {
+  skipTodo(todoId, null, dayK);
+  renderCalendar();
+}
+
+// 캘린더에서 운동 체크 — 운동 탭과 같은 저장소를 쓰므로 양쪽이 자동으로 맞는다
+function toggleWorkoutFromCal(dayK) {
+  if (!workoutLog[dayK]) workoutLog[dayK] = { done: false };
+  workoutLog[dayK].done = !workoutLog[dayK].done;
+  if (workoutLog[dayK].done) {
+    if (!workoutLog[dayK].kcal) workoutLog[dayK].kcal = 300;
+    if (!workoutLog[dayK].minutes) workoutLog[dayK].minutes = 30;
+    haptic();
   }
+  saveData();
+  showToast(workoutLog[dayK].done ? '운동 완료 ✓' : '운동 체크 해제');
   renderCalendar();
 }
 
@@ -3499,14 +3538,17 @@ function todoGroupItems(kind) {
   const tk = todayKey();
   if (kind === 'today') return todos.filter(t => todoOnDay(t, tk));
   if (kind === 'past')  return todos.filter(t => todoGroupOf(t) === 'past' && !t.done && !todoSkippedOn(t, t.dateKey || tk));
+  // '오늘'의 기준은 앱 전체가 todayKey() 하나만 쓴다 (new Date() 를 섞으면 기준이 갈라진다)
+  const [ty, tm, td] = tk.split('-').map(Number);
   if (kind === 'soon') {
-    const d = new Date(); const d3 = new Date(); d3.setDate(d.getDate() + 3);
+    const d = new Date(ty, tm - 1, td);
+    const d3 = new Date(ty, tm - 1, td + 3);
     const a = dateKey(d.getFullYear(), d.getMonth(), d.getDate());
     const b = dateKey(d3.getFullYear(), d3.getMonth(), d3.getDate());
     return todos.filter(t => !t.done && t.dateKey && t.dateKey >= a && t.dateKey <= b);
   }
   if (kind === 'week') {
-    const base = new Date();
+    const base = new Date(ty, tm - 1, td);
     base.setDate(base.getDate() + (window.todoWeekOffset || 0) * 7);
     const ws = new Date(base); ws.setDate(base.getDate() - base.getDay());
     const we = new Date(ws);   we.setDate(ws.getDate() + 6);
@@ -13734,6 +13776,7 @@ async function processCardCapture(input) {
 
   const allItems = [];
   let failCount = 0;
+  let emptyCount = 0;   // 읽기는 됐지만 추가할 지출이 없던 이미지 (전부 취소·환불 등)
 
   for (let idx = 0; idx < files.length; idx++) {
     const file = files[idx];
@@ -13767,11 +13810,19 @@ async function processCardCapture(input) {
    - amount: 금액 (숫자만, 콤마 제거, 원화)
    - category: 다음 중 가장 가까운 것 - 식비, 카페, 교통, 쇼핑, 도서, 의료, 문화, 통신, 학습, 기타
 2. 입금/입금취소는 건너뛰고 지출만 추출
-3. 환불/취소 항목 제외
+
+3. ⚠️ 취소·환불 처리 (중요 — 여기서 멈추지 말고 끝까지 진행할 것)
+   - "취소", "승인취소", "환불", "-" 금액으로 표시된 항목은 결과에 넣지 않는다
+   - 취소된 건과 짝이 되는 원래 결제 건도 함께 빼서 서로 상쇄시킨다
+     (예: "스타벅스 4,500" + "스타벅스 취소 -4,500" → 둘 다 제외)
+   - 짝을 못 찾겠으면 그 항목만 빼고 나머지는 정상적으로 추출한다
+   - 취소 건이 섞여 있다는 이유로 전체를 실패 처리하지 말 것
+   - 모든 항목이 취소여서 남는 게 없으면 {"items":[]} 로 반환 (error 없이)
+
 4. 결과는 반드시 다음 JSON 형식으로만 (다른 설명 없이):
 {"items":[{"date":"${_today}","store":"스타벅스","amount":4500,"category":"카페"}]}
 
-만약 분석 불가하면: {"items":[],"error":"이유"}`;
+이미지 자체가 카드내역이 아니어서 분석 불가할 때만: {"items":[],"error":"이유"}`;
 
       const body = {
         contents: [{
@@ -13782,30 +13833,47 @@ async function processCardCapture(input) {
         }],
         generationConfig: {
           temperature: 0,
-          maxOutputTokens: 2000,
+          // 취소 내역이 섞이면 목록이 길어져 2000 으로는 잘렸다 → JSON 이 깨지고 "못 읽음"으로 보임
+          maxOutputTokens: 8000,
+          responseMimeType: 'application/json',
         }
       };
 
       // 🔧 모델 폴백 추가 — 최신 모델 우선, 한도(429)/혼잡(503)이면 기존 경량 모델로 강등
       const cardModels = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
       let data = null, lastErr = '';
+      // JSON 강제 모드를 거부하는 모델이 있을 수 있어 일반 모드로 한 번 더 시도한다
+      const cardCfgs = [body.generationConfig, { temperature: 0, maxOutputTokens: 8000 }];
+      outerCard:
+      for (const cfg of cardCfgs) {
       for (const model of cardModels) {
         try {
           const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${window.GEMINI_API_KEY}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
+            body: JSON.stringify({ ...body, generationConfig: cfg }),
           });
           if (res.status === 429 || res.status === 503 || res.status === 404) { lastErr = `HTTP ${res.status}`; continue; }
           const d = await res.json();
           if (!res.ok || d.error) { lastErr = d.error?.message || `HTTP ${res.status}`; continue; }
-          data = d;
-          break;
+          // 최신 모델은 응답을 여러 조각으로 나눠 주고 첫 조각이 사고 과정일 수 있다 → 전부 합친다
+          //   (취소 내역처럼 판단이 필요한 이미지에서 특히 자주 발생)
+          const cand = d.candidates?.[0];
+          const parts = cand?.content?.parts || [];
+          const joined = parts.filter(p => !p.thought).map(p => p.text || '').join('').trim();
+          const fin = cand?.finishReason;
+          if (!joined) {
+            lastErr = fin === 'MAX_TOKENS' ? '응답이 잘림' : (fin && fin !== 'STOP' ? String(fin) : '빈 응답');
+            continue;
+          }
+          data = d; window._cardOcrText = joined;
+          break outerCard;
         } catch (e) { lastErr = e.message || '네트워크 오류'; continue; }
+      }
       }
       if (!data) throw new Error(lastErr || 'AI 호출 실패');
 
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      const text = window._cardOcrText || '';
       console.log(`📸 OCR 결과 ${idx + 1}:`, text);
 
       let jsonStr = text.trim().replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
@@ -13817,8 +13885,14 @@ async function processCardCapture(input) {
         else throw new Error('JSON 파싱 실패');
       }
 
+      // 전부 취소 건이라 남은 게 없는 건 '실패'가 아니다 (읽기는 제대로 된 것)
+      if (!parsed.error && Array.isArray(parsed.items) && parsed.items.length === 0) {
+        console.log(`이미지 ${idx + 1}: 추가할 지출 없음 (전부 취소·환불이거나 지출 없음)`);
+        emptyCount++;
+        continue;
+      }
       if (parsed.error || !parsed.items || parsed.items.length === 0) {
-        console.warn(`이미지 ${idx + 1} 추출 실패`);
+        console.warn(`이미지 ${idx + 1} 추출 실패:`, parsed.error || '항목 없음');
         failCount++;
         continue;
       }
@@ -13831,8 +13905,11 @@ async function processCardCapture(input) {
   }
 
   if (allItems.length === 0) {
-    statusEl.innerHTML = `<span style="color:var(--text-warning);">⚠️ 추출된 항목 없음</span>`;
-    input.value = '';
+    // 왜 없는지 구분해서 알려준다 — '못 읽음'과 '읽었는데 전부 취소'는 다른 상황
+    statusEl.innerHTML = (emptyCount > 0 && failCount === 0)
+      ? `<span style="color:var(--text-secondary);">추가할 지출이 없어요 (취소·환불 건만 있었어요)</span>`
+      : `<span style="color:var(--text-warning);">⚠️ 이미지를 읽지 못했어요${failCount ? ` (${failCount}장 실패)` : ''}</span>`;
+    if (!Array.isArray(input) && input) input.value = '';
     return;
   }
 
