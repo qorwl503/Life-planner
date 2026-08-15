@@ -11658,6 +11658,42 @@ function applyReconcile() {
   render();
 }
 
+// 이미지 축소 — 폰 스크린샷(예: 1209×1938)을 그대로 보내면 요청이 무거워 실패·지연이 잦다.
+// 긴 변을 1600px 로 줄이고 JPEG 로 재인코딩한다. 글자 판독에는 충분한 해상도.
+async function shrinkImageForOcr(file, maxSide = 1600, quality = 0.88) {
+  const dataUrl = await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+
+  const img = await new Promise((resolve, reject) => {
+    const im = new Image();
+    im.onload = () => resolve(im);
+    im.onerror = reject;
+    im.src = dataUrl;
+  });
+
+  const long = Math.max(img.width, img.height);
+  if (long <= maxSide) {
+    return { base64: String(dataUrl).split(',')[1], mimeType: file.type || 'image/jpeg' };
+  }
+
+  const scale = maxSide / long;
+  const w = Math.round(img.width * scale);
+  const h = Math.round(img.height * scale);
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#FFFFFF';        // 투명 PNG가 검게 변하지 않도록
+  ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(img, 0, 0, w, h);
+  const out = cv.toDataURL('image/jpeg', quality);
+  console.log(`📸 축소: ${img.width}×${img.height} → ${w}×${h}`);
+  return { base64: out.split(',')[1], mimeType: 'image/jpeg' };
+}
+
 // ===== 📸 카드 캡처 OCR (Gemini Vision) =====
 // ===== 📸 자산 캡처 OCR (Gemini Vision) =====
 // 보정 배너에서 호출 — 증권사 잔고 캡처 파일 선택창을 연다.
@@ -13791,6 +13827,10 @@ async function processCardCapture(input) {
       });
 
       const mimeType = file.type || 'image/jpeg';
+      // 폰 스크린샷은 세로로 길어 원본이 크다 → 긴 변 1600px 로 줄여 요청을 가볍게 (실패 시 원본 사용)
+      const _shrunk = await shrinkImageForOcr(file).catch(() => null);
+      const _b64 = _shrunk ? _shrunk.base64 : base64;
+      const _mime = _shrunk ? _shrunk.mimeType : mimeType;
 
       const _today = todayKey(); // YYYY-MM-DD
       const _todayObj = new Date();
@@ -13811,13 +13851,18 @@ async function processCardCapture(input) {
    - category: 다음 중 가장 가까운 것 - 식비, 카페, 교통, 쇼핑, 도서, 의료, 문화, 통신, 학습, 기타
 2. 입금/입금취소는 건너뛰고 지출만 추출
 
-3. ⚠️ 취소·환불 처리 (중요 — 여기서 멈추지 말고 끝까지 진행할 것)
-   - "취소", "승인취소", "환불", "-" 금액으로 표시된 항목은 결과에 넣지 않는다
-   - 취소된 건과 짝이 되는 원래 결제 건도 함께 빼서 서로 상쇄시킨다
-     (예: "스타벅스 4,500" + "스타벅스 취소 -4,500" → 둘 다 제외)
-   - 짝을 못 찾겠으면 그 항목만 빼고 나머지는 정상적으로 추출한다
+3. ⚠️ 취소 처리 (중요 — 여기서 멈추지 말고 끝까지 진행할 것)
+   - 항목 아래에 "거래취소", "취소", "승인취소", "환불" 이라고 붙어 있으면 → 그 항목 하나만 빼고 나머지는 그대로 추출
+   - ❗금액이 같다는 이유로 다른 항목을 짝지어 지우지 말 것.
+     취소 표시는 그 항목 자신에게만 적용된다. (예: "이니시스 4,100 거래취소" 가 있어도
+     취소 표시가 없는 "할리스커피 4,100" 은 정상 지출이므로 반드시 포함)
    - 취소 건이 섞여 있다는 이유로 전체를 실패 처리하지 말 것
    - 모든 항목이 취소여서 남는 게 없으면 {"items":[]} 로 반환 (error 없이)
+
+3-1. 화면 구조
+   - "8. 15(토) · 오늘" 같은 날짜 머리글 아래의 항목들은 모두 그 날짜다
+   - 각 항목은 [가맹점명] [금액] / 그 아래 [시간 · 카드명 · 할부구분] 형태
+   - 가맹점명에 " - 회사명" 이 붙어 있으면 앞부분만 쓴다 (예: "쿠팡_쿠페이 - 쿠팡페이 주식회사" → "쿠팡")
 
 4. 결과는 반드시 다음 JSON 형식으로만 (다른 설명 없이):
 {"items":[{"date":"${_today}","store":"스타벅스","amount":4500,"category":"카페"}]}
@@ -13828,7 +13873,7 @@ async function processCardCapture(input) {
         contents: [{
           parts: [
             { text: prompt },
-            { inline_data: { mime_type: mimeType, data: base64 } }
+            { inline_data: { mime_type: _mime, data: _b64 } }
           ]
         }],
         generationConfig: {
@@ -13848,11 +13893,15 @@ async function processCardCapture(input) {
       for (const cfg of cardCfgs) {
       for (const model of cardModels) {
         try {
+          // 타임아웃이 없으면 실패 시 화면이 '분석 중...' 인 채로 멈춘다
+          const _ctrl = new AbortController();
+          const _to = setTimeout(() => _ctrl.abort(), 45000);
           const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${window.GEMINI_API_KEY}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ...body, generationConfig: cfg }),
-          });
+            signal: _ctrl.signal,
+          }).finally(() => clearTimeout(_to));
           if (res.status === 429 || res.status === 503 || res.status === 404) { lastErr = `HTTP ${res.status}`; continue; }
           const d = await res.json();
           if (!res.ok || d.error) { lastErr = d.error?.message || `HTTP ${res.status}`; continue; }
@@ -13868,7 +13917,10 @@ async function processCardCapture(input) {
           }
           data = d; window._cardOcrText = joined;
           break outerCard;
-        } catch (e) { lastErr = e.message || '네트워크 오류'; continue; }
+        } catch (e) {
+          lastErr = (e && e.name === 'AbortError') ? '시간 초과(45초)' : (e.message || '네트워크 오류');
+          continue;
+        }
       }
       }
       if (!data) throw new Error(lastErr || 'AI 호출 실패');
