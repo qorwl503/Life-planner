@@ -11279,6 +11279,7 @@ function openExpenseModal(forDateKey) {
 
 // 수입/지출 토글
 function setExpType(type) {
+  window._expTypeSel = (type === 'income') ? 'income' : 'expense';  // 캡처 OCR 의 판단 힌트로 쓴다
   const expBtn = document.getElementById('type-expense');
   const incBtn = document.getElementById('type-income');
   const expSection = document.getElementById('cat-expense-section');
@@ -13870,21 +13871,29 @@ async function processCardCapture(input) {
       const _today = todayKey(); // YYYY-MM-DD
       const _todayObj = new Date();
       const _yesterday = new Date(_todayObj.getTime() - 86400000).toISOString().slice(0, 10);
-      const prompt = `이 이미지는 카드 사용 내역 (또는 영수증, 결제 알림 등)이야.
+      // 사용자가 지출/입금 탭을 골라둔 상태 — 이미지로 판단이 안 될 때의 기본값
+      const _typeHint = (window._expTypeSel === 'income') ? 'income' : 'expense';
+      const prompt = `이 이미지는 카드 사용 내역 (또는 영수증, 결제 알림, 입금 내역 등)이야.
 거래 항목들을 모두 추출해서 JSON 배열로 반환해줘.
 
 📅 오늘은 ${_today} 이야. (어제는 ${_yesterday})
 
 규칙:
-1. 각 항목: {date, store, amount, category}
+1. 각 항목: {date, store, amount, category, type}
    - date: "YYYY-MM-DD" 형식
    - ⚠️ "오늘"이라 적혀 있으면 → ${_today}, "어제"면 → ${_yesterday} 로 변환
    - 날짜에 연도가 없으면 ${new Date().getFullYear()}년으로. 월/일은 화면에 보이는 그대로 (절대 추측·변경 금지)
    - 화면에 날짜가 전혀 없으면 → ${_today} (오늘)
-   - store: 가맹점/사용처 (예: "스타벅스", "이마트")
-   - amount: 금액 (숫자만, 콤마 제거, 원화)
-   - category: 다음 중 가장 가까운 것 - 식비, 카페, 교통, 쇼핑, 도서, 의료, 문화, 통신, 학습, 기타
-2. 입금/입금취소는 건너뛰고 지출만 추출
+   - store: 가맹점/사용처/입금처 (예: "스타벅스", "이마트", "급여")
+   - amount: 금액 (숫자만, 콤마 제거, 원화, 항상 양수)
+   - type: "expense"(지출·결제·출금) 또는 "income"(입금·수입·급여·이체받음·환급)
+   - category: 지출이면 - 식비, 카페, 교통, 쇼핑, 도서, 의료, 문화, 통신, 학습, 기타
+               입금이면 - 급여, 용돈, 환급, 이자, 부수입, 기타
+2. 지출과 입금을 모두 추출한다 (입금 내역서·이체 화면도 그대로 읽는다)
+   - "+" 로 표시되거나 입금/수입/급여/환급/이체받음이면 type="income"
+   - "-" 로 표시되거나 결제/출금/송금이면 type="expense"
+   - 부호가 없으면 화면 제목·문구로 판단 (예: "입금 내역" → income)
+   - 그래도 애매하면 type="${_typeHint}" 로 둔다 (사용자가 화면에서 고른 값)
 
 3. 취소 처리
    - 항목 바로 아래에 "거래취소/취소/승인취소/환불" 이 붙은 항목만 제외한다
@@ -13896,7 +13905,7 @@ async function processCardCapture(input) {
    - 가맹점명에 " - 회사명" 이 붙으면 앞부분만 (예: "쿠팡_쿠페이 - 쿠팡페이 주식회사" → "쿠팡")
 
 4. 결과는 반드시 다음 JSON 형식으로만 (다른 설명 없이):
-{"items":[{"date":"${_today}","store":"스타벅스","amount":4500,"category":"카페"}]}
+{"items":[{"date":"${_today}","store":"스타벅스","amount":4500,"category":"카페","type":"expense"}]}
 
 이미지 자체가 카드내역이 아니어서 분석 불가할 때만: {"items":[],"error":"이유"}`;
 
@@ -14031,24 +14040,30 @@ function openCardReviewModal(items) {
   // 🔧 중복 감지 — 날짜+금액+가맹점이 같은 지출이 이미 가계부에 있으면 표시
   const norm = (s) => (s || '').replace(/\s/g, '').toLowerCase();
   window._cardReviewItems = items.map((it, i) => {
+    // type 을 못 읽어온 항목은 사용자가 고른 탭을 따른다
+    const isIncome = it.type ? (it.type === 'income') : (window._expTypeSel === 'income');
     const dup = (budget.expenses || []).some(e =>
-      e.type !== 'income' &&
+      (isIncome ? e.type === 'income' : e.type !== 'income') &&
       e.dateKey === it.date &&
       Number(e.amt) === Number(it.amount) &&
       norm(e.memo).includes(norm(it.store).slice(0, 4)) // 가맹점 앞부분 일치
     );
-    return { ...it, _checked: !dup, _id: i, _dup: dup }; // 중복 의심이면 기본 체크 해제
+    return { ...it, type: isIncome ? 'income' : 'expense', _checked: !dup, _id: i, _dup: dup };
   });
 
   const dupCount = window._cardReviewItems.filter(it => it._dup).length;
+  const incomeCount = window._cardReviewItems.filter(it => it.type === 'income').length;
 
   const CARD_CATS = ['식비','카페','편의점','마트','교통','쇼핑','문화','의료','미용','생활','통신','경조사','교육','도서','여행','운동','자녀','선물','학회','구독','투자','기타'];
+  const INCOME_CATS = ['급여','용돈','환급','이자','부수입','보너스','판매','기타'];
   const renderList = () => {
     return window._cardReviewItems.map((it, i) => {
-      const catOpts = CARD_CATS.concat(CARD_CATS.includes(it.category) ? [] : [it.category].filter(Boolean))
+      const isIncome = it.type === 'income';
+      const baseCats = isIncome ? INCOME_CATS : CARD_CATS;
+      const catOpts = baseCats.concat(baseCats.includes(it.category) ? [] : [it.category].filter(Boolean))
         .map(c => `<option value="${escapeAttr(c)}" ${c === it.category ? 'selected' : ''}>${escapeHTML(c)}</option>`).join('');
       return `
-      <div style="display:flex; align-items:flex-start; gap:8px; padding:10px 0; border-bottom:0.5px solid var(--border-tertiary);">
+      <div style="display:flex; align-items:flex-start; gap:8px; padding:10px 0; border-bottom:0.5px solid var(--border-tertiary); ${isIncome ? 'background:rgba(64,105,58,0.05);' : ''}">
         <input type="checkbox" id="cr-${i}" ${it._checked ? 'checked' : ''} onchange="window._cardReviewItems[${i}]._checked = this.checked;" style="width:18px; height:18px; cursor:pointer; margin-top:3px;" />
         <div style="flex:1; min-width:0;">
           <input type="text" value="${escapeAttr(it.store || '')}" onchange="window._cardReviewItems[${i}].store = this.value;" placeholder="가맹점" style="width:100%; font-size:13px; font-weight:500; border:none; border-bottom:0.5px solid var(--border-tertiary); padding:2px 0; background:transparent; color:var(--text-primary); font-family:inherit;" />
@@ -14056,10 +14071,14 @@ function openCardReviewModal(items) {
           <div style="display:flex; gap:5px; margin-top:6px;">
             <input type="date" value="${it.date || ''}" onchange="window._cardReviewItems[${i}].date = this.value;" style="flex:1; min-width:0; font-size:11px; padding:5px 6px; border:0.5px solid var(--border-tertiary); border-radius:6px; background:var(--bg-primary); color:var(--text-primary); font-family:inherit; box-shadow:var(--shadow-card);" />
             <select onchange="window._cardReviewItems[${i}].category = this.value;" style="font-size:11px; padding:5px 6px; border:0.5px solid var(--border-tertiary); border-radius:6px; background:var(--bg-primary); color:var(--text-primary); font-family:inherit; box-shadow:var(--shadow-card);">${catOpts}</select>
+            <select onchange="cardReviewSetType(${i}, this.value)" style="font-size:11px; padding:5px 6px; border:0.5px solid var(--border-tertiary); border-radius:6px; background:var(--bg-primary); color:${isIncome ? 'var(--text-success)' : 'var(--text-primary)'}; font-weight:${isIncome ? '700' : '400'}; font-family:inherit; box-shadow:var(--shadow-card);">
+              <option value="expense" ${!isIncome ? 'selected' : ''}>지출</option>
+              <option value="income" ${isIncome ? 'selected' : ''}>입금</option>
+            </select>
           </div>
         </div>
         <div style="display:flex; align-items:center; gap:2px; flex-shrink:0;">
-          <span style="font-size:12px; color:var(--text-tertiary);">-</span>
+          <span style="font-size:12px; font-weight:700; color:${isIncome ? 'var(--text-success)' : 'var(--text-tertiary)'};">${isIncome ? '+' : '-'}</span>
           <input type="number" value="${Number(it.amount) || 0}" onchange="window._cardReviewItems[${i}].amount = Number(this.value) || 0;" style="width:70px; font-size:13px; font-weight:600; text-align:right; border:none; border-bottom:0.5px solid var(--border-tertiary); padding:2px 0; background:transparent; color:var(--text-primary); font-family:inherit;" />
           <span style="font-size:11px; color:var(--text-tertiary);">원</span>
         </div>
@@ -14078,7 +14097,7 @@ function openCardReviewModal(items) {
       </div>
 
       <div style="padding:10px 12px; background:var(--bg-info); border-radius:8px; margin-bottom:12px; font-size:11px; color:var(--text-info); line-height:1.5;">
-        💡 ${items.length}개 항목 추출. <b>날짜·카테고리·금액·가맹점을 직접 고칠 수 있어요.</b> 체크된 것만 저장됩니다.
+        💡 ${items.length}개 항목 추출${incomeCount > 0 ? ` (입금 ${incomeCount}개 포함)` : ''}. <b>날짜·카테고리·금액·가맹점·지출입금을 직접 고칠 수 있어요.</b> 체크된 것만 저장됩니다.
         ${dupCount > 0 ? `<br>⚠️ ${dupCount}개는 이미 가계부에 있는 것 같아 체크를 꺼뒀어요. 확인 후 필요하면 체크하세요.` : ''}
       </div>
 
@@ -14093,6 +14112,17 @@ function openCardReviewModal(items) {
     </div>
   `;
   modal.classList.add('show');
+}
+
+// 지출↔입금 전환 — 카테고리 목록이 달라지므로 화면을 다시 그린다
+function cardReviewSetType(i, type) {
+  const it = (window._cardReviewItems || [])[i];
+  if (!it) return;
+  const wasIncome = it.type === 'income';
+  it.type = (type === 'income') ? 'income' : 'expense';
+  // 계열이 바뀌면 이전 카테고리가 맞지 않으므로 비워서 기본값을 고르게 한다
+  if (wasIncome !== (it.type === 'income')) it.category = (it.type === 'income') ? '급여' : '기타';
+  openCardReviewModal(window._cardReviewItems);
 }
 
 function cardReviewToggleAll(check) {
@@ -14112,10 +14142,13 @@ function saveCardReviewItems() {
 
   const norm = (s) => (s || '').replace(/\s/g, '').toLowerCase();
   let added = 0, skipped = 0;
+  let addedIncome = 0;
   selected.forEach(it => {
-    // 🔧 저장 직전 최종 중복 확인 (같은 캡처 두 번 저장 등 방지)
+    // 검토 화면과 같은 기준 — type 이 없으면 사용자가 고른 탭을 따른다
+    const isIncome = it.type ? (it.type === 'income') : (window._expTypeSel === 'income');
+    // 🔧 저장 직전 최종 중복 확인 (같은 캡처 두 번 저장 등 방지) — 지출·입금을 각각 비교
     const already = (budget.expenses || []).some(e =>
-      e.type !== 'income' &&
+      (isIncome ? e.type === 'income' : e.type !== 'income') &&
       e.dateKey === it.date &&
       Number(e.amt) === Number(it.amount) &&
       norm(e.memo).includes(norm(it.store).slice(0, 4))
@@ -14124,20 +14157,22 @@ function saveCardReviewItems() {
     const [y, m, d] = (it.date || todayKey()).split('-').map(Number);
     budget.expenses.push({
       id: Date.now() + Math.random(),
-      amt: Number(it.amount) || 0,
-      cat: it.category || '기타',
+      amt: Math.abs(Number(it.amount) || 0),
+      cat: it.category || (isIncome ? '기타' : '기타'),
       memo: it.store || '',
       dateKey: it.date,
       date: d,
-      type: 'expense',
+      type: isIncome ? 'income' : 'expense',
     });
     added++;
+    if (isIncome) addedIncome++;
   });
 
   saveData();
+  const _inc = addedIncome > 0 ? ` (입금 ${addedIncome}개)` : '';
   showToast(skipped > 0
-    ? `✨ ${added}개 추가 (중복 ${skipped}개 제외)`
-    : `✨ ${added}개 항목 추가됨`);
+    ? `✨ ${added}개 추가${_inc} (중복 ${skipped}개 제외)`
+    : `✨ ${added}개 항목 추가됨${_inc}`);
   closeModal();
   renderMoney();
   delete window._cardReviewItems;
