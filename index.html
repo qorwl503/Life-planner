@@ -13652,6 +13652,40 @@ async function processAssetCapture(input) {
     }
   });
 
+  // ⑤ 원가 맞추기 — 증권사의 '평가금액 + 수익률(또는 평가손익)'은 원가의 정답이다.
+  //    달러 종목: 그 둘로 원화 총매입을 구해 '매입 환율'을 역산 → 증권사 수익률과 정확히 일치.
+  //    원화 종목: 평단이 어긋나면 제안만 띄운다 (있는 값을 말없이 바꾸지 않는다).
+  mergedItems.forEach(it => {
+    const q = num(it.qty);
+    const price = num(it.price);
+    const evalAmt = num(it.evalAmount);
+    const pct = (it.profitPct != null && isFinite(Number(it.profitPct))) ? Number(it.profitPct) : null;
+    const pAmt = (it.profitAmount != null && isFinite(Number(it.profitAmount))) ? Number(it.profitAmount) : null;
+    if (!(q > 0) || !(price > 0) || !(evalAmt > 0)) return;
+
+    // 원화 총매입 = 평가금액 - 평가손익 (손익이 더 정확) / 없으면 평가금액 ÷ (1+수익률)
+    let krwBuy = 0;
+    if (pAmt != null) krwBuy = evalAmt - pAmt;
+    else if (pct != null && pct > -100) krwBuy = evalAmt / (1 + pct / 100);
+    if (!(krwBuy > 0)) return;
+
+    if (it.priceCurrency === 'USD') {
+      if (num(it.avgBuyRate) > 0) return;         // 캡처에서 직접 읽은 환율이 있으면 그대로 둔다
+      const rate = krwBuy / (q * price);
+      if (rate >= 800 && rate <= 2500) {          // 말이 되는 환율일 때만
+        it.avgBuyRate = parseFloat(rate.toFixed(2));
+        it._rateDerived = true;
+        console.log(`ℹ️ ${it.name}: 평가금액·손익으로 매입환율 ${it.avgBuyRate} 역산 (증권사 수익률과 맞춤)`);
+      }
+    } else {
+      const avg = krwBuy / q;
+      if (avg > 0 && Math.abs(avg - price) / price > 0.02) {
+        it._suggestPrice = Math.round(avg);
+        console.warn(`⚠️ ${it.name}: 평단(${price})이 증권사 평가금액·손익과 안 맞음 — 제안값 ${it._suggestPrice} (자동 적용 안 함)`);
+      }
+    }
+  });
+
   const warnCount = mergedItems.filter(it => it._suggestPrice != null || it._suggestQty != null || it._suggestPct != null).length;
   if (warnCount > 0) showToast(`⚠️ ${warnCount}개 종목 숫자가 서로 안 맞아요 — 검토 화면에서 확인하세요`);
 
@@ -19350,17 +19384,30 @@ async function getMacroData(forceRefresh = false) {
   if (!window._macroCache) window._macroCache = {};
   const c = window._macroCache.data;
   if (!forceRefresh && c && Date.now() - window._macroCache.time < 24 * 60 * 60 * 1000) return c;
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 12000);
   // 갱신 시 캐시 우회(Cloudflare 캐시 무시)를 위해 타임스탬프 파라미터 추가
   const bust = forceRefresh ? `?t=${Date.now()}` : '';
-  const res = await fetch(`https://life-planner.qorwl503.workers.dev/macro${bust}`, { signal: ctrl.signal, cache: 'no-store' });
-  clearTimeout(t);
-  if (!res.ok) throw new Error('FRED 데이터 로드 실패 (' + res.status + ')');
-  const data = await res.json();
-  if (data.error) throw new Error(data.error);
-  window._macroCache = { data, time: Date.now() };
-  return data;
+  // 🔧 뉴스 RSS가 같은 Worker 호스트를 5개씩 물고 있으면 이 요청이 큐에서 밀려 중단된다.
+  //    (증상: "Fetch is aborted") → 시간을 넉넉히 주고, 중단되면 한 번 더 시도한다.
+  let lastErr;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 20000);
+    try {
+      const res = await fetch(`https://life-planner.qorwl503.workers.dev/macro${bust}`, { signal: ctrl.signal, cache: 'no-store' });
+      clearTimeout(t);
+      if (!res.ok) throw new Error('FRED 데이터 로드 실패 (' + res.status + ')');
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      window._macroCache = { data, time: Date.now() };
+      return data;
+    } catch (e) {
+      clearTimeout(t);
+      lastErr = e;
+      if (attempt === 0) await new Promise(r => setTimeout(r, 1500));
+    }
+  }
+  // 실패는 실패로 알린다. 오래된 지표를 최신인 척 보여주면 판단이 틀어진다.
+  throw lastErr;
 }
 
 // 4분면 분석 (점수 계산)
@@ -22567,7 +22614,7 @@ async function fetchStockNews(stockName) {
 
         const items = [];
         const itemMatches = xml.match(/<item[\s>][\s\S]*?<\/item>/g) || [];
-        for (const block of itemMatches.slice(0, 8)) {
+        for (const block of itemMatches.slice(0, 30)) {   // 중복 걸러낸 뒤 8개를 채우려면 넉넉히 읽어야 한다
           const titleM = block.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/);
           const dateM = block.match(/<pubDate>([\s\S]*?)<\/pubDate>/);
           const linkM = block.match(/<link>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/link>/);
@@ -22583,9 +22630,20 @@ async function fetchStockNews(stockName) {
             if (title) items.push({ title, date: dateStr, pubDate, link });
           }
         }
-        if (items.length > 0) {
-          console.log(`📰 ${stockName} 뉴스 ${items.length}건 수집 (${feedUrl.includes('yahoo') ? '야후' : feedUrl.includes('google') ? '구글' : '네이버'})`);
-          return items;
+        // 🔧 구글뉴스는 같은 사건을 매체별로 쏟아낸다 → 비슷한 제목은 하나만 남긴다
+        const uniq = [];
+        const seen = new Set();
+        for (const it of items) {
+          // 끝의 ' - 매체명' 떼고, 조사·기호 빼고 앞부분만 비교 키로 쓴다
+          const core = it.title.replace(/\s[-–—|]\s[^-–—|]{1,20}$/, '');
+          const key = core.toLowerCase().replace(/[^a-z0-9가-힣]/g, '').slice(0, 18);
+          if (key && seen.has(key)) continue;
+          if (key) seen.add(key);
+          uniq.push(it);
+        }
+        if (uniq.length > 0) {
+          console.log(`📰 ${stockName} 뉴스 ${uniq.length}건 수집 (중복 ${items.length - uniq.length}건 제외, ${feedUrl.includes('yahoo') ? '야후' : feedUrl.includes('google') ? '구글' : '네이버'})`);
+          return uniq.slice(0, 8);
         }
       } catch (e) {
         continue;
@@ -22846,29 +22904,39 @@ async function fetchNewsRSS() {
     }
   }
 
-  // 시간 순 정렬
-  allItems.sort((a, b) => parseDate(b.pubDate) - parseDate(a.pubDate));
-
-  // 소스별 균등 배치: 각 소스에서 최소 3개씩은 상단에
-  const bySource = {};
-  allItems.forEach(item => {
-    if (!bySource[item.source]) bySource[item.source] = [];
-    bySource[item.source].push(item);
-  });
-
-  // 인터리브: 각 소스에서 1개씩 돌아가며 추가 (최대 8개씩)
-  const interleaved = [];
-  let maxIter = 8;
-  for (let i = 0; i < maxIter; i++) {
-    Object.values(bySource).forEach(arr => {
-      if (arr[i]) interleaved.push(arr[i]);
-    });
+  // 같은 기사가 한/영으로 두 번 오는 것만 정리 (일라이릴리 / Why is Eli Lilly)
+  const seenTitle = new Set();
+  const deduped = [];
+  for (const it of allItems) {
+    const key = String(it.title || '').toLowerCase()
+      .replace(/[^a-z0-9가-힣]/g, '')
+      .replace(/^(whyis|주가)/, '')
+      .slice(0, 24);
+    if (key && seenTitle.has(key)) continue;
+    if (key) seenTitle.add(key);
+    deduped.push(it);
   }
 
-  // 나머지 추가 (이미 추가된 거 제외)
-  const interleavedSet = new Set(interleaved);
-  const remaining = allItems.filter(item => !interleavedSet.has(item));
-  const finalItems = [...interleaved, ...remaining];
+  // 날짜를 못 읽은 기사는 버리지 않고 뒤에 둔다 (RSS 형식이 제각각이라 오독 가능)
+  const now = Date.now();
+  const MAX_AGE = 48 * 60 * 60 * 1000;   // 이틀 지난 기사는 뺀다
+  const dated = [], undatedItems = [];
+  for (const it of deduped) {
+    const ts = parseDate(it.pubDate).getTime();
+    if (!ts) { undatedItems.push(it); continue; }
+    if (now - ts > MAX_AGE) continue;
+    dated.push({ it, ts });
+  }
+  dated.sort((a, b) => b.ts - a.ts);   // 그냥 최신순
+
+  // 이틀치가 너무 적으면(프록시 실패 등) 기간 제한 없이 최신순으로 보여준다
+  let finalItems = dated.map(x => x.it).concat(undatedItems);
+  if (finalItems.length < 10) {
+    finalItems = deduped
+      .map(it => ({ it, ts: parseDate(it.pubDate).getTime() }))
+      .sort((a, b) => b.ts - a.ts)
+      .map(x => x.it);
+  }
 
   newsCache = { items: finalItems, time: Date.now() };
   return finalItems;
