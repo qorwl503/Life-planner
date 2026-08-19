@@ -6252,12 +6252,19 @@ async function readWorkoutFromImage(file) {
 
 각 항목: {date, sport, minutes, kcal, dist, unit, note}
 - date: "YYYY-MM-DD". 화면에 날짜가 있으면 그것, 없으면 ${today}
-- sport: 다음 중 하나 — 수영, 러닝, 걷기, 자전거, 헬스, 등산, 요가, 구기, 기타
+- sport: 화면에 적힌 운동 이름을 **그대로** 적어라 (예: "복합 유산소 운동", "실외 달리기", "기능성 근력 강화 운동", "정리운동")
+  · 앱이 알아서 분류하니 억지로 바꾸지 마라. 이름이 없으면 — 수영, 러닝, 걷기, 자전거, 근력, 유산소, 스트레칭, 등산, 요가, 구기, 기타 — 중에서 고른다
 - minutes: 운동 시간을 분 단위 정수로. "31:24"→31, "1:05:30"→65, "25시간 6분" 같은 누적은 무시
 - kcal: 소모 칼로리 숫자만. 없으면 0
 - dist: 거리 숫자만 (단위 없이)
 - unit: 거리 단위 — 수영이면 "m", 달리기·자전거·등산이면 "km". 거리가 없으면 ""
 - note: 화면에 적힌 추가 설명 (없으면 "")
+
+⌚ 애플워치 요약 화면(운동 끝내고 크라운+옆버튼으로 캡처한 작은 세로 화면)
+- 맨 위에 운동 이름, 그 아래 큰 숫자가 순서대로 나온다: 총 시간 / 활동 칼로리 / 총 칼로리 / 거리 / 평균 심박수
+- kcal 은 **활동 칼로리**를 쓴다 (총 칼로리가 아니라). 활동 칼로리가 안 보이면 총 칼로리
+- 심박수(BPM)를 칼로리로 착각하지 마라
+- 화면이 작아 잘려 있으면 보이는 값만 채우고 나머지는 0
 
 📌 종목별 유의점
 - 수영: 보통 미터(m)로 나온다. "1200m", "1.2km" 둘 다 나올 수 있음
@@ -19531,7 +19538,13 @@ async function renderMacroScenario(forceRefresh = false) {
     <div id="macro-ai-comment" style="margin-bottom:14px;"></div>
 
     <div style="font-size:10px; color:var(--text-tertiary); text-align:center; line-height:1.6; padding:0 8px;">
-      ${d.updatedAt ? '데이터 기준: ' + new Date(d.updatedAt).toLocaleDateString('ko-KR') + ' · ' : ''}출처: FRED (미국 연준 경제데이터)<br>
+      ${d.updatedAt ? (() => {
+        // FRED 지표는 '관측 월' 단위로 나온다. 2026-07-01 = 2026년 7월분 (8월 중순에 발표)
+        const _d = new Date(d.updatedAt);
+        const _ym = `${_d.getFullYear()}년 ${_d.getMonth() + 1}월분`;
+        const _lag = Math.round((Date.now() - _d.getTime()) / (30 * 24 * 60 * 60 * 1000));
+        return `지표 기준: <b>${_ym}</b>${_lag >= 1 ? ` (미국 통계는 1~2개월 뒤에 발표돼요)` : ''} · `;
+      })() : ''}출처: FRED (미국 연준 경제데이터)<br>
       ※ 참고용 시장 분석이며 투자 조언이 아니에요. 자산군 경향은 과거 사례 기반이라 미래를 보장하지 않아요.
     </div>`;
 
@@ -22235,7 +22248,22 @@ async function fetchNaverStockNews(query, ticker) {
       return raw.some(k => t.includes(k)) || [...strong].some(k => t.includes(k));
     });
     // 매칭이 너무 적으면(0~1개) 네이버 상위 결과라도 일부 노출 (아무것도 안 뜨는 것 방지)
-    const result = (filtered.length >= 2 ? filtered : all.slice(0, 4)).slice(0, 5);
+    const pool = (filtered.length >= 2 ? filtered : all.slice(0, 12));
+    // 🔧 같은 사건을 매체별로 쓴 기사가 5칸을 다 채우는 문제.
+    //    자르기 '전에' 비슷한 제목을 걸러야 서로 다른 기사 5개가 남는다.
+    const seenKey = new Set();
+    const result = [];
+    for (const n of pool) {
+      const plain = String(n.title || '')
+        .replace(/<[^>]*>/g, '')                       // 네이버가 넣는 <b> 강조 태그
+        .replace(/&[a-z]+;|&#\d+;/gi, ' ')
+        .replace(/\s[-–—|]\s[^-–—|]{1,20}$/, '');      // 끝의 ' - 매체명'
+      const key = plain.toLowerCase().replace(/[^a-z0-9가-힣]/g, '').slice(0, 18);
+      if (key && seenKey.has(key)) continue;
+      if (key) seenKey.add(key);
+      result.push(n);
+      if (result.length >= 5) break;
+    }
     window._stockNewsCache[_ck] = { data: result, time: Date.now() };
     return result;
   } catch (e) { return (window._stockNewsCache[_ck] ? window._stockNewsCache[_ck].data : []); }
@@ -22754,10 +22782,15 @@ async function fetchNewsRSS() {
   }
 
   const sources = [
-    { name:'인베스팅닷컴', url:'https://kr.investing.com/rss/news_25.rss', tag:'증시' },
-    { name:'Investing.com', url:'https://www.investing.com/rss/news_25.rss', tag:'🇺🇸 글로벌' },
-    { name:'한경 증권', url:'https://www.hankyung.com/feed/finance', tag:'증시' },
+    { name:'연합뉴스 경제', url:'https://www.yna.co.kr/rss/economy.xml', tag:'경제' },
     { name:'한국경제', url:'https://www.hankyung.com/feed/economy', tag:'경제' },
+    { name:'한경 증권', url:'https://www.hankyung.com/feed/finance', tag:'증시' },
+    { name:'매일경제', url:'https://www.mk.co.kr/rss/30100041/', tag:'경제' },
+    { name:'인베스팅 많이본', url:'https://kr.investing.com/rss/news_285.rss', tag:'인기' },
+    { name:'인베스팅 경제', url:'https://kr.investing.com/rss/news_14.rss', tag:'경제' },
+    { name:'인베스팅 지표', url:'https://kr.investing.com/rss/news_95.rss', tag:'지표' },
+    { name:'인베스팅 외환', url:'https://kr.investing.com/rss/news_1.rss', tag:'외환' },
+    { name:'인베스팅 증시', url:'https://kr.investing.com/rss/news_25.rss', tag:'증시' },
     { name:'Yahoo Finance', url:'https://finance.yahoo.com/news/rssindex', tag:'🇺🇸 글로벌' },
   ];
 
@@ -22866,6 +22899,7 @@ async function fetchNewsRSS() {
               pubDate,
               source: source.name,
               tag: source.tag,
+              rank: idx,   // 피드가 준 순서 (많이 본 기사 = 조회수 순)
             });
             addedCount++;
           }
@@ -22928,6 +22962,18 @@ async function fetchNewsRSS() {
     dated.push({ it, ts });
   }
   dated.sort((a, b) => b.ts - a.ts);   // 그냥 최신순
+
+  // 🔧 "○○ 주가, 오늘 급등하는 이유는?" 류는 하루에도 수십 개가 쏟아져 목록을 덮어버린다.
+  //    순서는 최신순 그대로 두고, 이 유형만 최대 3개까지만 남긴다.
+  const isMover = ttl => /(급등|급락|강세|약세)하는 이유|오늘 (급등|급락)|why is .+ (stock|shares?) (surging|falling|plunging|soaring|rising|dropping|jumping)|주가.{0,4}(급등|급락)/i.test(ttl || '');
+  let moverLeft = 3;
+  const trimmed = [];
+  for (const x of dated) {
+    if (isMover(x.it.title)) { if (moverLeft <= 0) continue; moverLeft--; }
+    trimmed.push(x);
+  }
+  dated.length = 0;
+  dated.push(...trimmed);
 
   // 이틀치가 너무 적으면(프록시 실패 등) 기간 제한 없이 최신순으로 보여준다
   let finalItems = dated.map(x => x.it).concat(undatedItems);
@@ -23296,22 +23342,60 @@ async function loadNewsRSS() {
       </div>`;
   }
 
-  container.innerHTML = growthHtml + items.slice(0, 20).map(item => {
+  // 🔧 카테고리별로 묶어서 보여준다 (섞여 있으면 뭘 보는지 알기 어렵다)
+  //    각 묶음 안에서는 최신순 그대로. '많이 본 기사'를 맨 위에 더 넉넉히.
+  const NEWS_GROUPS = [
+    { tag: '인기',        label: '🔥 많이 본 기사', limit: 8 },
+    { tag: '경제',        label: '📊 경제',         limit: 6 },
+    { tag: '증시',        label: '📈 증시',         limit: 6 },
+    { tag: '지표',        label: '📐 경제 지표',    limit: 5 },
+    { tag: '외환',        label: '💱 외환',         limit: 4 },
+    { tag: '🇺🇸 글로벌',  label: '🌏 해외',         limit: 5 },
+  ];
+
+  const newsRow = (item) => {
     const pubDate = item.pubDate ? timeAgo(new Date(item.pubDate).toISOString()) : '';
-    return `<div onclick="openExt(${jsString(item.link)})" style="padding:12px 0; border-bottom:0.5px solid var(--border-tertiary); cursor:pointer;">
+    return `<div onclick="openExt(${jsString(item.link)})" style="padding:11px 0; border-bottom:0.5px solid var(--border-tertiary); cursor:pointer;">
       <div style="display:flex; align-items:flex-start; gap:8px;">
         <div style="flex:1; min-width:0;">
           <div style="font-size:13px; font-weight:500; line-height:1.4; margin-bottom:4px;">${escapeHTML(item.title)}</div>
           <div style="display:flex; gap:6px; align-items:center; font-size:11px; color:var(--text-tertiary);">
             <span>${escapeHTML(item.source)}</span>
             ${pubDate ? `<span>·</span><span>${pubDate}</span>` : ''}
-            <span style="margin-left:auto; padding:2px 6px; border-radius:3px; background:var(--bg-secondary); color:var(--text-secondary);">${item.tag}</span>
           </div>
         </div>
         <i class="ti ti-external-link" style="font-size:13px; color:var(--text-tertiary); margin-top:2px;"></i>
       </div>
     </div>`;
-  }).join('');
+  };
+
+  const used = new Set();
+  let groupedHtml = '';
+  for (const g of NEWS_GROUPS) {
+    let list = items.filter(it => it.tag === g.tag);
+    // '많이 본 기사'는 조회수 순위 자체가 정보다 → 시간순으로 다시 섞지 않는다
+    if (g.tag === '인기') list = list.slice().sort((x, y) => (x.rank ?? 99) - (y.rank ?? 99));
+    list = list.slice(0, g.limit);
+    if (list.length === 0) continue;
+    list.forEach(it => used.add(it));
+    groupedHtml += `
+      <div style="margin-bottom:14px;">
+        <div style="font-size:12px; font-weight:800; color:var(--text-secondary); padding:4px 0 2px;">${g.label} <span style="font-weight:500; color:var(--text-tertiary);">${list.length}</span></div>
+        ${list.map(newsRow).join('')}
+      </div>`;
+  }
+
+  // 어느 묶음에도 안 들어간 기사 (태그가 새로 생긴 경우 등)
+  const rest = items.filter(it => !used.has(it)).slice(0, 6);
+  if (rest.length > 0) {
+    groupedHtml += `
+      <div style="margin-bottom:14px;">
+        <div style="font-size:12px; font-weight:800; color:var(--text-secondary); padding:4px 0 2px;">📰 그 외 <span style="font-weight:500; color:var(--text-tertiary);">${rest.length}</span></div>
+        ${rest.map(newsRow).join('')}
+      </div>`;
+  }
+
+  container.innerHTML = growthHtml + groupedHtml;
 }
 
 function refreshNews() {
