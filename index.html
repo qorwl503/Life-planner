@@ -22791,6 +22791,10 @@ async function fetchNewsRSS() {
     { name:'인베스팅 지표', url:'https://kr.investing.com/rss/news_95.rss', tag:'지표' },
     { name:'인베스팅 외환', url:'https://kr.investing.com/rss/news_1.rss', tag:'외환' },
     { name:'인베스팅 증시', url:'https://kr.investing.com/rss/news_25.rss', tag:'증시' },
+    { name:'인베스팅 코인', url:'https://kr.investing.com/rss/news_301.rss', tag:'코인' },
+    { name:'WSJ 마켓', url:'https://feeds.content.dowjones.io/public/rss/RSSMarketsMain', tag:'🇺🇸 글로벌' },
+    { name:'MarketWatch', url:'https://feeds.content.dowjones.io/public/rss/mw_topstories', tag:'🇺🇸 글로벌' },
+    { name:'MW 마켓펄스', url:'https://feeds.content.dowjones.io/public/rss/mw_marketpulse', tag:'🇺🇸 글로벌' },
     { name:'Yahoo Finance', url:'https://finance.yahoo.com/news/rssindex', tag:'🇺🇸 글로벌' },
   ];
 
@@ -22963,17 +22967,6 @@ async function fetchNewsRSS() {
   }
   dated.sort((a, b) => b.ts - a.ts);   // 그냥 최신순
 
-  // 🔧 "○○ 주가, 오늘 급등하는 이유는?" 류는 하루에도 수십 개가 쏟아져 목록을 덮어버린다.
-  //    순서는 최신순 그대로 두고, 이 유형만 최대 3개까지만 남긴다.
-  const isMover = ttl => /(급등|급락|강세|약세)하는 이유|오늘 (급등|급락)|why is .+ (stock|shares?) (surging|falling|plunging|soaring|rising|dropping|jumping)|주가.{0,4}(급등|급락)/i.test(ttl || '');
-  let moverLeft = 3;
-  const trimmed = [];
-  for (const x of dated) {
-    if (isMover(x.it.title)) { if (moverLeft <= 0) continue; moverLeft--; }
-    trimmed.push(x);
-  }
-  dated.length = 0;
-  dated.push(...trimmed);
 
   // 이틀치가 너무 적으면(프록시 실패 등) 기간 제한 없이 최신순으로 보여준다
   let finalItems = dated.map(x => x.it).concat(undatedItems);
@@ -23347,10 +23340,11 @@ async function loadNewsRSS() {
   const NEWS_GROUPS = [
     { tag: '인기',        label: '🔥 많이 본 기사', limit: 8 },
     { tag: '경제',        label: '📊 경제',         limit: 6 },
-    { tag: '증시',        label: '📈 증시',         limit: 6 },
+    { tag: '증시',        label: '📈 증시',         limit: 8 },
     { tag: '지표',        label: '📐 경제 지표',    limit: 5 },
     { tag: '외환',        label: '💱 외환',         limit: 4 },
-    { tag: '🇺🇸 글로벌',  label: '🌏 해외',         limit: 5 },
+    { tag: '코인',        label: '🪙 암호화폐',     limit: 4 },
+    { tag: '🇺🇸 글로벌',  label: '🌏 해외',         limit: 8 },
   ];
 
   const newsRow = (item) => {
@@ -23372,10 +23366,32 @@ async function loadNewsRSS() {
   const used = new Set();
   let groupedHtml = '';
   for (const g of NEWS_GROUPS) {
-    let list = items.filter(it => it.tag === g.tag);
-    // '많이 본 기사'는 조회수 순위 자체가 정보다 → 시간순으로 다시 섞지 않는다
-    if (g.tag === '인기') list = list.slice().sort((x, y) => (x.rank ?? 99) - (y.rank ?? 99));
-    list = list.slice(0, g.limit);
+    const pool = items.filter(it => it.tag === g.tag);
+    let list;
+    if (g.tag === '인기') {
+      // '많이 본 기사'는 조회수 순위 자체가 정보다 → 시간순으로 다시 섞지 않는다
+      list = pool.slice().sort((x, y) => (x.rank ?? 99) - (y.rank ?? 99)).slice(0, g.limit);
+    } else {
+      // 🔧 연합뉴스처럼 기사가 많은 곳이 묶음을 독점하는 것을 막는다.
+      //    매체별로 한 건씩 돌아가며 뽑는다 (각 매체 안에서는 최신순 그대로).
+      const bySrc = new Map();
+      for (const it of pool) {
+        if (!bySrc.has(it.source)) bySrc.set(it.source, []);
+        bySrc.get(it.source).push(it);
+      }
+      const lanes = [...bySrc.values()];
+      list = [];
+      for (let i = 0; list.length < g.limit && i < 20; i++) {
+        let added = false;
+        for (const lane of lanes) {
+          if (!lane[i]) continue;
+          list.push(lane[i]);
+          added = true;
+          if (list.length >= g.limit) break;
+        }
+        if (!added) break;
+      }
+    }
     if (list.length === 0) continue;
     list.forEach(it => used.add(it));
     groupedHtml += `
