@@ -4238,15 +4238,15 @@ function renderChallengeCard(c) {
   let progressText = '';
 
   if (c.type === 'daily') {
-    progressPct = Math.min(100, (checkedDays / totalDays) * 100);
+    progressPct = Math.round(Math.min(100, (checkedDays / totalDays) * 100));
     progressText = `${checkedDays} / ${totalDays}일`;
   } else if (c.type === 'forbidden') {
     const violations = Object.values(c.checks || {}).filter(v => v === 'fail').length;
     const successes = Object.values(c.checks || {}).filter(v => v === true).length;
-    progressPct = Math.min(100, (successes / totalDays) * 100);
+    progressPct = Math.round(Math.min(100, (successes / totalDays) * 100));
     progressText = `${successes} / ${totalDays}일 성공`;
   } else if (c.type === 'count') {
-    progressPct = Math.min(100, (checkedDays / Math.max(1, Number(c.targetCount) || 0)) * 100);
+    progressPct = Math.round(Math.min(100, (checkedDays / Math.max(1, Number(c.targetCount) || 0)) * 100));
     if (c.perWeek) {
       // 🔧 주 N회 챌린지 — 이번 주 달성 현황도 함께 표시
       const now = new Date();
@@ -4288,7 +4288,7 @@ function renderChallengeCard(c) {
   const dTarget = Number(c.dailyTarget) || 0;
   const todayLog = (c.logs || {})[tKey] || {};
   const todayVal = Number(todayLog.value) || 0;
-  const valPct = dTarget > 0 ? Math.min(100, (todayVal / dTarget) * 100) : 0;
+  const valPct = dTarget > 0 ? Math.round(Math.min(100, (todayVal / dTarget) * 100)) : 0;
   const dailyBar = dTarget > 0 ? `
     <div onclick="event.stopPropagation(); openChallengeLog(${c.id})" title="눌러서 오늘 수치 입력" style="margin-top:6px; padding:6px 9px; background:rgba(255,255,255,0.3); border-radius:9px; cursor:pointer;">
       <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:5px;">
@@ -4347,6 +4347,8 @@ function getChallengePresets() {
     { title:'100일 책 읽기', type:'daily', totalDays:100, icon:'📚', dailyTarget:10, unit:'페이지' },
     { title:'주 3회 운동', type:'count', totalDays:30, perWeek:3, icon:'💪' },
     { title:'주 4일 운동', type:'count', totalDays:30, perWeek:4, icon:'💪' },
+    { title:'하루 30분 · 주4회 운동', type:'count', totalDays:30, perWeek:4, icon:'💪', dailyTarget:30, unit:'분' },
+    { title:'하루 100페이지 책읽기', type:'daily', totalDays:30, icon:'📚', dailyTarget:100, unit:'페이지' },
     { title:'매일 일기', type:'daily', totalDays:30, icon:'📝' },
     { title:'배달음식 끊기', type:'forbidden', totalDays:14, icon:'🥗' },
     { title:'금주 챌린지', type:'forbidden', totalDays:30, icon:'🚭' },
@@ -4373,7 +4375,7 @@ function quickChallenge(preset) {
     completed: false,
     icon: preset.icon || '🎯',
     dailyTarget: preset.dailyTarget || null,
-    unit: preset.dailyTarget ? (preset.unit || '회') : null,
+    unit: preset.dailyTarget ? (preset.unit || '회') : null,   // 프리셋에 단위가 있으면 그것을 쓴다
     memo: null,
     logs: {},
   });
@@ -4671,7 +4673,7 @@ function openChallengeModal() {
       <div style="font-size:12px; color:var(--text-secondary); margin: 16px 0 8px;">⚡ 빠른 시작</div>
       <div style="display:flex; flex-wrap:wrap; gap:6px;">
         ${getChallengePresets().map(p => `
-          <button onclick="fillPreset('${p.title}', '${p.type}', ${p.totalDays}, ${p.targetCount || 'null'}, ${p.perWeek || 'null'}, '${p.icon || '🎯'}', ${p.dailyTarget || 'null'}, '${p.unit || ''}')" class="chip" style="padding:8px 12px; font-size:11px;">${p.icon || ''} ${p.title}</button>
+          <button onclick="fillPreset('${p.title}', '${p.type}', ${p.totalDays}, ${p.targetCount || 'null'}, ${p.perWeek || 'null'}, ${p.dailyTarget || 'null'}, '${p.unit || ''}', '${p.icon || '🎯'}', ${p.dailyTarget || 'null'}, '${p.unit || ''}')" class="chip" style="padding:8px 12px; font-size:11px;">${p.icon || ''} ${p.title}</button>
         `).join('')}
       </div>
     </div>
@@ -4763,7 +4765,7 @@ function openChallengeModal() {
   }, 50);
 }
 
-function fillPreset(title, type, totalDays, targetCount, perWeek) {
+function fillPreset(title, type, totalDays, targetCount, perWeek, dailyTarget, unit) {
   document.getElementById('ch-title').value = title;
   document.querySelectorAll('#ch-type .chip').forEach(x => {
     x.classList.toggle('active', x.dataset.t === type);
@@ -4795,6 +4797,16 @@ function fillPreset(title, type, totalDays, targetCount, perWeek) {
       document.getElementById('ch-count').value = targetCount;
     }
   }
+  // 하루 목표량·단위도 함께 채운다 (예전엔 프리셋을 눌러도 이 칸이 비어 있어
+  //  "30분 운동" 을 고르고도 단위가 기본값 그대로 남는 문제가 있었다)
+  const tEl = document.getElementById('ch-daily-target');
+  const uEl = document.getElementById('ch-unit');
+  if (tEl) tEl.value = Number(dailyTarget) > 0 ? dailyTarget : '';
+  if (uEl && unit) uEl.value = unit;
+  document.querySelectorAll('#ch-unit-quick .chip').forEach(b => {
+    b.classList.toggle('active', !!unit && b.dataset.u === unit);
+  });
+
 }
 
 function saveChallenge() {
