@@ -5530,19 +5530,26 @@ function openWorkoutModal(dateKeyStr) {
 
 // 🏃 운동 종목 — 종목마다 기록 단위가 다르다 (수영은 m, 달리기·자전거는 km)
 const SPORTS = [
-  { key: '수영',   emoji: '🏊', unit: 'm',  step: 25 },
-  { key: '러닝',   emoji: '🏃', unit: 'km', step: 0.1 },
-  { key: '걷기',   emoji: '🚶', unit: 'km', step: 0.1 },
-  { key: '자전거', emoji: '🚴', unit: 'km', step: 0.1 },
-  { key: '헬스',   emoji: '🏋️', unit: '',   step: 0 },
-  { key: '등산',   emoji: '🥾', unit: 'km', step: 0.1 },
-  { key: '요가',   emoji: '🧘', unit: '',   step: 0 },
-  { key: '구기',   emoji: '⚽', unit: '',   step: 0 },
-  { key: '기타',   emoji: '💪', unit: '',   step: 0 },
+  { key: '수영',     emoji: '🏊', unit: 'm',  step: 25,  alias: ['수영', '풀 수영', '오픈 워터', 'swim'] },
+  { key: '러닝',     emoji: '🏃', unit: 'km', step: 0.1, alias: ['러닝', '달리기', '조깅', 'run'] },
+  { key: '걷기',     emoji: '🚶', unit: 'km', step: 0.1, alias: ['걷기', '워킹', '산책', 'walk'] },
+  { key: '자전거',   emoji: '🚴', unit: 'km', step: 0.1, alias: ['자전거', '사이클', '싸이클', 'cycl', 'bike'] },
+  { key: '근력',     emoji: '🏋️', unit: '',   step: 0,   alias: ['근력', '웨이트', '헬스', '기능성 근력', 'strength'] },
+  { key: '유산소',   emoji: '🔥', unit: '',   step: 0,   alias: ['유산소', '복합 유산소', '고강도', '인터벌', 'hiit', 'cardio'] },
+  { key: '스트레칭', emoji: '🤸', unit: '',   step: 0,   alias: ['정리운동', '준비운동', '스트레칭', '쿨다운', 'cooldown', '마음 챙김', '호흡'] },
+  { key: '등산',     emoji: '🥾', unit: 'km', step: 0.1, alias: ['등산', '하이킹', 'hiking'] },
+  { key: '요가',     emoji: '🧘', unit: '',   step: 0,   alias: ['요가', '필라테스', 'yoga', 'pilates'] },
+  { key: '구기',     emoji: '⚽', unit: '',   step: 0,   alias: ['구기', '축구', '농구', '배구', '테니스', '배드민턴', '골프', '탁구'] },
+  { key: '기타',     emoji: '💪', unit: '',   step: 0,   alias: [] },
 ];
 function sportMeta(name) {
-  const n = String(name || '');
-  return SPORTS.find(s => n.includes(s.key)) || { key: '기타', emoji: '💪', unit: '', step: 0 };
+  const n = String(name || '').toLowerCase();
+  if (!n) return SPORTS[SPORTS.length - 1];
+  // 워치가 주는 이름은 '복합 유산소 운동', '실내 걷기' 처럼 길다 → 별칭이 포함돼 있으면 그 종목
+  for (const s of SPORTS) {
+    if (s.key !== '기타' && s.alias.some(a => n.includes(a.toLowerCase()))) return s;
+  }
+  return SPORTS[SPORTS.length - 1];
 }
 // 기록에서 종목·거리를 뽑아낸다 (note 에 "수영 1200m" 형태로 저장됨)
 // 종목 칩 선택 — 종목에 따라 거리 단위와 표시 여부를 바꾼다
@@ -5619,7 +5626,7 @@ async function drainWorkoutInbox(silent = true) {
       workoutLog[dateK] = {
         ...prev,                    // 같은 날 사진·인바디 기록은 유지
         done: true,
-        minutes: minutesFixed || Number(prev.minutes) || 0,
+        minutes: (minutes > 600 ? Math.round(minutes / 60) : minutes) || Number(prev.minutes) || 0,
         kcal: kcal || Number(prev.kcal) || 0,
         note: formatWorkoutNote(sport, dist, unit),
       };
