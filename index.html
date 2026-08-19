@@ -5160,8 +5160,8 @@ function renderWorkout() {
     <button onclick="openHealthSyncGuide()" style="width:100%; margin-bottom:12px; padding:9px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:11px; font-weight:700; cursor:pointer; font-family:inherit;">
       ⌚ 워치·건강앱 연동하기
     </button>
-    <button onclick="drainWorkoutInbox(false)" style="width:100%; margin-bottom:12px; padding:9px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:11px; font-weight:700; cursor:pointer; font-family:inherit;">
-      📥 워치 기록 지금 가져오기
+    <button onclick="openSyncLog()" style="width:100%; margin-bottom:12px; padding:9px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:11px; font-weight:700; cursor:pointer; font-family:inherit;">
+      📜 자동으로 들어온 기록 보기${(settings.syncLog || []).length ? ` (${(settings.syncLog || []).length})` : ''}
     </button>`;
   html += renderInbodyCard();
 
@@ -5579,6 +5579,58 @@ function formatWorkoutNote(sport, dist, unit) {
   return sport || '운동';
 }
 
+// ===== 📜 연동 기록 — 무엇이 어떻게 들어왔는지 확인 =====
+// 워치·단축어·문자로 들어온 기록은 화면에 잠깐 뜨는 안내만으로는 확인이 어렵다.
+// 최근 것들을 남겨두고 언제든 열어볼 수 있게 한다. (settings 에 최근 30건만)
+function logSyncEvent(kind, text, detail) {
+  if (!settings.syncLog) settings.syncLog = [];
+  settings.syncLog.unshift({
+    at: Date.now(),
+    kind,                 // 'workout' | 'expense'
+    text: String(text || ''),
+    detail: String(detail || ''),
+  });
+  settings.syncLog = settings.syncLog.slice(0, 30);
+}
+
+function openSyncLog() {
+  const list = settings.syncLog || [];
+  const rows = list.length === 0
+    ? `<div style="padding:24px 14px; text-align:center; font-size:12px; color:var(--text-tertiary); line-height:1.7; background:var(--bg-secondary); border-radius:12px;">
+         아직 자동으로 들어온 기록이 없어요.<br>
+         <span style="font-size:11px;">워치 자동화나 문자 연동을 설정하면 여기에 쌓여요.</span>
+       </div>`
+    : list.map(e => {
+        const d = new Date(e.at);
+        const when = `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        const icon = e.kind === 'workout' ? '⌚' : '💳';
+        const col = e.kind === 'workout' ? 'var(--text-success)' : 'var(--text-info)';
+        return `<div style="padding:10px 11px; background:var(--bg-primary); border:0.5px solid var(--border-tertiary); border-left:3px solid ${col}; border-radius:10px; margin-bottom:5px; box-shadow:var(--shadow-card);">
+          <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;">
+            <span style="font-size:12.5px; font-weight:700;">${icon} ${escapeHTML(e.text)}</span>
+            <span style="font-size:10px; color:var(--text-tertiary); white-space:nowrap;">${when}</span>
+          </div>
+          ${e.detail ? `<div style="font-size:11px; color:var(--text-tertiary); margin-top:3px; word-break:break-all;">${escapeHTML(e.detail)}</div>` : ''}
+        </div>`;
+      }).join('');
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+        <h2 style="font-size:15px;">📜 자동 연동 기록</h2>
+        <span style="width:44px;"></span>
+      </div>
+      <div style="padding:10px 12px; background:var(--bg-info); border-radius:10px; margin-bottom:10px; font-size:11px; color:var(--text-info); line-height:1.6;">
+        워치·단축어·문자로 <b>자동으로 들어온</b> 것만 모아 보여줘요. 무엇이 어떤 값으로 들어왔는지 확인할 수 있어요.
+      </div>
+      <div style="max-height:60vh; overflow-y:auto;">${rows}</div>
+      ${list.length ? `<button onclick="settings.syncLog=[]; saveData(); closeModal(); showToast('기록 비움');" style="width:100%; margin-top:10px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-tertiary); border-radius:10px; font-size:12px; cursor:pointer; font-family:inherit;">기록 비우기</button>` : ''}
+    </div>`;
+  modal.classList.add('show');
+}
+
 // ===== 📥 운동 수신함 (워치 → 앱 자동 연동) =====
 // 단축어가 앱을 열지 않고 Firestore 에 바로 써 넣으면, 앱은 켤 때 그걸 읽어 기록으로 옮긴다.
 //   경로: users/{uid}/workoutInbox/{아무id}
@@ -5622,15 +5674,10 @@ async function drainWorkoutInbox(silent = true) {
     const unit = String(it.unit || '').toLowerCase() === 'm' ? 'm' : (dist > 0 ? 'km' : '');
 
     if (minutes > 0 || kcal > 0 || dist > 0) {
-      const prev = workoutLog[dateK] || {};
-      workoutLog[dateK] = {
-        ...prev,                    // 같은 날 사진·인바디 기록은 유지
-        done: true,
-        minutes: (minutes > 600 ? Math.round(minutes / 60) : minutes) || Number(prev.minutes) || 0,
-        kcal: kcal || Number(prev.kcal) || 0,
-        note: formatWorkoutNote(sport, dist, unit),
-      };
-      applied++;
+      // 하루 여러 건도 각각 남는다
+      if (addWorkoutSession(dateK, {
+        sport, minutes: (minutes > 600 ? Math.round(minutes / 60) : minutes), kcal, dist, unit,
+      })) applied++;
     }
 
     // 반영했든 값이 비었든 수신함에서는 지운다 (계속 쌓이지 않게)
@@ -5641,6 +5688,7 @@ async function drainWorkoutInbox(silent = true) {
   }
 
   if (applied > 0) {
+    logSyncEvent('workout', `수신함에서 ${applied}건`, '앱이 꺼져 있는 동안 쌓인 기록');
     saveData();
     showToast(`⌚ 워치 운동 ${applied}건 들어왔어요`);
     if (currentTab === 'workout') renderWorkout();
@@ -5694,20 +5742,19 @@ function consumeWorkoutFromUrl() {
     return false;
   }
 
-  const prev = workoutLog[dateK] || {};
-  workoutLog[dateK] = {
-    ...prev,                       // 같은 날 인바디·사진 등 다른 기록 유지
-    done: true,
-    minutes: minutesFixed || Number(prev.minutes) || 0,
-    kcal: kcal || Number(prev.kcal) || 0,
-    note: formatWorkoutNote(sport, dist, unit),
-  };
+  // 하루에 여러 운동을 해도 앞의 기록을 덮지 않도록 세션으로 쌓는다
+  addWorkoutSession(dateK, { sport, minutes: minutesFixed, kcal, dist, unit });
   saveData();
   const bits = [];
   if (minutesFixed > 0) bits.push(minutesFixed + '분');
   if (kcal > 0) bits.push(kcal + 'kcal');
   if (dist > 0) bits.push(dist + unit);
-  showToast(`⌚ ${sportMeta(sport).emoji} ${sport}${bits.length ? ' ' + bits.join(' · ') : ''} 기록됨`);
+  const summary = `${sportMeta(sport).emoji} ${sport}${bits.length ? ' ' + bits.join(' · ') : ''}`;
+  // 무엇이 어떤 값으로 들어왔는지 남겨둔다 (원본 종목명도 함께 — 기타로 빠질 때 원인 확인용)
+  logSyncEvent('workout', `${dateK} ${summary}`,
+    `받은 값 — 종목:"${sportRaw}" 시간:${params.get('min') ?? params.get('m') ?? '없음'} 칼로리:${params.get('kcal') ?? params.get('k') ?? '없음'} 거리:${params.get('dist') ?? params.get('d') ?? '없음'}`);
+  saveData();
+  showToast(`⌚ ${summary} 기록됨`);
   return true;
 }
 
@@ -5804,6 +5851,75 @@ function openHealthSyncGuide() {
     </div>`;
   modal.classList.add('show');
 }
+// ===== 하루에 운동 여러 개 =====
+// 예전엔 workoutLog[날짜] 에 기록 하나만 담아서, 오전에 수영하고 저녁에 근력하면
+// 나중 것이 앞의 것을 덮어썼다. 이제 sessions[] 에 쌓고 합계를 다시 계산한다.
+//   workoutLog[날짜] = { done, minutes(합), kcal(합), note(요약), sessions:[{sport,minutes,kcal,dist,unit,at}] }
+function workoutSessions(log) {
+  if (!log) return [];
+  if (Array.isArray(log.sessions)) return log.sessions;
+  // 예전 형식(세션 없이 단일 기록)도 한 건짜리 목록처럼 다룬다
+  if (Number(log.minutes) > 0 || Number(log.kcal) > 0 || log.note) {
+    const p = parseWorkoutNote(log.note);
+    return [{ sport: p.sport, minutes: Number(log.minutes) || 0, kcal: Number(log.kcal) || 0,
+              dist: p.dist, unit: p.unit, at: 0 }];
+  }
+  return [];
+}
+
+// 세션 목록으로 그 날의 합계와 요약 문구를 다시 만든다
+function recalcWorkoutDay(dateK) {
+  const log = workoutLog[dateK];
+  if (!log) return;
+  const list = Array.isArray(log.sessions) ? log.sessions : [];
+  if (list.length === 0) return;
+  log.minutes = list.reduce((s, x) => s + (Number(x.minutes) || 0), 0);
+  log.kcal = list.reduce((s, x) => s + (Number(x.kcal) || 0), 0);
+  log.note = list.map(x => formatWorkoutNote(x.sport, x.dist, x.unit)).join(' · ');
+  log.done = true;
+}
+
+// 세션 하나 추가 (같은 종목·시간이 연달아 들어오면 중복으로 보고 무시)
+function addWorkoutSession(dateK, s) {
+  const sport = sportMeta(s.sport || '').key;
+  const minutes = Math.round(Number(s.minutes) || 0);
+  const kcal = Math.round(Number(s.kcal) || 0);
+  const dist = Number(s.dist) || 0;
+  const unit = String(s.unit || '').toLowerCase() === 'm' ? 'm'
+    : String(s.unit || '').toLowerCase() === 'km' ? 'km'
+    : (dist >= 100 ? 'm' : dist > 0 ? 'km' : '');
+  if (minutes <= 0 && kcal <= 0 && dist <= 0 && !s.sport) return false;
+
+  const prev = workoutLog[dateK] || {};
+  const list = workoutSessions(prev).slice();
+
+  // 같은 종목·같은 시간·같은 칼로리가 이미 있으면 중복 (자동화가 두 번 도는 경우)
+  const dup = list.some(x => x.sport === sport && Number(x.minutes) === minutes && Number(x.kcal) === kcal);
+  if (dup) return false;
+
+  list.push({ sport, minutes, kcal, dist, unit, at: Date.now() });
+  workoutLog[dateK] = { ...prev, sessions: list };
+  recalcWorkoutDay(dateK);
+  return true;
+}
+
+function deleteWorkoutSession(dateK, idx) {
+  const log = workoutLog[dateK];
+  if (!log || !Array.isArray(log.sessions)) return;
+  log.sessions.splice(idx, 1);
+  if (log.sessions.length === 0) {
+    // 세션이 다 지워지면 그 날은 운동 안 한 것으로 (인바디·사진은 남긴다)
+    delete log.sessions;
+    log.done = false; log.minutes = 0; log.kcal = 0; log.note = '';
+  } else {
+    recalcWorkoutDay(dateK);
+  }
+  saveData();
+  showToast('기록 하나 삭제됨');
+  if (currentTab === 'workout') renderWorkout();
+  if (currentTab === 'calendar') renderCalendar();
+}
+
 // ===== 📷 운동 사진 기록 (달력에 사진으로 남기기) =====
 // ⚠️ 앱 데이터 전체는 Firestore 문서 1개(users/{uid})에 저장되는데 문서 한도가 1MB다.
 //    사진을 거기 넣으면 사진뿐 아니라 '전체 동기화'가 깨진다.
@@ -5909,14 +6025,7 @@ function pickWorkoutPhoto(dateK) {
       }
 
       if (read) {
-        const prev = workoutLog[dateK] || {};
-        workoutLog[dateK] = {
-          ...prev,
-          done: true,
-          minutes: read.minutes || Number(prev.minutes) || 0,
-          kcal: read.kcal || Number(prev.kcal) || 0,
-          note: read.note || prev.note || '',
-        };
+        addWorkoutSession(dateK, { sport: read.sport, minutes: read.minutes, kcal: read.kcal, dist: read.dist, unit: read.unit });
         saveData();
         const bits = [];
         if (read.minutes > 0) bits.push(read.minutes + '분');
@@ -5960,11 +6069,25 @@ function openWorkoutPhoto(dateK) {
       ${src
         ? `<img src="${src}" alt="" style="width:100%; border-radius:12px; display:block;" />`
         : `<div style="padding:26px 14px; text-align:center; font-size:12px; color:var(--text-tertiary); background:var(--bg-secondary); border-radius:12px;">이 날은 사진이 없어요</div>`}
-      ${(Number(log.minutes) > 0 || Number(log.kcal) > 0 || log.note)
-        ? `<div style="margin-top:10px; font-size:12px; color:var(--text-secondary); line-height:1.6;">
-            ${log.note ? escapeHTML(log.note) + '<br>' : ''}
-            ${Number(log.minutes) > 0 ? `⏱ ${log.minutes}분` : ''}${Number(log.kcal) > 0 ? ` · 🔥 ${log.kcal} kcal` : ''}
-          </div>` : ''}
+      ${(() => {
+        const list = workoutSessions(log);
+        if (list.length === 0) return '';
+        const rows = list.map((s, i) => `
+          <div style="display:flex; align-items:center; gap:8px; padding:8px 10px; background:var(--bg-secondary); border-radius:9px; margin-bottom:5px;">
+            <span style="font-size:15px;">${sportMeta(s.sport).emoji}</span>
+            <div style="flex:1; min-width:0;">
+              <div style="font-size:12.5px; font-weight:700;">${escapeHTML(s.sport)}</div>
+              <div style="font-size:11px; color:var(--text-tertiary); margin-top:1px;">
+                ${Number(s.minutes) > 0 ? `⏱ ${s.minutes}분` : ''}${Number(s.kcal) > 0 ? `${Number(s.minutes) > 0 ? ' · ' : ''}🔥 ${s.kcal}kcal` : ''}${Number(s.dist) > 0 ? ` · 📍 ${s.dist}${s.unit}` : ''}
+              </div>
+            </div>
+            <button onclick="deleteWorkoutSession('${dateK}', ${i}); closeModal();" style="flex:0 0 auto; border:none; background:transparent; color:var(--text-tertiary); font-size:13px; cursor:pointer; padding:2px 5px;">✕</button>
+          </div>`).join('');
+        const total = list.length > 1
+          ? `<div style="font-size:11px; color:var(--text-secondary); font-weight:700; margin:8px 0 5px;">오늘 ${list.length}건 · 총 ${Number(log.minutes) || 0}분${Number(log.kcal) > 0 ? ` · ${log.kcal}kcal` : ''}</div>`
+          : '';
+        return `<div style="margin-top:10px;">${total}${rows}</div>`;
+      })()}
       <div style="display:flex; gap:6px; margin-top:12px;">
         <button onclick="pickWorkoutPhoto('${dateK}')" style="flex:1; padding:11px; border:none; background:var(--bg-info); color:var(--text-info); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">${src ? '사진 바꾸기' : '📷 사진 추가'}</button>
         ${src ? `<button onclick="removeWorkoutPhoto('${dateK}')" style="flex:0 0 auto; padding:11px 14px; border:0.5px solid var(--border-tertiary); background:transparent; color:var(--text-danger); border-radius:10px; font-size:12px; cursor:pointer; font-family:inherit;">삭제</button>` : ''}
@@ -6176,15 +6299,8 @@ async function applyWorkoutCapture() {
   if (picked.length === 0) { showToast('선택된 항목이 없어요'); return; }
 
   for (const it of picked) {
-    const prev = workoutLog[it.date] || {};
-    // 인바디·체중 등 같은 날짜의 다른 기록은 유지한다
-    workoutLog[it.date] = {
-      ...prev,
-      done: true,
-      minutes: it.minutes,
-      kcal: it.kcal,
-      note: it.note,
-    };
+    // 같은 날 여러 건을 넣어도 각각 남는다 (인바디·사진 등 다른 기록도 유지)
+    addWorkoutSession(it.date, { sport: it.sport, minutes: it.minutes, kcal: it.kcal, dist: it.dist, unit: it.unit });
     // 읽어온 사진을 그 날짜에 함께 남긴다 (달력에 사진으로 보이게)
     if (it._file && photosReady()) {
       try {
@@ -14880,6 +14996,8 @@ function consumeExpenseFromUrl() {
   }
 
   if (!addParsedExpense(item)) { showToast('이미 기록된 내역이에요'); return false; }
+  logSyncEvent('expense', `${item.dateKey} ${item.isIncome ? '입금' : '지출'} ${Number(item.amount).toLocaleString()}원`,
+    item.store ? `${item.store}` : (sms ? String(sms).slice(0, 60) : ''));
   saveData();
   showToast(`💳 ${Number(item.amount).toLocaleString()}원 ${item.isIncome ? '입금' : '지출'} 기록됨`);
   if (currentTab === 'money') renderMoney();
