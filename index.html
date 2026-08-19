@@ -23,7 +23,7 @@
     signOut, onAuthStateChanged, sendPasswordResetEmail
   } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
   import {
-    getFirestore, doc, setDoc, getDoc, enableIndexedDbPersistence
+    getFirestore, doc, setDoc, getDoc, deleteDoc, collection, getDocs, enableIndexedDbPersistence
   } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -56,7 +56,7 @@ const firebaseConfig = {
   window._fb = {
     auth, db, signInWithEmailAndPassword, createUserWithEmailAndPassword,
     signOut, onAuthStateChanged, sendPasswordResetEmail,
-    doc, setDoc, getDoc
+    doc, setDoc, getDoc, deleteDoc, collection, getDocs
   };
 
   // Firebase 준비 완료 알림
@@ -1636,6 +1636,35 @@ function migrateTodos() {
 }
 
 // 날짜 키 → 그룹 동적 분류 (today/tomorrow/week/later/past)
+// 🏷️ 할일 카테고리 — 입력 모달과 목록이 같은 정의를 쓰도록 전역에 둔다
+//    (예전엔 모달 안에만 있어서 목록에는 글자만 나오고 이모지가 빠졌음)
+const TODO_TAGS = [
+  { tag: '업무',   emoji: '💼',   color: '#456E9E' },
+  { tag: '미팅',   emoji: '🤝',   color: '#3E6696' },
+  { tag: '학습',   emoji: '📚',   color: '#6B5B96' },
+  { tag: '서류',   emoji: '📄',   color: '#5F6B73' },
+  { tag: '생활',   emoji: '🏠',   color: '#3D8168' },
+  { tag: '쇼핑',   emoji: '🛒',   color: '#B87D3C' },
+  { tag: '금융',   emoji: '💰',   color: '#895B29' },
+  { tag: '건강',   emoji: '🏥',   color: '#9B3A33' },
+  { tag: '운동',   emoji: '💪',   color: '#327059' },
+  { tag: '식사',   emoji: '🍽️',   color: '#C08A4A' },
+  { tag: '가족',   emoji: '👨‍👩‍👧', color: '#A55265' },
+  { tag: '친구',   emoji: '👥',   color: '#7C9CC4' },
+  { tag: '데이트', emoji: '💕',   color: '#B06B7E' },
+  { tag: '여행',   emoji: '✈️',   color: '#2E5F73' },
+  { tag: '취미',   emoji: '🎨',   color: '#8B7FAE' },
+  { tag: '기타',   emoji: '🗂️',   color: '#5F6B73' },
+];
+function todoTagMeta(tag) {
+  return TODO_TAGS.find(x => x.tag === tag) || { tag: tag || '기타', emoji: '📌', color: '#5F6B73' };
+}
+// 목록용 배지 — 이모지 + 카테고리 색으로 한눈에 구분되게
+function todoTagBadge(tag) {
+  const m = todoTagMeta(tag);
+  return `<span class="tag" style="background:${m.color}1A; color:${m.color}; font-weight:600;">${m.emoji} ${escapeHTML(m.tag)}</span>`;
+}
+
 function todoGroup(dateKeyStr) {
   if (!dateKeyStr) return 'today';
   const now = new Date();
@@ -1971,6 +2000,11 @@ document.querySelectorAll('.tab-btn').forEach(b => {
 });
 
 function render() {
+  // ⌚ 단축어가 넘겨준 운동 기록 처리 (앱이 켜진 뒤 한 번만)
+  if (!window._urlWorkoutDone) {
+    window._urlWorkoutDone = true;
+    try { consumeWorkoutFromUrl(); } catch (e) { console.warn('URL 운동 기록 실패:', e); }
+  }
   // 탭별 바탕색 전환 (CSS의 body[data-tab=...] 규칙이 받아간다)
   try { document.body.dataset.tab = currentTab; } catch (e) {}
   // 🔔 오늘 일정 알림 — 하루 한 번만 뜨도록 안에서 막고 있어 매번 불러도 안전
@@ -2494,8 +2528,7 @@ function renderCalendar() {
       const d = new Date(weekStart);
       d.setDate(weekStart.getDate() + i);
       const dKey = dateKey(d.getFullYear(), d.getMonth(), d.getDate());
-      const todayKey = dateKey(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
-      const isToday = dKey === todayKey;
+      const isToday = dKey === todayKey();   // 전역 todayKey() 를 지역 변수로 가리지 않는다
       const isInSelectedMonth = d.getMonth() === viewMonth && d.getFullYear() === viewYear;
       const isSun = i === 0;
       const isSat = i === 6;
@@ -3064,10 +3097,10 @@ function renderTodo() {
 
   // 할일 통계 계산 - 세분화
   const todayK = todayKey();
-  const todayTodos = todos.filter(t => todoOnDay(t, todayK)); // 🔧 기간 일정·반복 할일 포함
+  const todayTodos = todoGroupItems('today'); // 요약 카드와 목록 모달이 같은 기준을 쓰도록 한 함수로 통일
   const todayDone = todayTodos.filter(t => todoDoneOn(t, todayK)).length;
 
-  const pastTodos = todos.filter(t => todoGroupOf(t) === 'past' && !t.done && !todoSkippedOn(t, t.dateKey || todayKey())); // 🔧 기간 진행 중이면 밀린 일정 아님
+  const pastTodos = todoGroupItems('past'); // 기간 진행 중이면 밀린 일정 아님 — 판정은 todoGroupItems 에 모아둠
   const pastDoneAll = todos.filter(t => t.dateKey && t.dateKey < todayK && t.done);
 
   // 본인이 선택한 주 (todoWeekOffset 기준)
@@ -3083,7 +3116,7 @@ function renderTodo() {
   const sunday = weekEnd; // 변수명 유지 (실제는 토요일)
   const mondayK = dateKey(monday.getFullYear(), monday.getMonth(), monday.getDate());
   const sundayK = dateKey(sunday.getFullYear(), sunday.getMonth(), sunday.getDate());
-  const weekTodos = todos.filter(t => t.dateKey && t.dateKey >= mondayK && t.dateKey <= sundayK);
+  const weekTodos = todoGroupItems('week'); // 주간 카드 숫자와 목록 모달을 같은 기준으로
   const weekDone = weekTodos.filter(t => t.done).length;
   const weekPct = weekTodos.length > 0 ? Math.round((weekDone / weekTodos.length) * 100) : 0;
 
@@ -3094,12 +3127,7 @@ function renderTodo() {
 
   // 연속 달성일 (사용 안함 - 곧 마감으로 대체)
   // 곧 마감 = 3일 안에 마감인 미완료 할일
-  const today3D = new Date();
-  const day3Later = new Date();
-  day3Later.setDate(today3D.getDate() + 3);
-  const todayKeyStr = dateKey(today3D.getFullYear(), today3D.getMonth(), today3D.getDate());
-  const day3LaterKey = dateKey(day3Later.getFullYear(), day3Later.getMonth(), day3Later.getDate());
-  const soonDueTodos = todos.filter(t => !t.done && t.dateKey && t.dateKey >= todayKeyStr && t.dateKey <= day3LaterKey);
+  const soonDueTodos = todoGroupItems('soon');
   const flaggedTodos = todos.filter(t => !t.done && t.flag);
 
   html += `
@@ -3616,8 +3644,9 @@ const REVIEW_PERIODS = [
 
 function reviewCutoff(periodKey) {
   const p = REVIEW_PERIODS.find(x => x.key === periodKey) || REVIEW_PERIODS[0];
-  const d = new Date();
-  d.setDate(d.getDate() - p.days);
+  // '오늘'의 기준은 앱 전체가 todayKey() 하나만 쓴다 (new Date() 를 섞으면 기준이 갈라진다)
+  const [ty, tm, td] = todayKey().split('-').map(Number);
+  const d = new Date(ty, tm - 1, td - p.days);
   return dateKey(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
@@ -3814,7 +3843,7 @@ function renderTodoRow(t, dayK) {
     <div style="flex:1; min-width:0;">
       <div class="todo-title" style="${isSkipped ? 'text-decoration:line-through; text-decoration-color:var(--text-tertiary); color:var(--text-tertiary);' : ''}">${isSkipped ? '<span style="font-size:10px; font-weight:700; color:var(--text-tertiary); margin-right:4px;">안 함</span>' : ''}${pr <= 2 && !isSkipped ? `<span style="font-size:10px; margin-right:3px;">${pm.icon}</span>` : ''}${t.time ? `<span style="color:var(--text-info); font-weight:700; margin-right:5px;">${escapeHTML(t.time)}</span>` : ''}${escapeHTML(t.title)}</div>
       <div class="todo-meta">
-        <span class="tag">${escapeHTML(t.tag)}</span>
+        ${todoTagBadge(t.tag)}
         ${st.total > 0 ? `<span class="meta-mini" onclick="toggleTodoExpand(${t.id}, event)" style="font-size:11px; color:${st.done === st.total ? 'var(--text-success)' : 'var(--text-secondary)'}; font-weight:600; cursor:pointer;"><i class="ti ti-list-check" style="font-size:11px;"></i> ${st.done}/${st.total} ${expanded ? '▲' : '▼'}</span>` : ''}
         ${t.repeat && t.repeat.type ? `<span class="meta-mini" style="font-size:11px; color:#227159; font-weight:600;"><i class="ti ti-repeat" style="font-size:11px;"></i> ${repeatLabel(t)}</span>`
           : t.endDateKey ? `<span class="meta-mini" style="font-size:11px; color:#6554C3; font-weight:600;"><i class="ti ti-calendar-event" style="font-size:11px;"></i> ${periodLabel(t)}</span>`
@@ -4917,7 +4946,22 @@ function renderWorkout() {
   html += `</div>`;
 
   // ⚖️ 체중 기록 카드
-  html += renderWeightCard();
+  // 이번 달 사진 미리 불러오기 (완료되면 자동으로 다시 그린다)
+  if (window._woPhotoMonth !== `${workoutViewYear}-${String(workoutViewMonth + 1).padStart(2, '0')}-`) {
+    window._woPhotoLoaded = false;
+    loadMonthPhotos(workoutViewYear, workoutViewMonth);
+  }
+
+  // 📸 운동 기록 캡처 (러닝앱 결과 화면)
+  html += `
+    <input type="file" id="workout-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processWorkoutCapture(this)" />
+    <button onclick="document.getElementById('workout-capture-input').click()" style="width:100%; margin-bottom:12px; padding:11px; border:1.5px dashed var(--text-info); background:rgba(69,110,158,0.05); color:var(--text-info); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">
+      📸 운동 사진 넣기 <span style="font-weight:500; opacity:0.85;">(사진 + 기록 함께 저장)</span>
+    </button>
+    <button onclick="openHealthSyncGuide()" style="width:100%; margin-bottom:12px; padding:9px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:11px; font-weight:700; cursor:pointer; font-family:inherit;">
+      ⌚ 애플 건강·워치 연동하기
+    </button>`;
+  html += renderInbodyCard();
 
   // 오늘 빠른 체크 (현재 월일 때만) - 세그먼트 컨트롤
   if (isWorkoutCurrentMonth()) {
@@ -4981,7 +5025,15 @@ function renderWorkout() {
       if (done) cellClass += ' done';
       if (isToday) cellClass += ' today';
       if (isFuture) cellClass += ' future';
-      html += `<button class="${cellClass}" onclick="toggleWorkoutDay(${dayNum})">${dayNum}</button>`;
+      const _dk = woKey(dayNum);
+      const _photo = workoutCellPhoto(_dk);
+      const _label = workoutCellLabel(log);
+      html += `<button class="${cellClass}" onclick="toggleWorkoutDay(${dayNum})" style="position:relative; overflow:hidden;">
+        ${_photo}
+        <span style="position:relative; z-index:1; ${_photo ? 'color:#fff; text-shadow:0 1px 3px rgba(0,0,0,0.75); font-weight:700;' : ''}">${dayNum}</span>
+        ${_label ? `<span style="position:absolute; left:0; right:0; bottom:2px; z-index:1; font-size:9px; font-weight:700; text-align:center; ${_photo ? 'color:#fff; text-shadow:0 1px 3px rgba(0,0,0,0.8);' : 'color:var(--text-tertiary);'}">${_label}</span>` : ''}
+        <span onclick="event.stopPropagation(); ${_photo ? `openWorkoutPhoto('${_dk}')` : `pickWorkoutPhoto('${_dk}')`}" style="position:absolute; top:1px; right:2px; z-index:2; font-size:9px; opacity:${_photo ? '0.95' : '0.4'};">${_photo ? '🔍' : '📷'}</span>
+      </button>`;
     }
     html += `</div></div>`;
     if (!hasAny && week > 0) break; // 빈 주가 나오면 중단
@@ -5221,8 +5273,21 @@ function openWorkoutModal(dateKeyStr) {
       </div>
 
       <div class="field">
-        <div class="field-label">운동 종류 (선택)</div>
-        <input type="text" id="w-note" placeholder="예: 러닝, 헬스, 요가" value="${escapeAttr(log.note || "")}" />
+        <div class="field-label">운동 종류</div>
+        <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:5px;" id="w-sport-grid">
+          ${SPORTS.map(s => `
+            <button type="button" class="chip ${parseWorkoutNote(log.note).sport === s.key ? 'active' : ''}" data-sport="${s.key}" data-unit="${s.unit}"
+              onclick="selectWorkoutSport('${s.key}','${s.unit}')"
+              style="display:flex; flex-direction:column; align-items:center; gap:2px; padding:8px 2px; font-size:10px;">
+              <span style="font-size:16px;">${s.emoji}</span>${s.key}
+            </button>`).join('')}
+        </div>
+        <input type="hidden" id="w-note" value="${escapeAttr(log.note || "")}" />
+      </div>
+
+      <div class="field" id="w-dist-field" style="${parseWorkoutNote(log.note).unit ? '' : 'display:none;'}">
+        <div class="field-label">거리 (<span id="w-dist-unit">${parseWorkoutNote(log.note).unit || 'km'}</span>)</div>
+        <input type="number" id="w-dist" step="any" inputmode="decimal" placeholder="${parseWorkoutNote(log.note).unit === 'm' ? '1200' : '5.2'}" value="${parseWorkoutNote(log.note).dist || ''}" />
       </div>
 
       <div class="field" style="display:flex; gap:8px;">
@@ -5237,9 +5302,17 @@ function openWorkoutModal(dateKeyStr) {
       </div>
 
       <div class="field">
+        <div class="field-label">📷 사진</div>
+        <button onclick="pickWorkoutPhoto('${key}')" style="width:100%; padding:11px; border:1.5px dashed var(--text-info); background:rgba(69,110,158,0.05); color:var(--text-info); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">
+          ${window._woPhotos && window._woPhotos[key] ? '사진 바꾸기' : '사진 추가하기'}
+        </button>
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px;">달력에 사진으로 남아요.</div>
+      </div>
+
+      <div class="field">
         <div class="field-label">⚖️ 체중 (kg) <span style="font-size:10px; color:var(--text-tertiary);">(선택)</span></div>
-        <input type="number" id="w-weight" step="0.1" inputmode="decimal" placeholder="${(() => { const a = getWeightEntries(); return a.length ? a[a.length-1].kg.toFixed(1) : '예: 68.5'; })()}" value="${log.weight || ''}" />
-        <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px;">운동하면서 같이 재면 추이 그래프에 쌓여요.</div>
+        <input type="number" id="w-weight" step="0.1" inputmode="decimal" placeholder="${(() => { const a = getInbodyEntries().filter(x => x.weight > 0); return a.length ? a[a.length-1].weight.toFixed(1) : '예: 68.5'; })()}" value="${log.weight || ''}" />
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px;">체성분은 📊 인바디 카드에서 따로 기록해요.</div>
       </div>
 
       <div style="padding:10px 12px; background:var(--bg-info); border-radius:var(--radius-md); font-size:11px; color:var(--text-info); line-height:1.5;">
@@ -5253,170 +5326,693 @@ function openWorkoutModal(dateKeyStr) {
   modal.classList.add('show');
 }
 
-// ===== ⚖️ 체중 기록 =====
-// workoutLog[날짜].weight 에 저장 — 이미 저장·동기화·백업이 되는 구조라 별도 배선이 필요 없음.
-// (운동 안 한 날도 체중만 기록 가능. done:false 로 남아 운동 통계엔 안 잡힘)
-function getWeightEntries() {
-  return Object.entries(workoutLog || {})
-    .filter(([k, v]) => v && Number(v.weight) > 0)
-    .map(([k, v]) => ({ date: k, kg: Number(v.weight) }))
-    .sort((a, b) => a.date.localeCompare(b.date));
+// 🏃 운동 종목 — 종목마다 기록 단위가 다르다 (수영은 m, 달리기·자전거는 km)
+const SPORTS = [
+  { key: '수영',   emoji: '🏊', unit: 'm',  step: 25 },
+  { key: '러닝',   emoji: '🏃', unit: 'km', step: 0.1 },
+  { key: '걷기',   emoji: '🚶', unit: 'km', step: 0.1 },
+  { key: '자전거', emoji: '🚴', unit: 'km', step: 0.1 },
+  { key: '헬스',   emoji: '🏋️', unit: '',   step: 0 },
+  { key: '등산',   emoji: '🥾', unit: 'km', step: 0.1 },
+  { key: '요가',   emoji: '🧘', unit: '',   step: 0 },
+  { key: '구기',   emoji: '⚽', unit: '',   step: 0 },
+  { key: '기타',   emoji: '💪', unit: '',   step: 0 },
+];
+function sportMeta(name) {
+  const n = String(name || '');
+  return SPORTS.find(s => n.includes(s.key)) || { key: '기타', emoji: '💪', unit: '', step: 0 };
+}
+// 기록에서 종목·거리를 뽑아낸다 (note 에 "수영 1200m" 형태로 저장됨)
+// 종목 칩 선택 — 종목에 따라 거리 단위와 표시 여부를 바꾼다
+function selectWorkoutSport(sport, unit) {
+  document.querySelectorAll('#w-sport-grid .chip').forEach(b => {
+    b.classList.toggle('active', b.dataset.sport === sport);
+  });
+  const noteEl = document.getElementById('w-note');
+  if (noteEl) noteEl.value = sport;
+  const field = document.getElementById('w-dist-field');
+  const unitEl = document.getElementById('w-dist-unit');
+  const distEl = document.getElementById('w-dist');
+  if (field) field.style.display = unit ? '' : 'none';
+  if (unitEl && unit) unitEl.textContent = unit;
+  if (distEl) distEl.placeholder = unit === 'm' ? '1200' : '5.2';
 }
 
-function renderWeightCard() {
-  const all = getWeightEntries();
-  const goal = Number(settings.weightGoal) || 0;
+function parseWorkoutNote(note) {
+  const n = String(note || '');
+  const m = n.match(/([\d.]+)\s*(km|m)\b/i);
+  const sport = sportMeta(n).key;
+  return { sport, dist: m ? Number(m[1]) : 0, unit: m ? m[2].toLowerCase() : '' };
+}
+function formatWorkoutNote(sport, dist, unit) {
+  const d = Number(dist) || 0;
+  if (d > 0 && unit) return `${sport} ${d}${unit}`;
+  return sport || '운동';
+}
 
-  if (all.length === 0) {
-    return `
-      <div style="background:var(--bg-primary); border:0.5px solid var(--border-tertiary); border-radius:14px; padding:14px; margin-bottom:14px; box-shadow:var(--shadow-card);">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <span style="font-size:13px; font-weight:600;">⚖️ 체중</span>
-          <button onclick="openWeightModal()" style="border:none; background:var(--bg-info); color:var(--text-info); padding:5px 12px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">+ 기록</button>
-        </div>
-        <div style="font-size:11px; color:var(--text-tertiary); margin-top:8px; line-height:1.6;">
-          체중을 기록하면 변화 추이가 그래프로 보여요.<br>운동 일수와 함께 보면 효과를 확인하기 좋아요.
-        </div>
-      </div>`;
+// ===== ⌚ 애플 헬스 / 갤럭시 워치 연동 (단축어 → URL) =====
+// HealthKit 은 웹앱에서 직접 못 읽는다 (네이티브 앱 전용 API).
+// 대신 iOS '단축어'가 건강 데이터를 읽어 이 앱을 URL 로 열어주면, 그 값을 받아 기록한다.
+//   예) https://내앱주소/?wo=수영&min=51&kcal=420&dist=1200&unit=m&date=2026-08-17
+// 안드로이드도 Bixby 루틴·Tasker 등으로 같은 URL 을 열면 동작한다.
+function consumeWorkoutFromUrl() {
+  let params;
+  try { params = new URLSearchParams(location.search); } catch (e) { return false; }
+  const sportRaw = params.get('wo');
+  if (!sportRaw) return false;
+
+  // 형식만 맞고 실재하지 않는 날짜(2026-13-99)가 들어오면 오늘로 되돌린다
+  const rawDate = params.get('date') || '';
+  let dateK = todayKey();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+    const [yy, mm, dd] = rawDate.split('-').map(Number);
+    const probe = new Date(yy, mm - 1, dd);
+    if (probe.getFullYear() === yy && probe.getMonth() === mm - 1 && probe.getDate() === dd) dateK = rawDate;
+  }
+  const minutes = Math.round(Number(params.get('min')) || 0);
+  const kcal = Math.round(Number(params.get('kcal')) || 0);
+  const dist = Number(params.get('dist')) || 0;
+  const unitRaw = String(params.get('unit') || '').toLowerCase();
+  const sport = sportMeta(sportRaw).key;
+  const unit = unitRaw === 'm' ? 'm' : (dist > 0 ? 'km' : '');
+
+  // 주소창에 값이 남아 새로고침할 때마다 또 기록되는 것을 막는다
+  try { history.replaceState(null, '', location.pathname); } catch (e) {}
+
+  if (minutes <= 0 && kcal <= 0 && dist <= 0) {
+    showToast('운동 값이 비어 있어 기록하지 않았어요');
+    return false;
   }
 
-  const last = all[all.length - 1];
-  const first = all[0];
-  const diffAll = last.kg - first.kg;
-  // 최근 30일 대비
-  const d30 = new Date(); d30.setDate(d30.getDate() - 30);
-  const k30 = dateKey(d30.getFullYear(), d30.getMonth(), d30.getDate());
-  const prior = all.filter(x => x.date <= k30);
-  const base30 = prior.length ? prior[prior.length - 1] : first;
-  const diff30 = last.kg - base30.kg;
-
-  const pts = all.slice(-30);
-  const w = 280, h = 92, padL = 34, padR = 8, padT = 8, padB = 18;
-  const innerW = w - padL - padR, innerH = h - padT - padB;
-  const kgs = pts.map(p => p.kg);
-  let minK = Math.min(...kgs), maxK = Math.max(...kgs);
-  if (goal > 0) { minK = Math.min(minK, goal); maxK = Math.max(maxK, goal); }
-  const range = (maxK - minK) || 1;
-  const xy = pts.map((p, i) => ({
-    x: padL + (pts.length > 1 ? (i / (pts.length - 1)) * innerW : innerW / 2),
-    y: padT + innerH - ((p.kg - minK) / range) * innerH,
-    ...p,
-  }));
-  const line = xy.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
-  const area = `M ${xy[0].x.toFixed(1)} ${(padT+innerH).toFixed(1)} ${xy.map(p => `L ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ')} L ${xy[xy.length-1].x.toFixed(1)} ${(padT+innerH).toFixed(1)} Z`;
-  const down = diff30 <= 0;
-  const col = down ? '#2D9B5A' : '#E06666';
-  const goalY = goal > 0 ? (padT + innerH - ((goal - minK) / range) * innerH) : null;
-
-  const fmtD = (n) => `${n > 0 ? '+' : ''}${n.toFixed(1)}kg`;
-
-  return `
-    <div style="background:var(--bg-primary); border:0.5px solid var(--border-tertiary); border-radius:14px; padding:14px; margin-bottom:14px; box-shadow:var(--shadow-card);">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-        <span style="font-size:13px; font-weight:600;">⚖️ 체중</span>
-        <button onclick="openWeightModal()" style="border:none; background:var(--bg-info); color:var(--text-info); padding:5px 12px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">+ 기록</button>
-      </div>
-
-      <div style="display:flex; align-items:baseline; gap:9px; margin-bottom:4px;">
-        <span style="font-size:26px; font-weight:800; letter-spacing:-0.5px;">${last.kg.toFixed(1)}<span style="font-size:13px; font-weight:600; color:var(--text-tertiary);">kg</span></span>
-        <span style="font-size:12px; font-weight:700; color:${col};">${fmtD(diff30)}</span>
-        <span style="font-size:10px; color:var(--text-tertiary);">30일 대비</span>
-      </div>
-      <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:8px;">
-        최초 ${first.kg.toFixed(1)}kg → 현재 ${last.kg.toFixed(1)}kg (${fmtD(diffAll)}) · ${last.date} 측정
-        ${goal > 0 ? ` · 목표 ${goal.toFixed(1)}kg까지 ${Math.abs(last.kg - goal).toFixed(1)}kg` : ''}
-      </div>
-
-      ${pts.length >= 2 ? `
-      <svg width="100%" viewBox="0 0 ${w} ${h}" style="display:block;">
-        <text x="${padL-4}" y="${padT+4}" font-size="8" fill="#999" text-anchor="end">${maxK.toFixed(1)}</text>
-        <text x="${padL-4}" y="${padT+innerH+3}" font-size="8" fill="#999" text-anchor="end">${minK.toFixed(1)}</text>
-        ${goalY != null ? `<line x1="${padL}" y1="${goalY.toFixed(1)}" x2="${w-padR}" y2="${goalY.toFixed(1)}" stroke="#9C8FE0" stroke-width="1" stroke-dasharray="3 3" />
-          <text x="${w-padR}" y="${(goalY-3).toFixed(1)}" font-size="8" fill="#9C8FE0" text-anchor="end">목표</text>` : ''}
-        <path d="${area}" fill="${down ? 'rgba(45,155,90,0.12)' : 'rgba(224,102,102,0.12)'}" />
-        <path d="${line}" stroke="${col}" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" />
-        ${xy.map((p, i) => (i === xy.length - 1 || pts.length <= 12)
-          ? `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${i === xy.length-1 ? 3.5 : 2.5}" fill="${col}" stroke="white" stroke-width="1.5" />` : '').join('')}
-        <text x="${xy[0].x.toFixed(1)}" y="${h-4}" font-size="8" fill="#999" text-anchor="start">${pts[0].date.slice(5).replace('-','/')}</text>
-        <text x="${xy[xy.length-1].x.toFixed(1)}" y="${h-4}" font-size="8" fill="#999" text-anchor="end">${last.date.slice(5).replace('-','/')}</text>
-      </svg>` : `<div style="font-size:10px; color:var(--text-tertiary); padding:6px 0;">2번 이상 기록하면 추이 그래프가 나와요.</div>`}
-
-      <div style="font-size:10px; color:var(--text-tertiary); margin-top:6px;">총 ${all.length}회 기록</div>
-    </div>`;
+  const prev = workoutLog[dateK] || {};
+  workoutLog[dateK] = {
+    ...prev,                       // 같은 날 인바디·사진 등 다른 기록 유지
+    done: true,
+    minutes: minutes || Number(prev.minutes) || 0,
+    kcal: kcal || Number(prev.kcal) || 0,
+    note: formatWorkoutNote(sport, dist, unit),
+  };
+  saveData();
+  showToast(`⌚ ${sportMeta(sport).emoji} ${dateK} 운동 기록됨`);
+  return true;
 }
 
-function openWeightModal(dKey) {
-  const k = dKey || todayKey();
-  const cur = Number(workoutLog[k]?.weight) || 0;
-  const all = getWeightEntries();
-  const lastKg = all.length ? all[all.length - 1].kg : 0;
-  const goal = Number(settings.weightGoal) || 0;
+// 단축어 만드는 법 안내 — 사용자가 주소를 그대로 복사해 갈 수 있게
+function openHealthSyncGuide() {
+  const base = location.origin + location.pathname;
+  const sample = `${base}?wo=수영&min=51&kcal=420&dist=1200&unit=m`;
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+        <h2 style="font-size:15px;">⌚ 건강 앱 연동</h2>
+        <span style="width:44px;"></span>
+      </div>
+
+      <div style="padding:11px 12px; background:var(--bg-warning); border-radius:10px; margin-bottom:12px; font-size:11px; color:var(--text-warning); line-height:1.7;">
+        애플 <b>건강(HealthKit)</b> 은 웹앱이 직접 읽을 수 없어요. 애플이 네이티브 앱에만 열어둔 기능이에요.<br>
+        대신 아이폰 <b>단축어</b> 앱으로 건강 기록을 이 앱에 넘길 수 있어요.
+      </div>
+
+      <div style="font-size:12px; font-weight:700; margin:0 0 7px;">단축어 만들기</div>
+      <div style="font-size:11px; color:var(--text-secondary); line-height:1.9; padding:11px 12px; background:var(--bg-secondary); border-radius:10px;">
+        1. 단축어 앱 → 새 단축어<br>
+        2. <b>건강 샘플 찾기</b> 추가 → 운동, 최근 1개<br>
+        3. <b>URL 열기</b> 추가 → 아래 주소에 값을 끼워 넣기<br>
+        4. 자동화 → <b>운동 종료 시</b> 실행되게 설정
+      </div>
+
+      <div style="font-size:12px; font-weight:700; margin:14px 0 7px;">주소 형식</div>
+      <pre style="white-space:pre-wrap; word-break:break-all; font-size:10px; line-height:1.6; padding:11px; background:var(--bg-secondary); border-radius:10px; font-family:ui-monospace,monospace;">${escapeHTML(sample)}</pre>
+      <button onclick="navigator.clipboard?.writeText('${sample}').then(()=>showToast('📋 복사했어요')).catch(()=>showToast('복사 실패'))" style="width:100%; margin-top:8px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">📋 주소 복사</button>
+
+      <div style="font-size:11px; color:var(--text-tertiary); line-height:1.8; margin-top:12px;">
+        <b>값 설명</b><br>
+        wo = 종목 (수영·러닝·걷기·자전거·헬스·등산·요가·구기)<br>
+        min = 분 · kcal = 칼로리 · dist = 거리 · unit = m 또는 km<br>
+        date = YYYY-MM-DD (없으면 오늘)
+      </div>
+
+      <div style="margin-top:12px; padding:10px 12px; background:var(--bg-info); border-radius:10px; font-size:11px; color:var(--text-info); line-height:1.6;">
+        갤럭시는 Bixby 루틴이나 Tasker 로 같은 주소를 열면 똑같이 동작해요.
+      </div>
+    </div>`;
+  modal.classList.add('show');
+}
+
+// ===== 📷 운동 사진 기록 (달력에 사진으로 남기기) =====
+// ⚠️ 앱 데이터 전체는 Firestore 문서 1개(users/{uid})에 저장되는데 문서 한도가 1MB다.
+//    사진을 거기 넣으면 사진뿐 아니라 '전체 동기화'가 깨진다.
+//    → 사진은 하위 컬렉션 users/{uid}/workoutPhotos/{날짜} 에 문서 하나씩 따로 저장한다.
+//      기기가 바뀌어도 따라오고, 1MB 한도는 사진 한 장 기준이라 여유가 크다.
+//      (썸네일 240px JPEG ≈ 15KB, base64 포함 20KB 수준)
+const PHOTO_COL = 'workoutPhotos';
+window._woPhotos = window._woPhotos || {};   // 화면용 캐시 (날짜 → dataUrl)
+
+function photoDocRef(dateK) {
+  const { doc, db } = window._fb;
+  return doc(db, 'users', currentUser.uid, PHOTO_COL, dateK);
+}
+
+function photosReady() {
+  return !!(currentUser && window._fb && window._fb.collection);
+}
+
+async function putWorkoutPhoto(dateK, dataUrl) {
+  if (!photosReady()) throw new Error('로그인이 필요해요');
+  const { setDoc } = window._fb;
+  await setDoc(photoDocRef(dateK), { dataUrl, at: Date.now() });
+  window._woPhotos[dateK] = dataUrl;
+}
+
+async function deleteWorkoutPhotoDoc(dateK) {
+  if (!photosReady()) return;
+  const { deleteDoc } = window._fb;
+  try { await deleteDoc(photoDocRef(dateK)); } catch (e) { console.warn('사진 삭제 실패:', e); }
+  delete window._woPhotos[dateK];
+}
+
+// 이번 달 사진을 한 번에 읽어 캐시에 채운다 (셀마다 조회하면 느리고 깜빡인다)
+// Firestore 오프라인 캐시가 켜져 있어 두 번째부터는 네트워크 없이도 뜬다.
+async function loadMonthPhotos(year, month) {
+  if (!photosReady()) return {};
+  const prefix = `${year}-${String(month + 1).padStart(2, '0')}-`;
+  if (window._woPhotoMonth === prefix && window._woPhotoLoaded) return window._woPhotos;
+  try {
+    const { collection, getDocs, db } = window._fb;
+    const snap = await getDocs(collection(db, 'users', currentUser.uid, PHOTO_COL));
+    const map = {};
+    snap.forEach(d => { if (d.id.startsWith(prefix)) map[d.id] = (d.data() || {}).dataUrl; });
+    window._woPhotos = map;
+    window._woPhotoMonth = prefix;
+    window._woPhotoLoaded = true;
+    if (currentTab === 'workout') renderWorkout();
+    return map;
+  } catch (e) {
+    console.warn('사진 불러오기 실패:', e);
+    return {};
+  }
+}
+
+// 달력 셀에 깔 용도라 작게 — 정사각 240px, JPEG 0.7 (장당 대략 15KB)
+async function makeThumb(file, side = 240, quality = 0.7) {
+  const dataUrl = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+  const img = await new Promise((res, rej) => {
+    const im = new Image();
+    im.onload = () => res(im);
+    im.onerror = rej;
+    im.src = dataUrl;
+  });
+  // 가운데를 정사각으로 잘라 달력 셀에 꽉 차게
+  const s = Math.min(img.width, img.height);
+  const sx = (img.width - s) / 2, sy = (img.height - s) / 2;
+  const cv = document.createElement('canvas');
+  cv.width = side; cv.height = side;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, side, side);
+  ctx.drawImage(img, sx, sy, s, s, 0, 0, side, side);
+  return cv.toDataURL('image/jpeg', quality);
+}
+
+function pickWorkoutPhoto(dateK) {
+  if (!photosReady()) { showToast('사진 기록은 로그인 후 쓸 수 있어요'); return; }
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'image/jpeg,image/png,image/heic,image/webp';
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    try {
+      showToast('사진 저장 중...');
+      const thumb = await makeThumb(f);
+      await putWorkoutPhoto(dateK, thumb);
+      if (!workoutLog[dateK]) { workoutLog[dateK] = { done: false }; }
+
+      // 📸 같은 사진에서 운동 기록도 함께 읽는다 (나이키·런데이·수영앱 결과 화면)
+      //    사진만 남기고 숫자를 또 손으로 넣게 하면 두 번 일하는 셈이라 한 번에 처리한다.
+      let read = null;
+      if (window.GEMINI_API_KEY) {
+        showToast('사진에서 운동 기록 읽는 중...');
+        const items = await readWorkoutFromImage(f).catch(() => []);
+        // 그 날짜 것을 우선 쓰고, 없으면 첫 항목 (사용자가 고른 날짜가 기준)
+        read = items.find(x => x.date === dateK) || items[0] || null;
+      }
+
+      if (read) {
+        const prev = workoutLog[dateK] || {};
+        workoutLog[dateK] = {
+          ...prev,
+          done: true,
+          minutes: read.minutes || Number(prev.minutes) || 0,
+          kcal: read.kcal || Number(prev.kcal) || 0,
+          note: read.note || prev.note || '',
+        };
+        saveData();
+        const bits = [];
+        if (read.minutes > 0) bits.push(read.minutes + '분');
+        if (read.kcal > 0) bits.push(read.kcal + 'kcal');
+        if (read.dist > 0) bits.push(read.dist + read.unit);
+        showToast('📷 사진 + ' + (bits.join(' · ') || '기록') + ' 저장됨');
+      } else {
+        saveData();
+        showToast(window.GEMINI_API_KEY ? '📷 사진 저장됨 (기록은 못 읽었어요)' : '📷 사진 저장됨');
+      }
+
+      closeModal();
+      if (currentTab === 'workout') renderWorkout();
+      if (currentTab === 'calendar') renderCalendar();
+    } catch (e) {
+      showToast('사진 저장 실패: ' + (e.message || '알 수 없는 오류'));
+    }
+  };
+  inp.click();
+}
+
+async function removeWorkoutPhoto(dateK) {
+  if (!confirm('이 날 사진을 삭제할까요?')) return;
+  await deleteWorkoutPhotoDoc(dateK);
+  showToast('사진 삭제됨');
+  if (currentTab === 'workout') renderWorkout();
+}
+
+// 사진 크게 보기 + 교체·삭제
+function openWorkoutPhoto(dateK) {
+  const src = window._woPhotos[dateK];
+  const log = workoutLog[dateK] || {};
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+        <h2 style="font-size:15px;">${dateK}</h2>
+        <span style="width:44px;"></span>
+      </div>
+      ${src
+        ? `<img src="${src}" alt="" style="width:100%; border-radius:12px; display:block;" />`
+        : `<div style="padding:26px 14px; text-align:center; font-size:12px; color:var(--text-tertiary); background:var(--bg-secondary); border-radius:12px;">이 날은 사진이 없어요</div>`}
+      ${(Number(log.minutes) > 0 || Number(log.kcal) > 0 || log.note)
+        ? `<div style="margin-top:10px; font-size:12px; color:var(--text-secondary); line-height:1.6;">
+            ${log.note ? escapeHTML(log.note) + '<br>' : ''}
+            ${Number(log.minutes) > 0 ? `⏱ ${log.minutes}분` : ''}${Number(log.kcal) > 0 ? ` · 🔥 ${log.kcal} kcal` : ''}
+          </div>` : ''}
+      <div style="display:flex; gap:6px; margin-top:12px;">
+        <button onclick="pickWorkoutPhoto('${dateK}')" style="flex:1; padding:11px; border:none; background:var(--bg-info); color:var(--text-info); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">${src ? '사진 바꾸기' : '📷 사진 추가'}</button>
+        ${src ? `<button onclick="removeWorkoutPhoto('${dateK}')" style="flex:0 0 auto; padding:11px 14px; border:0.5px solid var(--border-tertiary); background:transparent; color:var(--text-danger); border-radius:10px; font-size:12px; cursor:pointer; font-family:inherit;">삭제</button>` : ''}
+      </div>
+    </div>`;
+  modal.classList.add('show');
+}
+
+// 달력 셀 위에 깔 사진
+function workoutCellPhoto(dateK) {
+  const src = window._woPhotos && window._woPhotos[dateK];
+  if (!src) return '';
+  return `<img src="${src}" alt="" style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover; border-radius:inherit; z-index:0;" />`;
+}
+
+// 셀 아래 라벨 — 거리가 있으면 거리, 없으면 시간
+function workoutCellLabel(log) {
+  if (!log) return '';
+  const p = parseWorkoutNote(log.note);
+  if (p.dist > 0) return `${p.dist}${p.unit}`;   // 수영 1200m · 러닝 5.2km
+  if (Number(log.minutes) > 0) return `${log.minutes}분`;
+  return '';
+}
+
+// ===== 📸 운동 기록 캡처 (런데이·나이키런·애플워치 등 결과 화면) =====
+// 러닝앱 결과 화면을 찍어 넣으면 날짜·시간·칼로리·거리를 읽어 운동 기록으로 채운다.
+// 카드 캡처와 같은 축소·폴백·잘림 처리 방식을 쓴다.
+// 이미지 1장에서 운동 기록을 읽어 항목 배열로 돌려준다.
+// 사진 추가 흐름과 여러 장 캡처 흐름이 같은 코드를 쓰도록 따로 뺐다.
+async function readWorkoutFromImage(file) {
+  if (!window.GEMINI_API_KEY) return [];
+  const shrunk = await shrinkImageForOcr(file).catch(() => null);
+  let b64, mime;
+  if (shrunk) { b64 = shrunk.base64; mime = shrunk.mimeType; }
+  else {
+    b64 = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result.split(',')[1]);
+      r.onerror = rej;
+      r.readAsDataURL(file);
+    });
+    mime = file.type || 'image/jpeg';
+  }
+
+  const today = todayKey();
+  const prompt = `이 이미지는 운동 기록 화면이야.
+러닝앱(런데이·나이키런), 수영 기록, 헬스장 앱, 애플워치, 삼성헬스, 스마트밴드 등 무엇이든 될 수 있어.
+
+📅 오늘은 ${today} 이야.
+
+각 항목: {date, sport, minutes, kcal, dist, unit, note}
+- date: "YYYY-MM-DD". 화면에 날짜가 있으면 그것, 없으면 ${today}
+- sport: 다음 중 하나 — 수영, 러닝, 걷기, 자전거, 헬스, 등산, 요가, 구기, 기타
+- minutes: 운동 시간을 분 단위 정수로. "31:24"→31, "1:05:30"→65, "25시간 6분" 같은 누적은 무시
+- kcal: 소모 칼로리 숫자만. 없으면 0
+- dist: 거리 숫자만 (단위 없이)
+- unit: 거리 단위 — 수영이면 "m", 달리기·자전거·등산이면 "km". 거리가 없으면 ""
+- note: 화면에 적힌 추가 설명 (없으면 "")
+
+📌 종목별 유의점
+- 수영: 보통 미터(m)로 나온다. "1200m", "1.2km" 둘 다 나올 수 있음
+- 러닝·자전거: 킬로미터(km)
+- 헬스·요가: 거리가 없다 → dist 0, unit ""
+- 달력 형태로 여러 날이 한 화면에 있으면 (예: 월간 수영기록) 날짜별로 각각 한 항목씩 만든다
+
+⚠️ 주의
+- "총 기록 30회", "총 거리 36.5km", "평균 1.2km" 같은 합계·평균 줄은 항목으로 만들지 마라
+- 페이스·심박수·고도·랩타임은 무시
+- 화면에 보이는 값만 사용하고 숫자를 추측하지 마라
+
+JSON 형식:
+{"items":[{"date":"${today}","sport":"수영","minutes":51,"kcal":420,"dist":1200,"unit":"m","note":""}]}
+읽을 수 없으면: {"items":[],"error":"이유"}`;
+
+  const models = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+  const cfgs = [
+    { temperature: 0, maxOutputTokens: 8000, thinkingConfig: { thinkingBudget: 0 }, responseMimeType: 'application/json' },
+    { temperature: 0, maxOutputTokens: 8000, thinkingConfig: { thinkingBudget: 0 } },
+    { temperature: 0, maxOutputTokens: 8000 },
+  ];
+  let text = '', lastErr = '';
+  outerWo:
+  for (const cfg of cfgs) {
+    for (const model of models) {
+      try {
+        const ctrl = new AbortController();
+        const to = setTimeout(() => ctrl.abort(), 45000);
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${window.GEMINI_API_KEY}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: b64 } }] }],
+            generationConfig: cfg,
+          }),
+          signal: ctrl.signal,
+        }).finally(() => clearTimeout(to));
+        if (res.status === 429 || res.status === 503 || res.status === 404) { lastErr = `HTTP ${res.status}`; continue; }
+        const d = await res.json();
+        if (!res.ok || d.error) { lastErr = d.error?.message || `HTTP ${res.status}`; continue; }
+        const cand = d.candidates?.[0];
+        const parts = cand?.content?.parts || [];
+        const joined = parts.filter(p => !p.thought).map(p => p.text || '').join('').trim();
+        const fin = cand?.finishReason;
+        if (!joined) { lastErr = fin === 'MAX_TOKENS' ? '응답이 잘림' : (fin && fin !== 'STOP' ? String(fin) : '빈 응답'); continue; }
+        if (fin === 'MAX_TOKENS') { lastErr = '응답이 잘림 (길이 초과)'; window._workoutOcrRaw = joined; continue; }
+        text = joined; break outerWo;
+      } catch (e) {
+        lastErr = (e && e.name === 'AbortError') ? '시간 초과(45초)' : (e.message || '네트워크 오류');
+      }
+    }
+  }
+  if (!text) { window._workoutOcrErr = lastErr || '원인 불명'; return []; }
+
+  window._workoutOcrRaw = text;
+  let parsed;
+  try { parsed = JSON.parse(text.replace(/```json\s*/gi, '').replace(/```/g, '').trim()); }
+  catch (e) {
+    const m = text.match(/\{[\s\S]*\}/);
+    if (m) { try { parsed = JSON.parse(m[0]); } catch (e2) { /* 아래 처리 */ } }
+  }
+  if (!parsed || parsed.error || !Array.isArray(parsed.items)) {
+    window._workoutOcrErr = (parsed && parsed.error) || '결과를 읽지 못함';
+    return [];
+  }
+
+  const out = [];
+  parsed.items.forEach(it => {
+    const min = Math.round(Number(it.minutes) || 0);
+    const dist = Number(it.dist) || 0;
+    // 시간·칼로리·거리가 모두 없으면 기록으로서 의미가 없다
+    if (min <= 0 && !(Number(it.kcal) > 0) && dist <= 0) return;
+    const sport = sportMeta(it.sport || it.note || '').key;
+    const unit = String(it.unit || '').toLowerCase() === 'm' ? 'm' : (dist > 0 ? 'km' : '');
+    out.push({
+      date: it.date || today,
+      sport,
+      minutes: min,
+      kcal: Math.round(Number(it.kcal) || 0),
+      dist,
+      unit,
+      note: formatWorkoutNote(sport, dist, unit),
+      _checked: true,
+      _file: file,          // 반영 시 이 사진을 그 날짜에 함께 저장하기 위해
+    });
+  });
+  return out;
+}
+
+// 📸 여러 장을 한 번에 — 각 사진에서 기록을 읽고, 사진도 그 날짜에 함께 남긴다
+async function processWorkoutCapture(input) {
+  const files = Array.isArray(input) ? input : Array.from(input?.files || []);
+  if (files.length === 0) return;
+  if (!window.GEMINI_API_KEY) { showToast('AI 키 먼저 설정해주세요'); openAIKeyModal(); return; }
+
+  showToast('운동 기록 읽는 중...');
+  delete window._workoutOcrRaw;
+  delete window._workoutOcrErr;
+
+  const found = [];
+  for (let idx = 0; idx < files.length; idx++) {
+    const items = await readWorkoutFromImage(files[idx]).catch(() => []);
+    found.push(...items);
+  }
+
+  if (!Array.isArray(input) && input) input.value = '';
+
+  if (found.length === 0) {
+    showToast('운동 기록을 읽지 못했어요 — ' + (window._workoutOcrErr || '원인 불명'));
+    return;
+  }
+  window._workoutCapture = found;
+  renderWorkoutCapturePreview();
+}
+
+function renderWorkoutCapturePreview() {
+  const list = window._workoutCapture || [];
+  const rows = list.map((it, i) => `
+    <div style="padding:11px 9px; border-bottom:0.5px solid var(--border-tertiary);">
+      <label style="display:flex; align-items:flex-start; gap:9px; cursor:pointer;">
+        <input type="checkbox" ${it._checked ? 'checked' : ''} onchange="window._workoutCapture[${i}]._checked=this.checked" style="width:18px; height:18px; flex-shrink:0; margin-top:2px;" />
+        <div style="flex:1; min-width:0;">
+          <div style="font-size:13px; font-weight:700;">${sportMeta(it.sport).emoji} ${escapeHTML(it.note)} <span style="font-size:11px; color:var(--text-tertiary); font-weight:500;">${it.date}</span></div>
+          <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">
+            ${it.minutes > 0 ? `⏱ ${it.minutes}분` : ''}${it.kcal > 0 ? `${it.minutes > 0 ? ' · ' : ''}🔥 ${it.kcal} kcal` : ''}${it.dist > 0 ? ` · 📍 ${it.dist}${it.unit}` : ''}
+          </div>
+          ${workoutLog[it.date]?.done ? '<div style="font-size:10px; color:var(--text-warning); margin-top:2px;">이미 기록된 날 — 반영하면 덮어써요</div>' : ''}
+        </div>
+      </label>
+    </div>`).join('');
 
   modal.innerHTML = `
     <div class="modal">
       <div class="modal-handle"></div>
       <div class="modal-header">
         <button class="modal-cancel" onclick="closeModal()">취소</button>
-        <h2>⚖️ 체중 기록</h2>
-        <button class="modal-save" onclick="saveWeight()">저장</button>
+        <h2>🏃 운동 기록 확인</h2>
+        <button class="modal-save" onclick="applyWorkoutCapture()">반영</button>
       </div>
+      <div style="padding:10px 12px; background:var(--bg-info); border-radius:10px; margin-bottom:10px; font-size:11px; color:var(--text-info); line-height:1.6;">
+        ${list.length}건을 읽었어요. 값이 틀렸으면 반영 후 그 날짜를 눌러 고치면 돼요.
+      </div>
+      <div style="border:0.5px solid var(--border-tertiary); border-radius:10px; overflow:hidden; max-height:58vh; overflow-y:auto;">${rows}</div>
+    </div>`;
+  modal.classList.add('show');
+}
 
+async function applyWorkoutCapture() {
+  const picked = (window._workoutCapture || []).filter(x => x._checked);
+  if (picked.length === 0) { showToast('선택된 항목이 없어요'); return; }
+
+  for (const it of picked) {
+    const prev = workoutLog[it.date] || {};
+    // 인바디·체중 등 같은 날짜의 다른 기록은 유지한다
+    workoutLog[it.date] = {
+      ...prev,
+      done: true,
+      minutes: it.minutes,
+      kcal: it.kcal,
+      note: it.note,
+    };
+    // 읽어온 사진을 그 날짜에 함께 남긴다 (달력에 사진으로 보이게)
+    if (it._file && photosReady()) {
+      try {
+        const thumb = await makeThumb(it._file);
+        await putWorkoutPhoto(it.date, thumb);
+      } catch (e) { console.warn('사진 저장 실패:', it.date, e); }
+    }
+  }
+
+  delete window._workoutCapture;
+  saveData();
+  closeModal();
+  showToast(`🏃 운동 ${picked.length}건 기록됨`);
+  if (currentTab === 'workout') renderWorkout();
+  if (currentTab === 'calendar') renderCalendar();
+}
+
+// ===== 📊 인바디 기록 (체지방률 · 근육량) =====
+// workoutLog[날짜].inbody 에 저장 — 저장·동기화·백업이 이미 되는 구조라 별도 배선 불필요.
+// 체중만 재는 것보다 체성분 변화가 운동 효과를 훨씬 정확히 보여준다.
+function getInbodyEntries() {
+  return Object.entries(workoutLog || {})
+    .filter(([k, v]) => v && v.inbody && (Number(v.inbody.fat) > 0 || Number(v.inbody.muscle) > 0))
+    .map(([k, v]) => ({
+      date: k,
+      fat: Number(v.inbody.fat) || 0,       // 체지방률 %
+      muscle: Number(v.inbody.muscle) || 0, // 골격근량 kg
+      weight: Number(v.inbody.weight) || 0, // 체중 kg (인바디에 같이 나옴)
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function renderInbodyCard() {
+  const all = getInbodyEntries();
+  const add = `<button onclick="openInbodyModal()" style="padding:6px 12px; border:none; background:var(--bg-info); color:var(--text-info); border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">+ 기록</button>`;
+
+  if (all.length === 0) {
+    return `<div class="card" style="margin-bottom:12px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-size:13px; font-weight:600;">📊 인바디</span>
+        ${add}
+      </div>
+      <div style="font-size:11px; color:var(--text-tertiary); margin-top:7px; line-height:1.6;">
+        체지방률과 골격근량을 기록하면 변화 추이가 그래프로 보여요.<br>
+        체중만 보는 것보다 운동 효과가 정확히 보여요.
+      </div>
+    </div>`;
+  }
+
+  const last = all[all.length - 1];
+  const first = all[0];
+  const dFat = (last.fat && first.fat) ? last.fat - first.fat : 0;
+  const dMus = (last.muscle && first.muscle) ? last.muscle - first.muscle : 0;
+  const dWt  = (last.weight && first.weight) ? last.weight - first.weight : 0;
+
+  // 두 지표를 한 그래프에 — 체지방률은 내려가고 골격근량은 올라가는 게 좋은 방향
+  const pts = all.slice(-30);
+  const w = 280, h = 96, padL = 12, padR = 12, padT = 10, padB = 14;
+  const innerW = w - padL - padR, innerH = h - padT - padB;
+  const xAt = (i) => pts.length <= 1 ? padL + innerW / 2 : padL + (innerW * i / (pts.length - 1));
+  const lineFor = (key, color) => {
+    const vals = pts.map(p => p[key]).filter(v => v > 0);
+    if (vals.length < 2) return '';
+    const mn = Math.min(...vals), mx = Math.max(...vals);
+    const span = (mx - mn) || 1;
+    const d = pts.map((p, i) => p[key] > 0
+      ? `${i === 0 ? 'M' : 'L'}${xAt(i).toFixed(1)},${(padT + innerH - ((p[key] - mn) / span) * innerH).toFixed(1)}`
+      : '').filter(Boolean).join(' ');
+    return `<path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
+  };
+
+  const stat = (label, val, unit, delta, goodDown) => {
+    if (!(val > 0)) return '';
+    const good = goodDown ? delta < 0 : delta > 0;
+    const col = Math.abs(delta) < 0.05 ? 'var(--text-tertiary)' : (good ? 'var(--text-success)' : 'var(--text-warning)');
+    return `<div style="flex:1; min-width:0;">
+      <div style="font-size:10px; color:var(--text-tertiary);">${label}</div>
+      <div style="font-size:18px; font-weight:700;">${val.toFixed(1)}<span style="font-size:11px; font-weight:500; color:var(--text-tertiary);">${unit}</span></div>
+      ${Math.abs(delta) >= 0.05 ? `<div style="font-size:10px; font-weight:600; color:${col};">${delta > 0 ? '+' : ''}${delta.toFixed(1)}${unit}</div>` : ''}
+    </div>`;
+  };
+
+  return `<div class="card" style="margin-bottom:12px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:9px;">
+      <span style="font-size:13px; font-weight:600;">📊 인바디 <span style="font-size:10px; color:var(--text-tertiary); font-weight:400;">${all.length}회</span></span>
+      ${add}
+    </div>
+    <div style="display:flex; gap:10px; margin-bottom:8px;">
+      ${stat('체지방률', last.fat, '%', dFat, true)}
+      ${stat('골격근량', last.muscle, 'kg', dMus, false)}
+      ${stat('체중', last.weight, 'kg', dWt, true)}
+    </div>
+    ${pts.length >= 2 ? `
+      <svg viewBox="0 0 ${w} ${h}" style="width:100%; height:auto;">
+        ${lineFor('fat', '#B0574E')}
+        ${lineFor('muscle', '#327059')}
+      </svg>
+      <div style="display:flex; gap:12px; justify-content:center; font-size:10px; color:var(--text-tertiary);">
+        <span><span style="color:#B0574E;">━</span> 체지방률</span>
+        <span><span style="color:#327059;">━</span> 골격근량</span>
+      </div>` : `<div style="font-size:10px; color:var(--text-tertiary); text-align:center; padding:6px 0;">2회 이상 기록하면 추이 그래프가 보여요</div>`}
+    <div style="font-size:10px; color:var(--text-tertiary); text-align:right; margin-top:5px;">최근 측정 ${last.date}</div>
+  </div>`;
+}
+
+function openInbodyModal(dKey) {
+  const k = dKey || todayKey();
+  const cur = (workoutLog[k] && workoutLog[k].inbody) || {};
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">취소</button>
+        <h2>📊 인바디 기록</h2>
+        <button class="modal-save" onclick="saveInbody()">저장</button>
+      </div>
       <div class="field">
-        <div class="field-label">📅 날짜</div>
-        <input type="date" id="wt-date" value="${k}" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:var(--bg-primary); color:var(--text-primary); font-family:inherit;" />
+        <div class="field-label">측정일</div>
+        <input type="date" id="ib-date" value="${k}" />
       </div>
-
       <div class="field">
-        <div class="field-label">체중 (kg)</div>
-        <input type="number" id="wt-kg" value="${cur > 0 ? cur : ''}" step="0.1" placeholder="${lastKg > 0 ? lastKg.toFixed(1) : '예: 68.5'}" inputmode="decimal" />
-        ${lastKg > 0 ? `<div style="display:flex; gap:5px; margin-top:7px;">
-          ${[-0.5, -0.1, 0.1, 0.5].map(d => `<button type="button" onclick="const el=document.getElementById('wt-kg'); el.value=((Number(el.value)||${lastKg})+(${d})).toFixed(1);" class="chip" style="flex:1; font-size:11px;">${d > 0 ? '+' : ''}${d}</button>`).join('')}
-        </div>
-        <div style="font-size:10px; color:var(--text-tertiary); margin-top:6px;">최근 기록: ${lastKg.toFixed(1)}kg</div>` : ''}
+        <div class="field-label">체지방률 (%)</div>
+        <input type="number" id="ib-fat" step="0.1" inputmode="decimal" placeholder="예: 18.5" value="${cur.fat > 0 ? cur.fat : ''}" />
       </div>
-
       <div class="field">
-        <div class="field-label">🎯 목표 체중 (선택)</div>
-        <input type="number" id="wt-goal" value="${goal > 0 ? goal : ''}" step="0.1" placeholder="예: 65" inputmode="decimal" />
-        <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px;">그래프에 목표선이 표시돼요.</div>
+        <div class="field-label">골격근량 (kg)</div>
+        <input type="number" id="ib-muscle" step="0.1" inputmode="decimal" placeholder="예: 32.4" value="${cur.muscle > 0 ? cur.muscle : ''}" />
       </div>
-
-      ${cur > 0 ? `<button onclick="deleteWeight('${k}')" style="width:100%; padding:12px; margin-top:6px; border:none; border-radius:var(--radius-md); background:var(--bg-danger); color:var(--text-danger); font-size:13px; font-weight:500; cursor:pointer; font-family:inherit;">
-        <i class="ti ti-trash" style="font-size:14px; vertical-align:-2px;"></i> 이 날 체중 기록 삭제
+      <div class="field">
+        <div class="field-label">체중 (kg) <span style="font-size:10px; color:var(--text-tertiary);">(선택)</span></div>
+        <input type="number" id="ib-weight" step="0.1" inputmode="decimal" placeholder="예: 68.2" value="${cur.weight > 0 ? cur.weight : ''}" />
+      </div>
+      <div style="padding:10px 12px; background:var(--bg-info); border-radius:10px; font-size:11px; color:var(--text-info); line-height:1.6;">
+        체지방률은 <b>내려가고</b> 골격근량은 <b>올라가는</b> 게 좋은 방향이에요. 둘 중 하나만 적어도 돼요.
+      </div>
+      ${(cur.fat > 0 || cur.muscle > 0) ? `<button onclick="deleteInbody('${k}')" style="width:100%; margin-top:10px; padding:11px; border:0.5px solid var(--border-tertiary); background:transparent; color:var(--text-danger); border-radius:10px; font-size:12px; cursor:pointer; font-family:inherit;">
+        <i class="ti ti-trash" style="font-size:14px; vertical-align:-2px;"></i> 이 날 인바디 기록 삭제
       </button>` : ''}
     </div>`;
   modal.classList.add('show');
 }
 
-function saveWeight() {
-  const k = document.getElementById('wt-date')?.value || todayKey();
-  const kg = Number(document.getElementById('wt-kg')?.value) || 0;
-  const goal = Number(document.getElementById('wt-goal')?.value) || 0;
+function saveInbody() {
+  const k = document.getElementById('ib-date')?.value || todayKey();
+  const fat = Number(document.getElementById('ib-fat')?.value) || 0;
+  const muscle = Number(document.getElementById('ib-muscle')?.value) || 0;
+  const weight = Number(document.getElementById('ib-weight')?.value) || 0;
 
-  if (!(kg > 0)) { showToast('체중을 입력해주세요'); return; }
-  if (kg < 20 || kg > 300) { showToast('체중 값을 확인해주세요 (20~300kg)'); return; }
+  if (!(fat > 0) && !(muscle > 0)) { showToast('체지방률이나 골격근량 중 하나는 입력해주세요'); return; }
+  if (fat > 0 && (fat < 1 || fat > 70)) { showToast('체지방률을 확인해주세요 (1~70%)'); return; }
+  if (muscle > 0 && (muscle < 5 || muscle > 90)) { showToast('골격근량을 확인해주세요 (5~90kg)'); return; }
+  if (weight > 0 && (weight < 20 || weight > 300)) { showToast('체중을 확인해주세요 (20~300kg)'); return; }
 
-  // 🔧 기존 운동 기록을 덮어쓰지 않고 체중만 추가 (merge)
+  // 기존 운동 기록은 건드리지 않고 인바디만 추가 (merge)
   if (!workoutLog[k]) workoutLog[k] = { done: false };
-  workoutLog[k].weight = Math.round(kg * 10) / 10;
-
-  if (goal > 0) settings.weightGoal = Math.round(goal * 10) / 10;
-  else delete settings.weightGoal;
+  workoutLog[k].inbody = {
+    ...(workoutLog[k].inbody || {}),
+    ...(fat > 0 ? { fat: Math.round(fat * 10) / 10 } : {}),
+    ...(muscle > 0 ? { muscle: Math.round(muscle * 10) / 10 } : {}),
+    ...(weight > 0 ? { weight: Math.round(weight * 10) / 10 } : {}),
+  };
 
   saveData();
   closeModal();
-  showToast(`⚖️ ${kg.toFixed(1)}kg 기록됨`);
+  showToast('📊 인바디 기록됨');
   if (currentTab === 'workout') renderWorkout();
 }
 
-function deleteWeight(k) {
-  if (!confirm('이 날 체중 기록을 삭제할까요?')) return;
-  if (workoutLog[k]) {
-    delete workoutLog[k].weight;
-    // 운동 기록도 없는 빈 껍데기면 날짜 자체를 정리
-    const v = workoutLog[k];
-    if (!v.done && !v.note && !v.kcal && !v.minutes && !v.marked) delete workoutLog[k];
-  }
+function deleteInbody(k) {
+  if (!confirm('이 날 인바디 기록을 삭제할까요?')) return;
+  if (workoutLog[k]) delete workoutLog[k].inbody;
   saveData();
   closeModal();
   showToast('삭제됨');
@@ -5425,14 +6021,21 @@ function deleteWeight(k) {
 
 function saveWorkout(key) {
   const done = modal.querySelector('.toggle').classList.contains('on');
-  const note = document.getElementById('w-note').value.trim();
+  // 종목 칩 + 거리 입력을 합쳐 기록 문구를 만든다 (예: "수영 1200m")
+  const _sport = document.querySelector('#w-sport-grid .chip.active')?.dataset.sport
+    || document.getElementById('w-note')?.value.trim() || '';
+  const _unit = document.querySelector('#w-sport-grid .chip.active')?.dataset.unit || '';
+  const _dist = Number(document.getElementById('w-dist')?.value) || 0;
+  const note = _sport ? formatWorkoutNote(_sport, _dist, _unit) : '';
   const min = Number(document.getElementById('w-min').value) || 0;
   const kcal = Number(document.getElementById('w-kcal').value) || 0;
   const wt = Number(document.getElementById('w-weight')?.value) || 0;
 
-  // 🔧 기존 체중 기록을 보존하며 갱신 (예전엔 객체를 통째로 교체해 체중이 날아갔음)
-  const prevWeight = Number(workoutLog[key]?.weight) || 0;
-  workoutLog[key] = { done, note, minutes: min, kcal };
+  // 🔧 객체를 통째로 교체하면 같은 날짜에 붙어 있던 다른 기록(체중·인바디)이 날아간다
+  //    → 기존 값을 펼쳐두고 이번에 입력한 것만 덮어쓴다
+  const prev = workoutLog[key] || {};
+  const prevWeight = Number(prev.weight) || 0;
+  workoutLog[key] = { ...prev, done, note, minutes: min, kcal };
   const useWeight = wt > 0 ? wt : prevWeight;
   if (useWeight > 0) workoutLog[key].weight = Math.round(useWeight * 10) / 10;
   saveData();
@@ -11110,10 +11713,18 @@ function openExpenseModal(forDateKey) {
         <div class="field-label">입금 항목</div>
         <div class="cat-grid" id="cat-grid-income">
           <button class="cat-btn active" data-c="더치페이"><i class="ti ti-users"></i><span>더치페이</span></button>
-          <button class="cat-btn" data-c="송금받음"><i class="ti ti-arrow-down-circle"></i><span>송금</span></button>
+          <button class="cat-btn" data-c="송금받음"><i class="ti ti-arrow-down-circle"></i><span>송금받음</span></button>
+          <button class="cat-btn" data-c="빌려준돈"><i class="ti ti-arrow-back-up"></i><span>빌려준돈</span></button>
+          <button class="cat-btn" data-c="회비정산"><i class="ti ti-wallet"></i><span>회비정산</span></button>
+          <button class="cat-btn" data-c="경조사"><i class="ti ti-heart"></i><span>경조사</span></button>
           <button class="cat-btn" data-c="환급"><i class="ti ti-rotate"></i><span>환급</span></button>
+          <button class="cat-btn" data-c="환불"><i class="ti ti-receipt-refund"></i><span>환불</span></button>
           <button class="cat-btn" data-c="용돈"><i class="ti ti-gift"></i><span>용돈</span></button>
+          <button class="cat-btn" data-c="급여"><i class="ti ti-building-bank"></i><span>급여</span></button>
+          <button class="cat-btn" data-c="상여"><i class="ti ti-award"></i><span>상여·보너스</span></button>
+          <button class="cat-btn" data-c="이자"><i class="ti ti-percentage"></i><span>이자·배당</span></button>
           <button class="cat-btn" data-c="중고판매"><i class="ti ti-tag"></i><span>중고판매</span></button>
+          <button class="cat-btn" data-c="지원금"><i class="ti ti-coin"></i><span>지원금</span></button>
           <button class="cat-btn" data-c="기타입금"><i class="ti ti-dots"></i><span>기타</span></button>
         </div>
         <div style="margin-top:10px; padding:10px 12px; background:var(--bg-info); border-radius:8px; font-size:11px; color:var(--text-info); line-height:1.5;">
@@ -13888,7 +14499,7 @@ async function processCardCapture(input) {
    - amount: 금액 (숫자만, 콤마 제거, 원화, 항상 양수)
    - type: "expense"(지출·결제·출금) 또는 "income"(입금·수입·급여·이체받음·환급)
    - category: 지출이면 - 식비, 카페, 교통, 쇼핑, 도서, 의료, 문화, 통신, 학습, 기타
-               입금이면 - 급여, 용돈, 환급, 이자, 부수입, 기타
+     입금이면 - 더치페이, 송금받음, 빌려준돈, 회비정산, 경조사, 환급, 환불, 용돈, 급여, 상여, 이자, 중고판매, 지원금, 기타입금
 2. 지출과 입금을 모두 추출한다 (입금 내역서·이체 화면도 그대로 읽는다)
    - "+" 로 표시되거나 입금/수입/급여/환급/이체받음이면 type="income"
    - "-" 로 표시되거나 결제/출금/송금이면 type="expense"
@@ -14055,7 +14666,8 @@ function openCardReviewModal(items) {
   const incomeCount = window._cardReviewItems.filter(it => it.type === 'income').length;
 
   const CARD_CATS = ['식비','카페','편의점','마트','교통','쇼핑','문화','의료','미용','생활','통신','경조사','교육','도서','여행','운동','자녀','선물','학회','구독','투자','기타'];
-  const INCOME_CATS = ['급여','용돈','환급','이자','부수입','보너스','판매','기타'];
+  // 입력 화면(가계부 입금 항목)과 같은 목록을 써야 캡처로 넣은 뒤 수정할 때 어긋나지 않는다
+  const INCOME_CATS = ['더치페이','송금받음','빌려준돈','회비정산','경조사','환급','환불','용돈','급여','상여','이자','중고판매','지원금','기타입금'];
   const renderList = () => {
     return window._cardReviewItems.map((it, i) => {
       const isIncome = it.type === 'income';
@@ -14429,24 +15041,7 @@ function openTodoModal(forDateKey, editTodoObj) {
       <div class="field">
         <div class="field-label">카테고리</div>
         <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:6px;" id="tag-grid">
-          ${[
-            {tag:'업무', emoji:'💼'},
-            {tag:'미팅', emoji:'🤝'},
-            {tag:'학습', emoji:'📚'},
-            {tag:'서류', emoji:'📄'},
-            {tag:'생활', emoji:'🏠'},
-            {tag:'쇼핑', emoji:'🛒'},
-            {tag:'금융', emoji:'💰'},
-            {tag:'건강', emoji:'🏥'},
-            {tag:'운동', emoji:'💪'},
-            {tag:'식사', emoji:'🍽️'},
-            {tag:'가족', emoji:'👨‍👩‍👧'},
-            {tag:'친구', emoji:'👥'},
-            {tag:'데이트', emoji:'💕'},
-            {tag:'여행', emoji:'✈️'},
-            {tag:'취미', emoji:'🎨'},
-            {tag:'기타', emoji:'🗂️'}
-          ].map(({tag, emoji}) => `
+          ${TODO_TAGS.map(({tag, emoji}) => `
             <button class="chip ${(isEdit ? editTodoObj.tag : '업무') === tag ? 'active' : ''}" data-tag="${tag}" style="display:flex; align-items:center; justify-content:center; gap:4px; padding:8px 6px; font-size:11px;">
               <span style="font-size:13px;">${emoji}</span>${tag}
             </button>
@@ -20501,41 +21096,56 @@ function dismissAllAlerts() {
 
 function openAlertCenter() {
   const list = settings.alertHits || [];
+
+  // 한 줄 그리기 — 목표가 도달과 오늘 일정처럼 성격이 다른 알림을 같은 틀로 처리
+  const renderRow = (h) => {
+    const dt = new Date(h.at);
+    const when = `${dt.getMonth()+1}/${dt.getDate()} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
+    const isPrice = Number(h.target) > 0 && Number(h.price) > 0;
+    const dir = h.kind === 'today' ? '📅 오늘 일정'
+      : h.kind === 'below' ? '↓ 이하 도달 (매수 기회)' : '↑ 이상 도달';
+    const col = h.kind === 'today' ? 'var(--text-info)'
+      : h.kind === 'below' ? '#127153' : '#895B29';
+    const detail = isPrice
+      ? `목표 ${Number(h.target).toLocaleString()} → 도달가 ${Number(h.price).toLocaleString()} · ${when}`
+      : `${escapeHTML(h.msg || '')}${h.msg ? ' · ' : ''}${when}`;
+    return `<div style="padding:11px 8px; border-bottom:0.5px solid var(--border-tertiary); ${h.read ? 'opacity:0.82;' : ''}">
+      <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;">
+        <span style="font-size:13px; font-weight:700;">${escapeHTML(h.name || '알림')}</span>
+        <span style="font-size:11px; font-weight:700; color:${col}; white-space:nowrap;">${dir}</span>
+      </div>
+      <div style="font-size:11px; color:var(--text-tertiary); margin-top:3px;">${detail}</div>
+    </div>`;
+  };
+
+  // 구역 나누기 — 오늘 일정과 목표가 도달을 섞지 않는다
+  const scheduleHits = list.filter(x => x.kind === 'today');
+  const priceHits = list.filter(x => x.kind !== 'today');
+
+  const section = (title, arr, extra) => arr.length === 0 ? '' : `
+    <div style="font-size:12px; font-weight:700; margin:14px 0 7px;">${title} <span style="color:var(--text-tertiary); font-weight:500;">${arr.length}</span></div>
+    ${extra || ''}
+    <div style="border:0.5px solid var(--border-tertiary); border-radius:10px; overflow:hidden;">${arr.map(renderRow).join('')}</div>`;
+
+  const priceNote = `<div style="padding:9px 11px; background:var(--bg-warning); border-radius:10px; margin-bottom:7px; font-size:11px; color:var(--text-warning); line-height:1.6;">
+      앱이 꺼져 있을 땐 알림을 못 보내요(서버 필요). <b>앱을 열 때마다 시세를 확인해</b> 도달했으면 여기에 남겨둬요.
+    </div>`;
+
+  const scheduleBtn = `<button onclick="closeModal(); nav('todo');" style="width:100%; margin-bottom:7px; padding:9px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-info); border-radius:9px; font-size:11px; font-weight:700; cursor:pointer; font-family:inherit;">할일 탭에서 목록 보기 →</button>`;
+
   const rows = list.length === 0
-    ? `<div style="padding:24px; text-align:center; color:var(--text-tertiary); font-size:12px;">아직 도달 기록이 없어요.</div>`
-    : list.map(h => {
-        const dt = new Date(h.at);
-        const when = `${dt.getMonth()+1}/${dt.getDate()} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
-        // 알림 종류가 목표가 도달만 있는 게 아니다 (오늘 일정 등) → 값이 없으면 설명문으로 대체
-        const isPrice = Number(h.target) > 0 && Number(h.price) > 0;
-        const dir = h.kind === 'today' ? '📅 오늘 일정'
-          : h.kind === 'below' ? '↓ 이하 도달 (매수 기회)' : '↑ 이상 도달';
-        const col = h.kind === 'today' ? 'var(--text-info)'
-          : h.kind === 'below' ? '#127153' : '#895B29';
-        const detail = isPrice
-          ? `목표 ${Number(h.target).toLocaleString()} → 도달가 ${Number(h.price).toLocaleString()} · ${when}`
-          : `${escapeHTML(h.msg || '')}${h.msg ? ' · ' : ''}${when}`;
-        return `<div style="padding:11px 8px; border-bottom:0.5px solid var(--border-tertiary); ${h.read ? 'opacity:0.82;' : ''}">
-          <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;">
-            <span style="font-size:13px; font-weight:700;">${escapeHTML(h.name || '알림')}</span>
-            <span style="font-size:11px; font-weight:700; color:${col}; white-space:nowrap;">${dir}</span>
-          </div>
-          <div style="font-size:11px; color:var(--text-tertiary); margin-top:3px;">${detail}</div>
-        </div>`;
-      }).join('');
+    ? `<div style="padding:24px; text-align:center; color:var(--text-tertiary); font-size:12px;">아직 알림 기록이 없어요.</div>`
+    : section('📅 오늘 일정', scheduleHits, scheduleBtn) + section('🔔 목표가 도달', priceHits, priceNote);
 
   modal.innerHTML = `
     <div class="modal">
       <div class="modal-handle"></div>
       <div class="modal-header">
         <button class="modal-cancel" onclick="closeModal()">닫기</button>
-        <h2>🔔 목표가 알림</h2>
+        <h2>🔔 알림</h2>
         <button class="modal-save" onclick="dismissAllAlerts(); closeModal();">모두 읽음</button>
       </div>
-      <div style="padding:10px 12px; background:var(--bg-warning); border-radius:10px; margin-bottom:10px; font-size:11px; color:var(--text-warning); line-height:1.6;">
-        앱이 꺼져 있을 땐 알림을 못 보내요(서버 필요). <b>앱을 열 때마다 시세를 확인해</b> 도달했으면 여기에 남겨둬요.
-      </div>
-      <div style="border:0.5px solid var(--border-tertiary); border-radius:10px; overflow:hidden; max-height:60vh; overflow-y:auto;">${rows}</div>
+      <div style="max-height:62vh; overflow-y:auto;">${rows}</div>
       ${list.length ? `<button onclick="settings.alertHits=[]; saveData(); closeModal(); renderAlertBanner(); showToast('기록 비움');" style="width:100%; margin-top:10px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-tertiary); border-radius:10px; font-size:12px; cursor:pointer; font-family:inherit; box-shadow:var(--shadow-card);">기록 모두 지우기</button>` : ''}
     </div>`;
   modal.classList.add('show');
