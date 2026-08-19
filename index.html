@@ -3091,6 +3091,12 @@ function renderTodo() {
   // 🔧 오늘의 추천 액션 카드 (가계부에서 옮김 — 미룬 할일·운동 등은 할일 도메인)
   html += renderTodayActionsCard();
 
+  // 🎯 이달의 목표 · 🔁 데일리 루틴 (검색 중에는 숨김 — 결과에 집중)
+  if (!(window.todoSearch || '').trim()) {
+    html += renderMonthlyGoals();
+    html += renderDailyRoutines();
+  }
+
   // ★ 챌린지 섹션
   html += renderChallengeSection();
 
@@ -3198,12 +3204,6 @@ function renderTodo() {
       </div>
     </div>
   `;
-
-  // 🎯 이달의 목표 · 🔁 데일리 루틴 (검색 중에는 숨김 — 결과에 집중)
-  if (!(window.todoSearch || '').trim()) {
-    html += renderMonthlyGoals();
-    html += renderDailyRoutines();
-  }
 
   // ===== 🔍 검색 + 정렬/필터 + 완료율 통계 =====
   html += renderTodoToolbar();
@@ -4289,7 +4289,7 @@ function renderChallengeCard(c) {
   const todayVal = Number(todayLog.value) || 0;
   const valPct = dTarget > 0 ? Math.min(100, (todayVal / dTarget) * 100) : 0;
   const dailyBar = dTarget > 0 ? `
-    <div style="margin-top:9px; padding:9px 11px; background:rgba(255,255,255,0.6); border-radius:11px;">
+    <div style="margin-top:6px; padding:6px 9px; background:rgba(255,255,255,0.6); border-radius:9px;">
       <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:5px;">
         <span style="font-size:10px; color:var(--text-secondary);">오늘 목표</span>
         <span style="font-size:12px; font-weight:800; color:${accent};">${todayVal.toLocaleString()}<span style="font-size:10px; font-weight:600; color:var(--text-tertiary);"> / ${dTarget.toLocaleString()}${escapeHTML(c.unit || '')}</span></span>
@@ -4300,7 +4300,7 @@ function renderChallengeCard(c) {
       ${todayLog.note ? `<div style="font-size:10px; color:var(--text-tertiary); margin-top:5px;">📝 ${escapeHTML(todayLog.note)}</div>` : ''}
     </div>` : '';
 
-  return `<div style="position:relative; overflow:hidden; margin-bottom:12px; padding:14px; border-radius:16px; background:${softBg}; border:0.5px solid ${softBorder};">
+  return `<div style="position:relative; overflow:hidden; margin-bottom:8px; padding:10px 12px; border-radius:13px; background:${softBg}; border:0.5px solid ${softBorder};">
     <div style="position:absolute; right:-18px; top:-22px; font-size:78px; opacity:0.07; pointer-events:none;">${typeIcon}</div>
 
     <div style="display:flex; align-items:flex-start; gap:10px;">
@@ -4313,8 +4313,8 @@ function renderChallengeCard(c) {
         <div style="font-size:11px; color:var(--text-secondary); margin-top:3px;">${daysPassed}일째 · ${progressText} · ${todayStatusText}</div>
         ${c.memo ? `<div style="font-size:10px; color:var(--text-tertiary); margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">💭 ${escapeHTML(c.memo)}</div>` : ''}
       </div>
-      <div style="width:50px; height:50px; border-radius:50%; background:conic-gradient(${accent} ${progressPct}%, rgba(255,255,255,0.6) 0); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
-        <div style="width:39px; height:39px; border-radius:50%; background:var(--bg-primary); display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; color:${accent}; box-shadow:var(--shadow-card);">${Math.round(progressPct)}%</div>
+      <div style="width:38px; height:38px; border-radius:50%; background:conic-gradient(${accent} ${progressPct}%, rgba(255,255,255,0.6) 0); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+        <div style="width:29px; height:29px; border-radius:50%; background:var(--bg-primary); display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; color:${accent}; box-shadow:var(--shadow-card);">${Math.round(progressPct)}%</div>
       </div>
       <button onclick="event.stopPropagation(); editChallenge(${c.id})" style="border:none; background:transparent; color:var(--text-tertiary); padding:2px; font-size:16px; cursor:pointer; font-family:inherit; flex-shrink:0;">⋮</button>
     </div>
@@ -4324,13 +4324,13 @@ function renderChallengeCard(c) {
 
     <div style="display:flex; gap:8px; margin-top:11px;">
       ${isCompleted
-        ? `<div style="flex:1; text-align:center; padding:11px; border-radius:12px; background:rgba(255,255,255,0.6); font-size:12px; font-weight:800; color:${accent};">🎉 목표 달성!</div>`
+        ? `<div style="flex:1; text-align:center; padding:8px; border-radius:10px; background:rgba(255,255,255,0.6); font-size:12px; font-weight:800; color:${accent};">🎉 목표 달성!</div>`
         : c.type === 'forbidden'
           ? `<button onclick="checkChallenge(${c.id}, true)" style="flex:1; border:none; border-radius:12px; padding:11px; background:${todayChecked===true?'#3B6D11':'white'}; color:${todayChecked===true?'white':'var(--text-success)'}; font-size:12px; font-weight:800; font-family:inherit; cursor:pointer;">${todayChecked===true?'지켰어요 ✓':'오늘도 지켰어요'}</button>
              <button onclick="checkChallenge(${c.id}, 'fail')" style="flex:1; border:none; border-radius:12px; padding:11px; background:${todayChecked==='fail'?'#A32D2D':'white'}; color:${todayChecked==='fail'?'white':'var(--text-danger)'}; font-size:12px; font-weight:800; font-family:inherit; cursor:pointer;">${todayChecked==='fail'?'실패 기록됨':'실패했어요'}</button>`
           : c._weekDone
-            ? `<div style="flex:1; text-align:center; padding:12px; border-radius:12px; background:rgba(255,255,255,0.6); font-size:12px; font-weight:800; color:#3B6D11;">🎉 이번 주 목표 달성! (${c._thisWeekCount}/${c.perWeek}회)</div>`
-          : `<button onclick="checkChallenge(${c.id}, ${todayChecked===true ? 'false' : 'true'})" style="flex:1; border:none; border-radius:12px; padding:12px; background:${todayChecked===true?'#3B6D11':'#1A1A1A'}; color:white; font-size:13px; font-weight:800; font-family:inherit; cursor:pointer;">${todayChecked===true?'오늘 완료됨 ✓':'오늘 완료했어요'}</button>`
+            ? `<div style="flex:1; text-align:center; padding:9px; border-radius:10px; background:rgba(255,255,255,0.6); font-size:12px; font-weight:800; color:#3B6D11;">🎉 이번 주 목표 달성! (${c._thisWeekCount}/${c.perWeek}회)</div>`
+          : `<button onclick="checkChallenge(${c.id}, ${todayChecked===true ? 'false' : 'true'})" style="flex:1; border:none; border-radius:10px; padding:9px; background:${todayChecked===true?'#3B6D11':'#1A1A1A'}; color:white; font-size:12px; font-weight:700; font-family:inherit; cursor:pointer;">${todayChecked===true?'완료됨 ✓':'완료!'}</button>`
       }
       ${!isCompleted ? `<button onclick="openChallengeLog(${c.id})" title="오늘 기록 (수치·메모)" style="flex:0 0 auto; border:none; border-radius:12px; padding:11px 14px; background:rgba(255,255,255,0.85); color:${accent}; font-size:14px; font-weight:800; font-family:inherit; cursor:pointer;">📝</button>` : ''}
     </div>
