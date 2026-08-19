@@ -525,7 +525,7 @@ const firebaseConfig = {
     margin-bottom: 12px;
   }
   .budget-hero.warning { background: linear-gradient(135deg, #6B3F08 0%, #854F0B 100%); }
-  .budget-hero.danger { background: linear-gradient(135deg, #7A1F1F 0%, #A32D2D 100%); }
+  .budget-hero.danger { background: linear-gradient(135deg, #7A1F1F 0%, #9B3A33 100%); }
   .budget-hero .label { font-size: 10px; opacity: 0.85; margin-bottom: 3px; }
   .budget-hero .big-num { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; margin-bottom: 2px; }
   .budget-hero .sub { font-size: 10px; opacity: 0.9; }
@@ -621,7 +621,7 @@ const firebaseConfig = {
 
   /* AI 코칭 카드 */
   .ai-card {
-    background: linear-gradient(135deg, #1A1A1A 0%, #2D2D2D 100%);
+    background: linear-gradient(135deg, #47515B 0%, #2E3A40 100%);
     border-radius: 14px;
     padding: 16px;
     color: white;
@@ -802,7 +802,7 @@ const firebaseConfig = {
     width: 56px;
     height: 56px;
     border-radius: 16px;
-    background: linear-gradient(135deg, #185FA5 0%, #3B6D11 100%);
+    background: linear-gradient(135deg, #185FA5 0%, #327059 100%);
     margin: 0 auto 12px;
     display: flex;
     align-items: center;
@@ -3990,7 +3990,7 @@ function renderTodoRow(t, dayK) {
     <div style="margin-top:6px; padding:7px 9px; background:rgba(0,0,0,0.03); border-radius:8px;">
       ${(t.subtasks || []).map(s => `
         <div onclick="toggleSubtask(${t.id}, '${s.id}', event)" style="display:flex; align-items:center; gap:7px; padding:4px 0; cursor:pointer;">
-          <span style="width:17px; height:17px; flex-shrink:0; border-radius:5px; border:1.5px solid ${s.done ? '#3B6D11' : 'var(--border-secondary)'}; background:${s.done ? '#3B6D11' : 'transparent'}; color:white; font-size:10px; display:flex; align-items:center; justify-content:center;">${s.done ? '✓' : ''}</span>
+          <span style="width:17px; height:17px; flex-shrink:0; border-radius:5px; border:1.5px solid ${s.done ? '#327059' : 'var(--border-secondary)'}; background:${s.done ? '#327059' : 'transparent'}; color:white; font-size:10px; display:flex; align-items:center; justify-content:center;">${s.done ? '✓' : ''}</span>
           <span style="font-size:11px; ${s.done ? 'text-decoration:line-through; color:var(--text-tertiary);' : 'color:var(--text-secondary);'}">${escapeHTML(s.text)}</span>
         </div>`).join('')}
     </div>` : '';
@@ -4137,7 +4137,7 @@ function renderChallengeSection() {
   const failedC = challenges.filter(c => c.failed && !c.completed);
 
   if (activeC.length === 0 && completedC.length === 0) {
-    html += `<div style="padding:20px; background:linear-gradient(135deg, #1A1A1A 0%, #2D2D2D 100%); border-radius:12px; color:white; margin-bottom:14px;">
+    html += `<div style="padding:20px; background:linear-gradient(135deg, #47515B 0%, #2E3A40 100%); border-radius:12px; color:white; margin-bottom:14px;">
       <div style="font-size:13px; font-weight:600; margin-bottom:6px;">🚀 첫 챌린지를 시작해보세요!</div>
       <div style="font-size:11px; opacity:0.85; line-height:1.6; margin-bottom:12px;">
         매일 운동, 일주일 커피 끊기, 100일 책 읽기 등<br>목표를 정하면 매일 체크하고 진행률을 볼 수 있어요.
@@ -4267,7 +4267,7 @@ function renderChallengeCard(c) {
   }
 
   const isCompleted = progressPct >= 100;
-  const accent = isCompleted ? '#3B6D11' : c.type === 'forbidden' ? '#854F0B' : '#2D7BC9';
+  const accent = isCompleted ? '#327059' : c.type === 'forbidden' ? '#854F0B' : '#2D7BC9';
   const softBg = isCompleted ? '#EAF3E2' : c.type === 'forbidden' ? '#FBF0DD' : '#E6F0FA';
   const softBorder = isCompleted ? '#BCDBA6' : c.type === 'forbidden' ? '#EAD3A8' : '#BCD8F0';
   const typeIcon = c.type === 'forbidden' ? '🚫' : c.type === 'count' ? '🔢' : '✅';
@@ -4277,10 +4277,11 @@ function renderChallengeCard(c) {
   const badge = isCompleted
     ? '🏁 완료'
     : c.type === 'forbidden'
-      ? `🛡 ${streak}일 지킴`
-      : streak > 0 ? `🔥 ${streak}일 연속` : '🎯 도전 중';
+      ? `🛡${streak}일`
+      : streak > 0 ? `🔥${streak}일` : '🎯 도전 중';
   const daysLeft = Math.max(0, totalDays - daysPassed);
-  const todayStatusText = c._weekDone ? '이번 주 목표 달성 🎉' : todayChecked === true ? '오늘 성공 ✓' : todayChecked === 'fail' ? '오늘 실패 기록' : '오늘 아직 미체크';
+  // 카드 한 줄에 들어가도록 짧게 (예: "12일째 · 🔥3일 연속 · 미체크")
+  const todayStatusText = c._weekDone ? '주간 달성 🎉' : todayChecked === true ? '오늘 ✓' : todayChecked === 'fail' ? '오늘 ✗' : '미체크';
   const miniWeek = renderChallengeMiniWeek(c, accent);
 
   // 🔧 하루 목표량이 있는 챌린지 — 오늘 얼마나 했는지 수치로 표시
@@ -4301,7 +4302,7 @@ function renderChallengeCard(c) {
     </div>` : '';
 
   return `<div style="position:relative; overflow:hidden; margin-bottom:8px; padding:10px 12px; border-radius:13px; background:${softBg}; border:0.5px solid ${softBorder};">
-    <div style="position:absolute; right:-18px; top:-22px; font-size:78px; opacity:0.07; pointer-events:none;">${typeIcon}</div>
+    <div style="position:absolute; right:-12px; top:-14px; font-size:52px; opacity:0.06; pointer-events:none;">${typeIcon}</div>
 
     <div style="display:flex; align-items:flex-start; gap:10px;">
       <div style="flex:1; min-width:0;">
@@ -4310,30 +4311,32 @@ function renderChallengeCard(c) {
           ${!isCompleted ? `<span style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:999px; background:rgba(255,255,255,0.75); color:var(--text-secondary);">D-${daysLeft}</span>` : ''}
         </div>
         <div style="font-size:14px; font-weight:800; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${c.icon ? c.icon + ' ' : ''}${escapeHTML(c.title)}</div>
-        <div style="font-size:11px; color:var(--text-secondary); margin-top:3px;">${daysPassed}일째 · ${progressText} · ${todayStatusText}</div>
+        <div style="font-size:11px; color:var(--text-secondary); margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${daysPassed}일째 · ${progressText} · ${todayStatusText}</div>
         ${c.memo ? `<div style="font-size:10px; color:var(--text-tertiary); margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">💭 ${escapeHTML(c.memo)}</div>` : ''}
       </div>
       <div style="width:38px; height:38px; border-radius:50%; background:conic-gradient(${accent} ${progressPct}%, rgba(255,255,255,0.6) 0); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
         <div style="width:29px; height:29px; border-radius:50%; background:var(--bg-primary); display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; color:${accent}; box-shadow:var(--shadow-card);">${Math.round(progressPct)}%</div>
       </div>
       <button onclick="event.stopPropagation(); editChallenge(${c.id})" style="border:none; background:transparent; color:var(--text-tertiary); padding:2px; font-size:16px; cursor:pointer; font-family:inherit; flex-shrink:0;">⋮</button>
+      <div style="display:flex; flex-direction:column; align-items:center; gap:4px; flex:0 0 auto;">
+        ${isCompleted
+          ? `<span style="font-size:11px; font-weight:800; color:${accent}; white-space:nowrap;">🎉 달성</span>`
+          : c.type === 'forbidden'
+            ? `<div style="display:flex; gap:3px;">
+                 <button onclick="event.stopPropagation(); checkChallenge(${c.id}, true)" style="border:none; border-radius:8px; padding:5px 9px; background:${todayChecked===true?'#327059':'rgba(255,255,255,0.8)'}; color:${todayChecked===true?'white':'#327059'}; font-size:11px; font-weight:800; cursor:pointer; font-family:inherit;">O</button>
+                 <button onclick="event.stopPropagation(); checkChallenge(${c.id}, 'fail')" style="border:none; border-radius:8px; padding:5px 9px; background:${todayChecked==='fail'?'#9B3A33':'rgba(255,255,255,0.8)'}; color:${todayChecked==='fail'?'white':'#9B3A33'}; font-size:11px; font-weight:800; cursor:pointer; font-family:inherit;">X</button>
+               </div>`
+            : c._weekDone
+              ? `<span style="font-size:11px; font-weight:800; color:#327059; white-space:nowrap;">🎉 주간 달성</span>`
+              : `<button onclick="event.stopPropagation(); checkChallenge(${c.id}, ${todayChecked===true ? 'false' : 'true'})" style="border:none; border-radius:9px; padding:6px 12px; background:${todayChecked===true?'#327059':accent}; color:white; font-size:11px; font-weight:800; cursor:pointer; font-family:inherit; white-space:nowrap;">${todayChecked===true?'완료 ✓':'완료'}</button>`
+        }
+        ${!isCompleted ? `<button onclick="event.stopPropagation(); openChallengeLog(${c.id})" title="오늘 기록 (수치·메모)" style="border:none; background:transparent; color:var(--text-tertiary); font-size:12px; cursor:pointer; font-family:inherit; padding:0;">📝</button>` : ''}
+      </div>
     </div>
 
     ${dailyBar}
     ${miniWeek}
 
-    <div style="display:flex; gap:8px; margin-top:11px;">
-      ${isCompleted
-        ? `<div style="flex:1; text-align:center; padding:8px; border-radius:10px; background:rgba(255,255,255,0.6); font-size:12px; font-weight:800; color:${accent};">🎉 목표 달성!</div>`
-        : c.type === 'forbidden'
-          ? `<button onclick="checkChallenge(${c.id}, true)" style="flex:1; border:none; border-radius:12px; padding:11px; background:${todayChecked===true?'#3B6D11':'white'}; color:${todayChecked===true?'white':'var(--text-success)'}; font-size:12px; font-weight:800; font-family:inherit; cursor:pointer;">${todayChecked===true?'지켰어요 ✓':'오늘도 지켰어요'}</button>
-             <button onclick="checkChallenge(${c.id}, 'fail')" style="flex:1; border:none; border-radius:12px; padding:11px; background:${todayChecked==='fail'?'#A32D2D':'white'}; color:${todayChecked==='fail'?'white':'var(--text-danger)'}; font-size:12px; font-weight:800; font-family:inherit; cursor:pointer;">${todayChecked==='fail'?'실패 기록됨':'실패했어요'}</button>`
-          : c._weekDone
-            ? `<div style="flex:1; text-align:center; padding:9px; border-radius:10px; background:rgba(255,255,255,0.6); font-size:12px; font-weight:800; color:#3B6D11;">🎉 이번 주 목표 달성! (${c._thisWeekCount}/${c.perWeek}회)</div>`
-          : `<button onclick="checkChallenge(${c.id}, ${todayChecked===true ? 'false' : 'true'})" style="flex:1; border:none; border-radius:10px; padding:9px; background:${todayChecked===true?'#3B6D11':'#1A1A1A'}; color:white; font-size:12px; font-weight:700; font-family:inherit; cursor:pointer;">${todayChecked===true?'완료됨 ✓':'완료!'}</button>`
-      }
-      ${!isCompleted ? `<button onclick="openChallengeLog(${c.id})" title="오늘 기록 (수치·메모)" style="flex:0 0 auto; border:none; border-radius:12px; padding:11px 14px; background:rgba(255,255,255,0.85); color:${accent}; font-size:14px; font-weight:800; font-family:inherit; cursor:pointer;">📝</button>` : ''}
-    </div>
   </div>`;
 }
 
@@ -4861,7 +4864,7 @@ function editChallenge(id) {
     const check = c.checks?.[k];
     const mmdd = `${d.getMonth()+1}/${d.getDate()}`;
     let bg = 'var(--bg-tertiary)', col = 'var(--text-tertiary)', mark = '';
-    if (check === true) { bg = '#3B6D11'; col = 'white'; mark = '✓'; }
+    if (check === true) { bg = '#327059'; col = 'white'; mark = '✓'; }
     else if (check === 'fail') { bg = '#E06666'; col = 'white'; mark = '✗'; }
     grid += `<button onclick="toggleChallengeDate(${id}, '${k}'); editChallenge(${id});" style="aspect-ratio:1; border:none; border-radius:7px; background:${bg}; color:${col}; cursor:pointer; padding:2px; display:flex; flex-direction:column; align-items:center; justify-content:center; font-family:inherit;">
       <span style="font-size:13px; font-weight:700; line-height:1;">${mark || ''}</span>
@@ -15561,7 +15564,7 @@ function renderSubtaskRows() {
   box.innerHTML = list.map((s, i) => `
     <div style="display:flex; align-items:center; gap:7px; margin-bottom:6px;">
       <button type="button" onclick="toggleSubtaskDraft(${i})" aria-label="완료 토글"
-        style="width:22px; height:22px; flex-shrink:0; border-radius:6px; border:1.5px solid ${s.done ? '#3B6D11' : 'var(--border-secondary)'}; background:${s.done ? '#3B6D11' : 'white'}; color:white; font-size:12px; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; padding:0;">${s.done ? '✓' : ''}</button>
+        style="width:22px; height:22px; flex-shrink:0; border-radius:6px; border:1.5px solid ${s.done ? '#327059' : 'var(--border-secondary)'}; background:${s.done ? '#327059' : 'white'}; color:white; font-size:12px; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; padding:0;">${s.done ? '✓' : ''}</button>
       <input type="text" value="${escapeAttr(s.text || '')}" placeholder="예: 여권 챙기기"
         oninput="window._editSubtasks[${i}].text = this.value"
         style="flex:1; padding:8px 10px; border:0.5px solid var(--border-tertiary); border-radius:8px; font-size:12px; font-family:inherit; ${s.done ? 'text-decoration:line-through; color:var(--text-tertiary);' : ''}" />
@@ -17169,7 +17172,7 @@ function renderFinancialGoalsCard(currentTotal) {
     // 이모지 + 색상
     const emoji = g.emoji || '🎯';
     const bgGradient = isCompleted
-      ? 'linear-gradient(135deg, #2A4D1B 0%, #3B6D11 100%)'
+      ? 'linear-gradient(135deg, #2A4D1B 0%, #327059 100%)'
       : 'linear-gradient(135deg, #185FA5 0%, #2D7BC9 100%)';
 
     html += `
@@ -22594,7 +22597,7 @@ function renderAssetMarket(total, byType) {
   // 1) AI 시장 브리핑
   html += `
     <div id="ai-market-briefing" style="margin-bottom:14px;">
-      <div style="padding:18px; background:linear-gradient(135deg, #1A1A1A 0%, #2D2D2D 100%); border-radius:14px; color:white;">
+      <div style="padding:18px; background:linear-gradient(135deg, #47515B 0%, #2E3A40 100%); border-radius:14px; color:white;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
           <div style="display:flex; align-items:center; gap:6px;">
             <i class="ti ti-sparkles" style="font-size:14px; color:#7B6214;"></i>
@@ -23278,7 +23281,7 @@ function openAIKeyModal() {
         <button class="modal-save" onclick="saveAIKey()">저장</button>
       </div>
 
-      <div style="padding:14px; background:linear-gradient(135deg, #1A1A1A 0%, #2D2D2D 100%); border-radius:12px; color:white; margin-bottom:14px;">
+      <div style="padding:14px; background:linear-gradient(135deg, #47515B 0%, #2E3A40 100%); border-radius:12px; color:white; margin-bottom:14px;">
         <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">
           <i class="ti ti-sparkles" style="font-size:13px; color:#7B6214;"></i>
           <span style="font-size:11px; font-weight:600;">Gemini AI 설정</span>
@@ -23935,7 +23938,7 @@ function openAccountModal() {
       </div>
 
       <div style="padding:16px; background:var(--bg-secondary); border-radius:var(--radius-md); margin-bottom:14px; text-align:center;">
-        <div style="width:56px; height:56px; border-radius:50%; background:linear-gradient(135deg, #185FA5 0%, #3B6D11 100%); margin:0 auto 10px; display:flex; align-items:center; justify-content:center; color:white;">
+        <div style="width:56px; height:56px; border-radius:50%; background:linear-gradient(135deg, #185FA5 0%, #327059 100%); margin:0 auto 10px; display:flex; align-items:center; justify-content:center; color:white;">
           <i class="ti ti-user" style="font-size:28px;"></i>
         </div>
         <div style="font-size:14px; font-weight:600; margin-bottom:4px;">${escapeHTML(email)}</div>
