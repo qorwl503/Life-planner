@@ -2005,8 +2005,12 @@ function render() {
   if (!window._urlWorkoutDone) {
     window._urlWorkoutDone = true;
     try { consumeWorkoutFromUrl(); } catch (e) { console.warn('URL 운동 기록 실패:', e); }
-    // 📥 워치가 보내둔 운동 기록 가져오기 (앱이 안 열려 있던 동안 쌓인 것)
-    setTimeout(() => { try { drainWorkoutInbox(true); } catch (e) { console.warn('수신함 처리 실패:', e); } }, 1200);
+    try { consumeExpenseFromUrl(); } catch (e) { console.warn('URL 가계부 기록 실패:', e); }
+    // 📥 워치·문자가 보내둔 기록 가져오기 (앱이 안 열려 있던 동안 쌓인 것)
+    setTimeout(() => {
+      try { drainWorkoutInbox(true); } catch (e) { console.warn('운동 수신함 처리 실패:', e); }
+      try { drainExpenseInbox(true); } catch (e) { console.warn('가계부 수신함 처리 실패:', e); }
+    }, 1200);
   }
   // 탭별 바탕색 전환 (CSS의 body[data-tab=...] 규칙이 받아간다)
   try { document.body.dataset.tab = currentTab; } catch (e) {}
@@ -12124,7 +12128,7 @@ function openExpenseModal(forDateKey) {
           📸 캡처 입력
         </button>
         <button onclick="closeModal(); setTimeout(openClipboardExpenseModal, 100);" style="flex:1; padding:12px 8px; border:1.5px dashed var(--accent-primary, #6B5B96); background:rgba(107,91,150,0.06); color:var(--accent-primary, #6B5B96); border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px;">
-          📋 텍스트 붙여넣기
+          📋 알림·문자 붙여넣기
         </button>
       </div>
       <button onclick="pasteImageForOCR()" style="width:100%; margin-bottom:8px; padding:11px; border:1.5px dashed var(--text-info); background:rgba(69,110,158,0.04); color:var(--text-info); border-radius:10px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; justify-content:center; gap:6px;">
@@ -14770,6 +14774,190 @@ function guessExpenseCategoryFromText(text) {
 }
 
 // 클립보드 텍스트 입력 모달 — 카드 SMS/은행 알림 붙여넣기
+// ===== 📥 문자 → 가계부 자동 입력 =====
+// 아이폰 단축어의 '메시지 받았을 때' 자동화가 카드 승인·입금 문자를 이 앱으로 넘긴다.
+//   방법 1) URL 열기      : ?sms=<문자 전체> 또는 ?exp=금액&store=가맹점&type=expense
+//   방법 2) 조용히 보내기 : users/{uid}/expenseInbox 에 문서로 쌓아두면 앱을 켤 때 들어온다
+// 문자 본문을 그대로 넘기면 기존 parseExpenseText 가 금액·가맹점·날짜·입출금을 뽑아낸다.
+const EXPENSE_INBOX = 'expenseInbox';
+
+// 문자 한 건 → 가계부 항목 (중복이면 null)
+function expenseFromSms(raw) {
+  const parsed = parseExpenseText(String(raw || ''));
+  if (!parsed) return null;
+  return parsed;
+}
+
+// 같은 날짜·금액·가맹점이 이미 있으면 두 번 넣지 않는다
+function isDuplicateExpense(item) {
+  return (budget.expenses || []).some(e =>
+    e.dateKey === item.dateKey &&
+    Number(e.amt) === Number(item.amount) &&
+    String(e.memo || '') === String(item.store || '')
+  );
+}
+
+function addParsedExpense(item) {
+  if (!item || !(Number(item.amount) > 0)) return false;
+  if (isDuplicateExpense(item)) return false;
+  if (!budget.expenses) budget.expenses = [];
+  budget.expenses.push({
+    id: Date.now() + Math.random(),
+    dateKey: item.dateKey || todayKey(),
+    amt: Number(item.amount),
+    cat: item.cat || (item.isIncome ? '기타입금' : '기타'),
+    memo: item.store || '',
+    type: item.isIncome ? 'income' : 'expense',
+    fromSms: true,          // 문자로 들어온 건임을 표시 (나중에 구분·정리용)
+  });
+  return true;
+}
+
+// 주소로 넘어온 문자·금액 처리 (앱이 열리는 방식)
+function consumeExpenseFromUrl() {
+  let params;
+  try { params = new URLSearchParams(location.search); } catch (e) { return false; }
+
+  const sms = params.get('sms');
+  const expAmt = params.get('exp');
+  if (!sms && !expAmt) return false;
+
+  // 주소창에 값이 남아 새로고침 때마다 또 들어가는 것을 막는다
+  try { history.replaceState(null, '', location.pathname); } catch (e) {}
+
+  let item = null;
+  if (sms) {
+    item = expenseFromSms(sms);
+    if (!item) { showToast('문자에서 금액을 못 찾았어요'); return false; }
+  } else {
+    const amount = Number(expAmt) || 0;
+    if (!(amount > 0)) { showToast('금액이 없어요'); return false; }
+    const rawDate = params.get('date') || '';
+    let dateKey = todayKey();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+      const [yy, mm, dd] = rawDate.split('-').map(Number);
+      const probe = new Date(yy, mm - 1, dd);
+      if (probe.getFullYear() === yy && probe.getMonth() === mm - 1 && probe.getDate() === dd) dateKey = rawDate;
+    }
+    item = {
+      amount, dateKey,
+      store: params.get('store') || '',
+      cat: params.get('cat') || '',
+      isIncome: String(params.get('type') || '').toLowerCase() === 'income',
+    };
+  }
+
+  if (!addParsedExpense(item)) { showToast('이미 기록된 내역이에요'); return false; }
+  saveData();
+  showToast(`💳 ${Number(item.amount).toLocaleString()}원 ${item.isIncome ? '입금' : '지출'} 기록됨`);
+  if (currentTab === 'money') renderMoney();
+  if (currentTab === 'calendar') renderCalendar();
+  return true;
+}
+
+// 조용히 쌓아둔 문자들을 앱 켤 때 가져온다
+async function drainExpenseInbox(silent = true) {
+  if (!photosReady()) return 0;
+  let snap;
+  try {
+    const { collection, getDocs, db } = window._fb;
+    snap = await getDocs(collection(db, 'users', currentUser.uid, EXPENSE_INBOX));
+  } catch (e) {
+    console.warn('가계부 수신함 읽기 실패:', e);
+    return 0;
+  }
+
+  const picked = [];
+  snap.forEach(d => picked.push({ id: d.id, ...(d.data() || {}) }));
+  if (picked.length === 0) {
+    if (!silent) showToast('새로 들어온 내역이 없어요');
+    return 0;
+  }
+
+  let added = 0, dup = 0;
+  for (const it of picked) {
+    const item = it.sms ? expenseFromSms(it.sms) : {
+      amount: Number(it.amount) || 0,
+      dateKey: it.date || todayKey(),
+      store: it.store || '',
+      cat: it.cat || '',
+      isIncome: String(it.type || '').toLowerCase() === 'income',
+    };
+    if (item && addParsedExpense(item)) added++;
+    else dup++;
+
+    try {
+      const { deleteDoc, doc, db } = window._fb;
+      await deleteDoc(doc(db, 'users', currentUser.uid, EXPENSE_INBOX, it.id));
+    } catch (e) { console.warn('수신함 정리 실패:', it.id, e); }
+  }
+
+  if (added > 0) {
+    saveData();
+    showToast(`💳 문자 내역 ${added}건 들어왔어요${dup ? ` (중복 ${dup}건 제외)` : ''}`);
+    if (currentTab === 'money') renderMoney();
+    if (currentTab === 'calendar') renderCalendar();
+  } else if (!silent) {
+    showToast(dup ? `이미 있는 내역 ${dup}건이라 넘어갔어요` : '새로 들어온 내역이 없어요');
+  }
+  return added;
+}
+
+// 문자 연동 안내
+function openSmsSyncGuide() {
+  const base = location.origin + location.pathname;
+  const sample = `${base}?sms=`;
+  const proj = (window._fbProjectId || 'life-planner-a03d2');
+  const uid = currentUser ? currentUser.uid : '(로그인 필요)';
+  const inboxUrl = `https://firestore.googleapis.com/v1/projects/${proj}/databases/(default)/documents/users/${uid}/expenseInbox`;
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+        <h2 style="font-size:15px;">💬 문자 → 가계부 자동 입력</h2>
+        <span style="width:44px;"></span>
+      </div>
+
+      <div style="padding:11px 12px; background:var(--bg-info); border-radius:10px; margin-bottom:14px; font-size:11px; color:var(--text-info); line-height:1.8;">
+        카드 승인·입금 <b>문자</b>가 오면 자동으로 가계부에 넣어요.<br>
+        승인뿐 아니라 <b>입금·이체받음·환급</b>도 인식합니다.
+      </div>
+
+      <div style="padding:11px 12px; background:var(--bg-warning); border-radius:10px; margin-bottom:14px; font-size:11px; color:var(--text-warning); line-height:1.7;">
+        <b>카카오톡 알림은 못 잡아요.</b> 아이폰은 단축어가 <b>문자(SMS)</b> 만 읽을 수 있고
+        카톡·앱 푸시에는 접근이 안 돼요. 카톡으로만 오는 알림은 내용을 복사해
+        가계부의 <b>📋 텍스트 붙여넣기</b>를 쓰시면 똑같이 인식합니다.
+      </div>
+
+      <div style="font-size:12px; font-weight:700; margin:0 0 8px;">설정 (한 번만)</div>
+      <div style="font-size:11px; color:var(--text-secondary); line-height:1.9; padding:11px 12px; background:var(--bg-secondary); border-radius:10px;">
+        1. <b>단축어</b> 앱 → 아래 <b>자동화</b> 탭 → <b>+</b><br>
+        2. <b>메시지</b> 선택 → '보낸 사람' 은 비우고 <b>메시지에 포함</b> 에 <code>승인</code> 입력<br>
+        3. <b>즉시 실행</b> 켜기<br>
+        4. 동작 추가 → <b>URL 열기</b> → 아래 주소 뒤에 <b>메시지 본문</b> 변수를 붙이기<br><br>
+        입금도 잡으려면 같은 방식으로 <b>입금</b> 조건 자동화를 하나 더 만드세요.
+      </div>
+      <pre style="white-space:pre-wrap; word-break:break-all; font-size:10px; line-height:1.6; padding:11px; background:var(--bg-secondary); border-radius:10px; font-family:ui-monospace,monospace; margin-top:8px;">${escapeHTML(sample)}</pre>
+      <button onclick="navigator.clipboard?.writeText('${sample}').then(()=>showToast('📋 복사했어요')).catch(()=>showToast('복사 실패'))" style="width:100%; margin-top:8px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">📋 주소 복사</button>
+
+      <div style="font-size:11px; color:var(--text-tertiary); line-height:1.8; margin-top:10px;">
+        문자 전체를 그대로 넘기면 앱이 <b>금액·가맹점·날짜·입출금</b>을 알아서 뽑아냅니다.<br>
+        같은 날짜·금액·가맹점이 이미 있으면 중복으로 보고 넣지 않아요.
+      </div>
+
+      <div style="font-size:12px; font-weight:700; margin:16px 0 8px;">앱이 안 열리게 하려면</div>
+      <div style="font-size:11px; color:var(--text-secondary); line-height:1.8; padding:11px 12px; background:var(--bg-secondary); border-radius:10px;">
+        <b>URL 열기</b> 대신 <b>URL의 콘텐츠 가져오기</b>로 아래 주소에 보내면 조용히 쌓이고,
+        앱을 켤 때 자동으로 들어옵니다. (로그인 토큰이 필요해요 — 자세한 건 WATCH-SYNC 문서와 같은 방식)
+      </div>
+      <pre style="white-space:pre-wrap; word-break:break-all; font-size:9px; line-height:1.6; padding:11px; background:var(--bg-secondary); border-radius:10px; font-family:ui-monospace,monospace; margin-top:8px;">${escapeHTML(inboxUrl)}</pre>
+      <button onclick="navigator.clipboard?.writeText('${inboxUrl}').then(()=>showToast('📋 복사했어요')).catch(()=>showToast('복사 실패'))" style="width:100%; margin-top:8px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">📋 수신 주소 복사</button>
+    </div>`;
+  modal.classList.add('show');
+}
+
 function openClipboardExpenseModal() {
   modal.innerHTML = `
     <div class="modal">
