@@ -5530,16 +5530,23 @@ function openWorkoutModal(dateKeyStr) {
 
 // 🏃 운동 종목 — 종목마다 기록 단위가 다르다 (수영은 m, 달리기·자전거는 km)
 const SPORTS = [
-  { key: '수영',     emoji: '🏊', unit: 'm',  step: 25,  alias: ['수영', '풀 수영', '오픈 워터', 'swim'] },
-  { key: '러닝',     emoji: '🏃', unit: 'km', step: 0.1, alias: ['러닝', '달리기', '조깅', 'run'] },
+  { key: '수영',     emoji: '🏊', unit: 'm',  step: 25,  alias: ['수영', '풀 수영', '오픈 워터', '수중', '수구', 'swim'] },
+  { key: '러닝',     emoji: '🏃', unit: 'km', step: 0.1, alias: ['러닝', '달리기', '조깅', '육상', 'run'] },
   { key: '걷기',     emoji: '🚶', unit: 'km', step: 0.1, alias: ['걷기', '워킹', '산책', 'walk'] },
   { key: '자전거',   emoji: '🚴', unit: 'km', step: 0.1, alias: ['자전거', '사이클', '싸이클', 'cycl', 'bike'] },
-  { key: '근력',     emoji: '🏋️', unit: '',   step: 0,   alias: ['근력', '웨이트', '헬스', '기능성 근력', 'strength'] },
-  { key: '유산소',   emoji: '🔥', unit: '',   step: 0,   alias: ['유산소', '복합 유산소', '고강도', '인터벌', 'hiit', 'cardio'] },
-  { key: '스트레칭', emoji: '🤸', unit: '',   step: 0,   alias: ['정리운동', '준비운동', '스트레칭', '쿨다운', 'cooldown', '마음 챙김', '호흡'] },
-  { key: '등산',     emoji: '🥾', unit: 'km', step: 0.1, alias: ['등산', '하이킹', 'hiking'] },
-  { key: '요가',     emoji: '🧘', unit: '',   step: 0,   alias: ['요가', '필라테스', 'yoga', 'pilates'] },
-  { key: '구기',     emoji: '⚽', unit: '',   step: 0,   alias: ['구기', '축구', '농구', '배구', '테니스', '배드민턴', '골프', '탁구'] },
+  { key: '등산',     emoji: '🥾', unit: 'km', step: 0.1, alias: ['등산', '하이킹', '클라이밍', '암벽', 'hiking', 'climb'] },
+  { key: '근력',     emoji: '🏋️', unit: '',   step: 0,   alias: ['근력', '웨이트', '헬스', '코어', '발레', '체조', 'strength', 'core'] },
+  { key: '스트레칭', emoji: '🤸', unit: '',   step: 0,   alias: ['정리운동', '준비운동', '마무리', '스트레칭', '쿨다운', '유연', '재생하기', '마음 챙김', '호흡', 'cooldown', 'flexib'] },
+  { key: '요가',     emoji: '🧘', unit: '',   step: 0,   alias: ['요가', '필라테스', '태극권', '심신', 'yoga', 'pilates'] },
+  { key: '구기',     emoji: '⚽', unit: '',   step: 0,   alias: [
+      '구기', '축구', '농구', '배구', '야구', '소프트볼', '테니스', '배드민턴', '골프', '탁구',
+      '핸드볼', '럭비', '하키', '크리켓', '컬링', '볼링', '라크로스', '스쿼시', '라켓볼',
+      '피클볼', '패들', '원반', '미식'] },
+  { key: '유산소',   emoji: '🔥', unit: '',   step: 0,   alias: [
+      '유산소', '고강도', '인터벌', '크로스 트레이닝', '크로스컨트리', '일립티컬', '로잉',
+      '줄넘기', '킥복싱', '권투', '복싱', '무술', '댄스', '스케이팅', '스키', '스노보',
+      '설상', '계단', '스텝', '멀티 스포츠', '피트니스 게임', '휠체어',
+      'hiit', 'cardio', 'elliptical', 'rowing'] },
   { key: '기타',     emoji: '💪', unit: '',   step: 0,   alias: [] },
 ];
 function sportMeta(name) {
