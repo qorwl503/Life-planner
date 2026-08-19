@@ -5674,7 +5674,9 @@ function consumeWorkoutFromUrl() {
   // 주소창에 값이 남아 새로고침할 때마다 또 기록되는 것을 막는다
   try { history.replaceState(null, '', location.pathname); } catch (e) {}
 
-  if (minutes <= 0 && kcal <= 0 && dist <= 0) {
+  // 숫자가 하나도 없어도 종목만 있으면 '운동함'으로 기록한다.
+  // 단축어에서 변수를 여러 개 조합하기 어려운 경우를 위한 최소 경로.
+  if (minutes <= 0 && kcal <= 0 && dist <= 0 && !sportRaw) {
     showToast('운동 값이 비어 있어 기록하지 않았어요');
     return false;
   }
@@ -5688,7 +5690,11 @@ function consumeWorkoutFromUrl() {
     note: formatWorkoutNote(sport, dist, unit),
   };
   saveData();
-  showToast(`⌚ ${sportMeta(sport).emoji} ${dateK} 운동 기록됨`);
+  const bits = [];
+  if (minutes > 0) bits.push(minutes + '분');
+  if (kcal > 0) bits.push(kcal + 'kcal');
+  if (dist > 0) bits.push(dist + unit);
+  showToast(`⌚ ${sportMeta(sport).emoji} ${sport}${bits.length ? ' ' + bits.join(' · ') : ''} 기록됨`);
   return true;
 }
 
@@ -5723,7 +5729,20 @@ function openHealthSyncGuide() {
         <span style="opacity:0.85;">기기·앱 상관없이 동작해요. 갤럭시도 마찬가지예요.</span>
       </div>
 
-      <div style="font-size:12px; font-weight:700; margin:0 0 8px;">방법 2 · 단축어 자동화 <span style="font-size:10px; color:var(--text-tertiary); font-weight:500;">— 아이폰</span></div>
+      <div style="font-size:12px; font-weight:700; margin:0 0 8px;">방법 2 · 단축어 <span style="font-size:10px; color:var(--text-tertiary); font-weight:500;">— 가장 쉬운 버전 (변수 1개)</span></div>
+      <div style="font-size:11px; color:var(--text-secondary); line-height:1.9; padding:11px 12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:10px;">
+        변수를 여러 개 끼워 넣는 게 번거로우면 <b>종목 하나만</b> 넣어도 돼요.
+        그 날 운동한 걸로 기록되고, 시간·칼로리는 나중에 앱에서 채우거나 사진으로 넣으면 됩니다.<br><br>
+        1. 단축어 → <b>자동화</b> → <b>+</b> → <b>운동</b> → 종료될 때 → <b>즉시 실행</b> 켜기<br>
+        2. <b>동작 추가</b> → <code>URL</code> 검색 → <b>URL 열기</b><br>
+        3. 아래 주소를 붙여넣기<br>
+        4. 주소 <b>맨 끝에 커서</b>를 두고, 키보드 위 <b>운동</b> 을 한 번 누르기<br>
+        5. 들어간 파란 조각을 한 번 더 눌러 <b>유형</b> 선택 → 완료
+      </div>
+      <pre style="white-space:pre-wrap; word-break:break-all; font-size:10px; line-height:1.6; padding:11px; background:var(--bg-secondary); border-radius:10px; font-family:ui-monospace,monospace;">${escapeHTML(base + '?wo=')}</pre>
+      <button onclick="navigator.clipboard?.writeText('${base}?wo=').then(()=>showToast('📋 복사했어요 — 끝에 운동 변수만 붙이세요')).catch(()=>showToast('복사 실패'))" style="width:100%; margin-top:8px; padding:11px; border:none; background:var(--accent-primary, #6B5B96); color:white; border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">📋 쉬운 버전 주소 복사</button>
+
+      <div style="font-size:12px; font-weight:700; margin:16px 0 8px;">방법 2-B · 숫자까지 다 넣기 <span style="font-size:10px; color:var(--text-tertiary); font-weight:500;">— 변수 4개</span></div>
       <div style="font-size:11px; color:var(--text-secondary); line-height:1.8; padding:11px 12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:10px;">
         <b>'단축어'는 아이폰에 기본으로 깔린 앱</b>이에요. 만들거나 설치할 필요 없어요.<br><br>
         1. 단축어 앱 → 아래 <b>자동화</b> 탭<br>
