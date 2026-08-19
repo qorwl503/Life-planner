@@ -5619,7 +5619,7 @@ async function drainWorkoutInbox(silent = true) {
       workoutLog[dateK] = {
         ...prev,                    // 같은 날 사진·인바디 기록은 유지
         done: true,
-        minutes: minutes || Number(prev.minutes) || 0,
+        minutes: minutesFixed || Number(prev.minutes) || 0,
         kcal: kcal || Number(prev.kcal) || 0,
         note: formatWorkoutNote(sport, dist, unit),
       };
@@ -5653,7 +5653,9 @@ async function drainWorkoutInbox(silent = true) {
 function consumeWorkoutFromUrl() {
   let params;
   try { params = new URLSearchParams(location.search); } catch (e) { return false; }
-  const sportRaw = params.get('wo');
+  // 폰에서 주소를 손으로 치는 게 번거로워 짧은 이름도 함께 받는다 (wo=w, min=m, kcal=k, dist=d, unit=u)
+  const P = (a, b) => params.get(a) ?? params.get(b);
+  const sportRaw = P('wo', 'w');
   if (!sportRaw) return false;
 
   // 형식만 맞고 실재하지 않는 날짜(2026-13-99)가 들어오면 오늘로 되돌린다
@@ -5664,19 +5666,23 @@ function consumeWorkoutFromUrl() {
     const probe = new Date(yy, mm - 1, dd);
     if (probe.getFullYear() === yy && probe.getMonth() === mm - 1 && probe.getDate() === dd) dateK = rawDate;
   }
-  const minutes = Math.round(Number(params.get('min')) || 0);
-  const kcal = Math.round(Number(params.get('kcal')) || 0);
-  const dist = Number(params.get('dist')) || 0;
-  const unitRaw = String(params.get('unit') || '').toLowerCase();
+  const minutes = Math.round(Number(P('min', 'm')) || 0);
+  const kcal = Math.round(Number(P('kcal', 'k')) || 0);
+  const dist = Number(P('dist', 'd')) || 0;
+  const unitRaw = String(P('unit', 'u') || '').toLowerCase();
   const sport = sportMeta(sportRaw).key;
-  const unit = unitRaw === 'm' ? 'm' : (dist > 0 ? 'km' : '');
+  // 단위를 안 넘겨도 값 크기로 짐작한다 (수영 1200 → m, 러닝 5.2 → km)
+  const unit = unitRaw === 'm' ? 'm' : unitRaw === 'km' ? 'km' : (dist >= 100 ? 'm' : dist > 0 ? 'km' : '');
 
   // 주소창에 값이 남아 새로고침할 때마다 또 기록되는 것을 막는다
   try { history.replaceState(null, '', location.pathname); } catch (e) {}
 
   // 숫자가 하나도 없어도 종목만 있으면 '운동함'으로 기록한다.
   // 단축어에서 변수를 여러 개 조합하기 어려운 경우를 위한 최소 경로.
-  if (minutes <= 0 && kcal <= 0 && dist <= 0 && !sportRaw) {
+  // 단축어의 '지속 시간'은 초로 들어오는 경우가 많다. 값이 지나치게 크면 초로 보고 분으로 바꾼다.
+  //   (운동 시간이 600분=10시간을 넘는 일은 드물다)
+  const minutesFixed = minutes > 600 ? Math.round(minutes / 60) : minutes;
+  if (minutesFixed <= 0 && kcal <= 0 && dist <= 0 && !sportRaw) {
     showToast('운동 값이 비어 있어 기록하지 않았어요');
     return false;
   }
@@ -5685,13 +5691,13 @@ function consumeWorkoutFromUrl() {
   workoutLog[dateK] = {
     ...prev,                       // 같은 날 인바디·사진 등 다른 기록 유지
     done: true,
-    minutes: minutes || Number(prev.minutes) || 0,
+    minutes: minutesFixed || Number(prev.minutes) || 0,
     kcal: kcal || Number(prev.kcal) || 0,
     note: formatWorkoutNote(sport, dist, unit),
   };
   saveData();
   const bits = [];
-  if (minutes > 0) bits.push(minutes + '분');
+  if (minutesFixed > 0) bits.push(minutesFixed + '분');
   if (kcal > 0) bits.push(kcal + 'kcal');
   if (dist > 0) bits.push(dist + unit);
   showToast(`⌚ ${sportMeta(sport).emoji} ${sport}${bits.length ? ' ' + bits.join(' · ') : ''} 기록됨`);
