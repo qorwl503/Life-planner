@@ -69,10 +69,10 @@ const firebaseConfig = {
        카드를 순백 대신 살짝 따뜻한 흰색으로 두고 그림자로 띄워 평면감을 없앤다. */
     /* 바탕은 밝게 유지하되 카드를 한 단계 더 밝혀 구분이 되게 한다.
        (배경을 어둡게 해서 대비를 만들면 화면이 칙칙해진다 — 카드 쪽을 올리는 게 맞다) */
-    --bg-page: #EBE7DB;
-    --bg-primary: #FFFCF6;
-    --bg-secondary: #E2DCCC;
-    --bg-tertiary: #D3CCB9;
+    --bg-page: #E3D9C6;
+    --bg-primary: #F3EBDA;
+    --bg-secondary: #DCD1B9;
+    --bg-tertiary: #C9BC9F;
     --bg-info: #E3EDF3;
     --bg-success: #E5EEDE;
     --bg-warning: #F4E9D6;
@@ -105,11 +105,11 @@ const firebaseConfig = {
 
   /* 탭마다 바탕에 아주 옅은 색조를 얹어 화면이 서로 구분되게 한다.
      카드는 그대로 밝게 두고 '바닥'만 물들이므로 글자 대비는 영향받지 않는다. */
-  body[data-tab="calendar"] { --bg-page: #E6E9EC; --accent-tab: #456E9E; }
-  body[data-tab="todo"]     { --bg-page: #EAE6EC; --accent-tab: #6B5B96; }
-  body[data-tab="workout"]  { --bg-page: #E5EBE2; --accent-tab: #3D8168; }
-  body[data-tab="money"]    { --bg-page: #F0EAD9; --accent-tab: #B87D3C; }
-  body[data-tab="asset"]    { --bg-page: #E5EBE8; --accent-tab: #456E9E; }
+  body[data-tab="calendar"] { --bg-page: #CFDAE4; --bg-primary: #E7EEF4; --bg-secondary: #C2D1DE; --accent-tab: #456E9E; }
+  body[data-tab="todo"]     { --bg-page: #D8D0E0; --bg-primary: #EDE7F2; --bg-secondary: #CBC0D6; --accent-tab: #6B5B96; }
+  body[data-tab="workout"]  { --bg-page: #D2E0CF; --bg-primary: #E8F0E6; --bg-secondary: #C4D6C1; --accent-tab: #3D8168; }
+  body[data-tab="money"]    { --bg-page: #E3D6BC; --bg-primary: #F3EBDA; --bg-secondary: #D6C6A6; --accent-tab: #B87D3C; }
+  body[data-tab="asset"]    { --bg-page: #CFDFDA; --bg-primary: #E6F0EC; --bg-secondary: #C1D5CF; --accent-tab: #456E9E; }
 
   /* 섹션 제목 왼쪽에 탭 색 막대 — 목록이 밋밋하게 이어지지 않게 */
   .sec-title {
@@ -536,7 +536,7 @@ const firebaseConfig = {
     overflow: hidden;
     margin-top: 10px;
   }
-  .budget-bar > div { height: 100%; background: rgba(255,255,255,0.95); transition: width 0.4s; }
+  .budget-bar > div { height: 100%; background: rgba(255,255,255,0.45); transition: width 0.4s; }
   .budget-bar-labels { display: flex; justify-content: space-between; margin-top: 4px; font-size: 10px; opacity: 0.85; }
   .day-pace { display: flex; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 0.5px solid rgba(255,255,255,0.2); }
   .day-pace .item { flex: 1; }
@@ -4204,7 +4204,7 @@ function renderChallengeMiniWeek(c, accent) {
     const isToday = d.getTime() === base.getTime();
     const isFuture = d > base;
     const beforeStart = startD && d < startD; // 챌린지 시작 전 날짜
-    let mark = '', bg = 'rgba(255,255,255,0.6)', color = 'var(--text-tertiary)';
+    let mark = '', bg = 'rgba(255,255,255,0.3)', color = 'var(--text-tertiary)';
     if (v === true) { mark = '✓'; bg = accent; color = 'white'; }
     else if (v === 'fail') { mark = '✕'; bg = '#E06666'; color = 'white'; }
     const dim = (isFuture || beforeStart) ? 'opacity:0.35;' : '';
@@ -4290,9 +4290,9 @@ function renderChallengeCard(c) {
   const todayVal = Number(todayLog.value) || 0;
   const valPct = dTarget > 0 ? Math.min(100, (todayVal / dTarget) * 100) : 0;
   const dailyBar = dTarget > 0 ? `
-    <div style="margin-top:6px; padding:6px 9px; background:rgba(255,255,255,0.6); border-radius:9px;">
+    <div onclick="event.stopPropagation(); openChallengeLog(${c.id})" title="눌러서 오늘 수치 입력" style="margin-top:6px; padding:6px 9px; background:rgba(255,255,255,0.3); border-radius:9px; cursor:pointer;">
       <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:5px;">
-        <span style="font-size:10px; color:var(--text-secondary);">오늘 목표</span>
+        <span style="font-size:10px; color:var(--text-secondary);">오늘 목표 <span style="opacity:0.7;">✎</span></span>
         <span style="font-size:12px; font-weight:800; color:${accent};">${todayVal.toLocaleString()}<span style="font-size:10px; font-weight:600; color:var(--text-tertiary);"> / ${dTarget.toLocaleString()}${escapeHTML(c.unit || '')}</span></span>
       </div>
       <div style="height:5px; background:rgba(0,0,0,0.07); border-radius:999px; overflow:hidden;">
@@ -4307,15 +4307,13 @@ function renderChallengeCard(c) {
     <div style="display:flex; align-items:flex-start; gap:10px;">
       <div style="flex:1; min-width:0;">
         <div style="display:flex; gap:5px; flex-wrap:wrap; margin-bottom:7px;">
-          <span style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:999px; background:rgba(255,255,255,0.75); color:${accent};">${badge}</span>
-          ${!isCompleted ? `<span style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:999px; background:rgba(255,255,255,0.75); color:var(--text-secondary);">D-${daysLeft}</span>` : ''}
+          <span style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:999px; background:rgba(255,255,255,0.36); color:${accent};">${badge}</span>
+          <span style="font-size:11px; font-weight:800; padding:3px 8px; border-radius:999px; background:${accent}22; color:${accent};">${progressPct}%</span>
+          ${!isCompleted ? `<span style="font-size:11px; font-weight:700; padding:3px 8px; border-radius:999px; background:rgba(255,255,255,0.36); color:var(--text-secondary);">D-${daysLeft}</span>` : ''}
         </div>
         <div style="font-size:14px; font-weight:800; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${c.icon ? c.icon + ' ' : ''}${escapeHTML(c.title)}</div>
         <div style="font-size:11px; color:var(--text-secondary); margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${daysPassed}일째 · ${progressText} · ${todayStatusText}</div>
         ${c.memo ? `<div style="font-size:10px; color:var(--text-tertiary); margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">💭 ${escapeHTML(c.memo)}</div>` : ''}
-      </div>
-      <div style="width:38px; height:38px; border-radius:50%; background:conic-gradient(${accent} ${progressPct}%, rgba(255,255,255,0.6) 0); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
-        <div style="width:29px; height:29px; border-radius:50%; background:var(--bg-primary); display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; color:${accent}; box-shadow:var(--shadow-card);">${Math.round(progressPct)}%</div>
       </div>
       <button onclick="event.stopPropagation(); editChallenge(${c.id})" style="border:none; background:transparent; color:var(--text-tertiary); padding:2px; font-size:16px; cursor:pointer; font-family:inherit; flex-shrink:0;">⋮</button>
       <div style="display:flex; flex-direction:column; align-items:center; gap:4px; flex:0 0 auto;">
@@ -4323,8 +4321,8 @@ function renderChallengeCard(c) {
           ? `<span style="font-size:11px; font-weight:800; color:${accent}; white-space:nowrap;">🎉 달성</span>`
           : c.type === 'forbidden'
             ? `<div style="display:flex; gap:3px;">
-                 <button onclick="event.stopPropagation(); checkChallenge(${c.id}, true)" style="border:none; border-radius:8px; padding:5px 9px; background:${todayChecked===true?'#327059':'rgba(255,255,255,0.8)'}; color:${todayChecked===true?'white':'#327059'}; font-size:11px; font-weight:800; cursor:pointer; font-family:inherit;">O</button>
-                 <button onclick="event.stopPropagation(); checkChallenge(${c.id}, 'fail')" style="border:none; border-radius:8px; padding:5px 9px; background:${todayChecked==='fail'?'#9B3A33':'rgba(255,255,255,0.8)'}; color:${todayChecked==='fail'?'white':'#9B3A33'}; font-size:11px; font-weight:800; cursor:pointer; font-family:inherit;">X</button>
+                 <button onclick="event.stopPropagation(); checkChallenge(${c.id}, true)" style="border:none; border-radius:8px; padding:5px 9px; background:${todayChecked===true?'#327059':'rgba(255,255,255,0.38)'}; color:${todayChecked===true?'white':'#327059'}; font-size:11px; font-weight:800; cursor:pointer; font-family:inherit;">O</button>
+                 <button onclick="event.stopPropagation(); checkChallenge(${c.id}, 'fail')" style="border:none; border-radius:8px; padding:5px 9px; background:${todayChecked==='fail'?'#9B3A33':'rgba(255,255,255,0.38)'}; color:${todayChecked==='fail'?'white':'#9B3A33'}; font-size:11px; font-weight:800; cursor:pointer; font-family:inherit;">X</button>
                </div>`
             : c._weekDone
               ? `<span style="font-size:11px; font-weight:800; color:#327059; white-space:nowrap;">🎉 주간 달성</span>`
@@ -4393,15 +4391,38 @@ function checkChallenge(id, value) {
   const current = c.checks[k];
 
   // 같은 값 다시 누르면 해제 (토글)
+  const clearAutoValue = () => {
+    // 완료를 누를 때 자동으로 채웠던 값만 지운다 (사용자가 직접 적은 수치는 남긴다)
+    const dt = Number(c.dailyTarget) || 0;
+    const lg = (c.logs || {})[k];
+    if (dt > 0 && lg && Number(lg.value) === dt && !lg.note) {
+      const rest = { ...lg };
+      delete rest.value;
+      if (Object.keys(rest).length === 0) delete c.logs[k];
+      else c.logs[k] = rest;
+    }
+  };
   if (current === value) {
     delete c.checks[k];
+    clearAutoValue();
     showToast('체크 해제');
   } else if (value === false || value === undefined) {
     delete c.checks[k];
+    clearAutoValue();
     showToast('체크 해제');
   } else {
     c.checks[k] = value;
-    if (value === true) haptic();
+    if (value === true) {
+      haptic();
+      // 하루 목표량이 있는 챌린지는 '완료'를 누르면 목표치를 채운 것으로 본다.
+      // (예전엔 checks 만 기록해서 "0 / 100페이지" 가 그대로였다)
+      const dt = Number(c.dailyTarget) || 0;
+      if (dt > 0) {
+        if (!c.logs) c.logs = {};
+        const cur = Number((c.logs[k] || {}).value) || 0;
+        if (cur < dt) c.logs[k] = { ...(c.logs[k] || {}), value: dt };
+      }
+    }
     showToast(value === true ? '성공! 💪' : value === 'fail' ? '실패 ㅠ' : '체크됨');
   }
 
@@ -17193,7 +17214,7 @@ function renderFinancialGoalsCard(currentTotal) {
           <span style="font-size:11px; opacity:0.85;">${pct.toFixed(1)}%</span>
         </div>
         <div style="height:6px; background:rgba(255,255,255,0.25); border-radius:3px; overflow:hidden; margin-bottom:${monthlyNeeded > 0 || isCompleted ? '8px' : '0'};">
-          <div style="height:100%; width:${pct}%; background:rgba(255,255,255,0.95); transition:width 0.4s;"></div>
+          <div style="height:100%; width:${pct}%; background:rgba(255,255,255,0.45); transition:width 0.4s;"></div>
         </div>
 
         ${isCompleted ? `
