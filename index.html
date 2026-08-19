@@ -5057,6 +5057,47 @@ function woKey(d) {
   return dateKey(workoutViewYear, workoutViewMonth, d);
 }
 
+// ⚡ 빠른 기록 카드. 자주 하는 종목을 눌러 고르고, 시간을 누르면 그 자리에서 기록된다.
+const QUICK_SPORTS = ['유산소', '근력', '스트레칭', '러닝', '걷기', '수영'];
+const QUICK_MINUTES = [20, 30, 40, 60];
+
+function renderQuickLogCard() {
+  const picked = window._quickSport || '';
+  const chips = QUICK_SPORTS.map(k => {
+    const m = sportMeta(k);
+    const on = picked === k;
+    return `<button onclick="quickPickSport('${k}')" style="flex:1 1 auto; min-width:0; padding:8px 6px; border:0.5px solid ${on ? 'var(--accent-tab, #6B5B96)' : 'var(--border-tertiary)'}; background:${on ? 'var(--accent-tab, #6B5B96)' : 'var(--bg-primary)'}; color:${on ? '#fff' : 'var(--text-secondary)'}; border-radius:9px; font-size:11px; font-weight:700; cursor:pointer; font-family:inherit; white-space:nowrap;">${m.emoji} ${k}</button>`;
+  }).join('');
+
+  const mins = QUICK_MINUTES.map(n =>
+    `<button onclick="quickLogWorkout(${n})" style="flex:1; padding:9px 4px; border:none; background:var(--accent-tab, #6B5B96); color:#fff; border-radius:9px; font-size:12px; font-weight:800; cursor:pointer; font-family:inherit;">${n}분</button>`
+  ).join('');
+
+  return `
+    <div style="margin-bottom:12px; padding:11px 12px; border-radius:11px; background:var(--bg-secondary); border:0.5px solid var(--border-tertiary);">
+      <div style="font-size:11px; font-weight:800; color:var(--text-secondary); margin-bottom:8px;">⚡ 빠른 기록 <span style="font-weight:500; color:var(--text-tertiary);">— 종목 누르고 시간 누르면 끝</span></div>
+      <div style="display:flex; flex-wrap:wrap; gap:5px;">${chips}</div>
+      ${picked ? `<div style="display:flex; gap:5px; margin-top:8px;">${mins}</div>` : ''}
+    </div>`;
+}
+
+function quickPickSport(key) {
+  window._quickSport = (window._quickSport === key) ? '' : key;
+  renderWorkout();
+}
+
+function quickLogWorkout(minutes) {
+  const sport = window._quickSport;
+  if (!sport) return;
+  const ok = addWorkoutSession(todayKey(), { sport, minutes, kcal: 0, dist: 0, unit: '' });
+  window._quickSport = '';
+  if (!ok) { showToast('같은 기록이 이미 있어요'); renderWorkout(); return; }
+  saveData();
+  showToast(`${sportMeta(sport).emoji} ${sport} ${minutes}분 기록됨`);
+  renderWorkout();
+  if (typeof renderCalendar === 'function') { try { renderCalendar(); } catch (e) {} }
+}
+
 function renderWorkout() {
   header.innerHTML = `
     <h1>운동</h1>
@@ -5150,6 +5191,9 @@ function renderWorkout() {
     window._woPhotoLoaded = false;
     loadMonthPhotos(workoutViewYear, workoutViewMonth);
   }
+
+  // ⚡ 빠른 기록 — 종목 탭 → 시간 탭, 두 번이면 끝 (연동 없이도 쓸 수 있게)
+  if (isWorkoutCurrentMonth()) html += renderQuickLogCard();
 
   // 📸 운동 기록 캡처 (러닝앱 결과 화면)
   html += `
@@ -5717,7 +5761,8 @@ function consumeWorkoutFromUrl() {
   try { params = new URLSearchParams(location.search); } catch (e) { return false; }
   // 폰에서 주소를 손으로 치는 게 번거로워 짧은 이름도 함께 받는다 (wo=w, min=m, kcal=k, dist=d, unit=u)
   const P = (a, b) => params.get(a) ?? params.get(b);
-  const sportRaw = P('wo', 'w');
+  const rawParsed = parseWorkoutRawText(P('raw', 'r') || '');
+  const sportRaw = P('wo', 'w') || rawParsed?.sport;
   if (!sportRaw) return false;
 
   // 형식만 맞고 실재하지 않는 날짜(2026-13-99)가 들어오면 오늘로 되돌린다
@@ -5728,11 +5773,11 @@ function consumeWorkoutFromUrl() {
     const probe = new Date(yy, mm - 1, dd);
     if (probe.getFullYear() === yy && probe.getMonth() === mm - 1 && probe.getDate() === dd) dateK = rawDate;
   }
-  const minutes = Math.round(Number(P('min', 'm')) || 0);
-  const distRaw = Number(P('dist', 'd')) || 0;
-  const unitRaw = String(P('unit', 'u') || '').toLowerCase();
+  const minutes = Math.round(Number(P('min', 'm')) || rawParsed?.minutes || 0);
+  const distRaw = Number(P('dist', 'd')) || rawParsed?.dist || 0;
+  const unitRaw = String(P('unit', 'u') || rawParsed?.unit || '').toLowerCase();
   // 단축어의 '단위'는 칼로리 단위(kcal/kJ)로 오고, 거리 단위(m/km)로 올 수도 있다.
-  const kcal = normalizeKcal(P('kcal', 'k'), unitRaw);
+  const kcal = normalizeKcal(Number(P('kcal', 'k')) || rawParsed?.kcal || 0, P('kcalUnit', 'ku') || unitRaw);
   const sport = sportMeta(sportRaw).key;
   const _nd = normalizeDist(sportRaw, distRaw, unitRaw);
   const dist = _nd.dist, unit = _nd.unit;
@@ -5760,7 +5805,7 @@ function consumeWorkoutFromUrl() {
   const summary = `${sportMeta(sport).emoji} ${sport}${bits.length ? ' ' + bits.join(' · ') : ''}`;
   // 무엇이 어떤 값으로 들어왔는지 남겨둔다 (원본 종목명도 함께 — 기타로 빠질 때 원인 확인용)
   logSyncEvent('workout', `${dateK} ${summary}`,
-    `받은 값 — 종목:"${sportRaw}" 시간:${params.get('min') ?? params.get('m') ?? '없음'} 칼로리:${params.get('kcal') ?? params.get('k') ?? '없음'} 거리:${params.get('dist') ?? params.get('d') ?? '없음'}`);
+    rawParsed?.raw || `받은 값 — 종목:"${sportRaw}" 시간:${params.get('min') ?? params.get('m') ?? '없음'} 칼로리:${params.get('kcal') ?? params.get('k') ?? '없음'} 거리:${params.get('dist') ?? params.get('d') ?? '없음'}`);
   saveData();
   showToast(`⌚ ${summary} 기록됨`);
   return true;
@@ -5799,16 +5844,20 @@ function openHealthSyncGuide() {
 
       <div style="font-size:12px; font-weight:700; margin:0 0 8px;">방법 2 · 단축어 <span style="font-size:10px; color:var(--text-tertiary); font-weight:500;">— 가장 쉬운 버전 (변수 1개)</span></div>
       <div style="font-size:11px; color:var(--text-secondary); line-height:1.9; padding:11px 12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:10px;">
-        변수를 여러 개 끼워 넣는 게 번거로우면 <b>종목 하나만</b> 넣어도 돼요.
-        그 날 운동한 걸로 기록되고, 시간·칼로리는 나중에 앱에서 채우거나 사진으로 넣으면 됩니다.<br><br>
+        제일 덜 틀리는 방식은 <b>raw 한 줄</b>로 보내는 거예요.
+        단축어가 만든 문장 안에서 운동종류·시간·칼로리·거리를 앱이 자동으로 읽습니다.<br><br>
         1. 단축어 → <b>자동화</b> → <b>+</b> → <b>운동</b> → 종료될 때 → <b>즉시 실행</b> 켜기<br>
-        2. <b>동작 추가</b> → <code>URL</code> 검색 → <b>URL 열기</b><br>
-        3. 아래 주소를 붙여넣기<br>
-        4. 주소 <b>맨 끝에 커서</b>를 두고, 키보드 위 <b>운동</b> 을 한 번 누르기<br>
-        5. 들어간 파란 조각을 한 번 더 눌러 <b>유형</b> 선택 → 완료
+        2. <b>대기 10초</b><br>
+        3. <b>건강 샘플 찾기</b> → 유형: 운동, 시작일: 오늘, 최신순, 제한 1개<br>
+        4. <b>텍스트</b> 동작을 만들고 건강 샘플 변수를 넣기<br>
+        5. <b>URL</b> 동작에 아래 주소 + 텍스트 변수를 붙이기<br>
+        6. 마지막에 <b>URL 열기</b>
       </div>
-      <pre style="white-space:pre-wrap; word-break:break-all; font-size:10px; line-height:1.6; padding:11px; background:var(--bg-secondary); border-radius:10px; font-family:ui-monospace,monospace;">${escapeHTML(base + '?wo=')}</pre>
-      <button onclick="navigator.clipboard?.writeText('${base}?wo=').then(()=>showToast('📋 복사했어요 — 끝에 운동 변수만 붙이세요')).catch(()=>showToast('복사 실패'))" style="width:100%; margin-top:8px; padding:11px; border:none; background:var(--accent-primary, #6B5B96); color:white; border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">📋 쉬운 버전 주소 복사</button>
+      <pre style="white-space:pre-wrap; word-break:break-all; font-size:10px; line-height:1.6; padding:11px; background:var(--bg-secondary); border-radius:10px; font-family:ui-monospace,monospace;">${escapeHTML(base + '?raw=')}</pre>
+      <button onclick="navigator.clipboard?.writeText('${base}?raw=').then(()=>showToast('📋 복사했어요 — 끝에 텍스트 변수를 붙이세요')).catch(()=>showToast('복사 실패'))" style="width:100%; margin-top:8px; padding:11px; border:none; background:var(--accent-primary, #6B5B96); color:white; border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">📋 raw 주소 복사</button>
+      <div style="font-size:10px; color:var(--text-tertiary); line-height:1.7; margin-top:6px;">
+        raw 예시: <b>러닝 31분 320kcal 5.2km</b> / <b>수영 51분 420kcal 1200m</b>
+      </div>
 
       <div style="font-size:12px; font-weight:700; margin:16px 0 8px;">방법 2-B · 숫자까지 다 넣기 <span style="font-size:10px; color:var(--text-tertiary); font-weight:500;">— 변수 4개</span></div>
       <div style="font-size:11px; color:var(--text-secondary); line-height:1.8; padding:11px 12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:10px;">
@@ -5911,6 +5960,37 @@ function normalizeDist(sport, dist, unitRaw) {
   // 단위가 없으면 값 크기로 짐작한다 (수영 1200 → m, 러닝 5200 → 5.2km, 러닝 5.2 → km)
   if (wantsMeters) return { dist: d < 30 ? Math.round(d * 1000) : d, unit: 'm' };
   return d >= 100 ? { dist: Math.round(d / 100) / 10, unit: 'km' } : { dist: d, unit: 'km' };
+}
+
+function parseWorkoutRawText(raw) {
+  // URLSearchParams 가 이미 디코딩해 주지만, 단축어가 인코딩한 채 보낼 때도 있어 한 번 더 시도한다.
+  // 다만 '100% 달성' 처럼 %가 그냥 글자로 들어오면 decodeURIComponent 가 터지므로 원문을 쓴다.
+  let text = String(raw || '');
+  try { text = decodeURIComponent(text); } catch (e) {}
+  text = text.replace(/\+/g, ' ').trim();
+  if (!text) return null;
+  const sport = sportMeta(text).key;
+  const minMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:분|mins?|minutes?)/i);
+  const secMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:초|secs?|seconds?)/i);
+  const hmsMatch = text.match(/\b(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\b/);
+  let minutes = 0;
+  if (hmsMatch) {
+    const h = Number(hmsMatch[1] || 0);
+    const m = Number(hmsMatch[2] || 0);
+    const s = Number(hmsMatch[3] || 0);
+    minutes = Math.round(h * 60 + m + s / 60);
+  } else if (minMatch) {
+    minutes = Math.round(Number(minMatch[1]) || 0);
+  } else if (secMatch) {
+    minutes = Math.round((Number(secMatch[1]) || 0) / 60);
+  }
+  const kcalMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:kcal|cal|칼로리|킬로칼로리)/i);
+  const kjMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:kj|킬로줄)/i);
+  const kcal = kcalMatch ? normalizeKcal(kcalMatch[1], 'kcal') : kjMatch ? normalizeKcal(kjMatch[1], 'kJ') : 0;
+  const distMatch = text.match(/(\d+(?:\.\d+)?)\s*(km|킬로미터|公里|m|미터)\b/i);
+  const dist = distMatch ? Number(distMatch[1]) || 0 : 0;
+  const unit = distMatch ? (/^k/i.test(distMatch[2]) || distMatch[2] === '킬로미터' || distMatch[2] === '公里' ? 'km' : 'm') : '';
+  return { sport, minutes, kcal, dist, unit, raw: text };
 }
 
 // 세션 하나 추가 (같은 종목·시간이 연달아 들어오면 중복으로 보고 무시)
