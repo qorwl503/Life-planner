@@ -5668,10 +5668,10 @@ async function drainWorkoutInbox(silent = true) {
     }
 
     const minutes = Math.round(Number(it.minutes) || 0);
-    const kcal = Math.round(Number(it.kcal) || 0);
-    const dist = Number(it.dist) || 0;
+    const kcal = normalizeKcal(it.kcal, it.unit);
     const sport = sportMeta(it.sport || '').key;
-    const unit = String(it.unit || '').toLowerCase() === 'm' ? 'm' : (dist > 0 ? 'km' : '');
+    const _nd = normalizeDist(it.sport || '', it.dist, it.unit);
+    const dist = _nd.dist, unit = _nd.unit;
 
     if (minutes > 0 || kcal > 0 || dist > 0) {
       // 하루 여러 건도 각각 남는다
@@ -5722,12 +5722,13 @@ function consumeWorkoutFromUrl() {
     if (probe.getFullYear() === yy && probe.getMonth() === mm - 1 && probe.getDate() === dd) dateK = rawDate;
   }
   const minutes = Math.round(Number(P('min', 'm')) || 0);
-  const kcal = Math.round(Number(P('kcal', 'k')) || 0);
-  const dist = Number(P('dist', 'd')) || 0;
+  const distRaw = Number(P('dist', 'd')) || 0;
   const unitRaw = String(P('unit', 'u') || '').toLowerCase();
+  // 단축어의 '단위'는 칼로리 단위(kcal/kJ)로 오고, 거리 단위(m/km)로 올 수도 있다.
+  const kcal = normalizeKcal(P('kcal', 'k'), unitRaw);
   const sport = sportMeta(sportRaw).key;
-  // 단위를 안 넘겨도 값 크기로 짐작한다 (수영 1200 → m, 러닝 5.2 → km)
-  const unit = unitRaw === 'm' ? 'm' : unitRaw === 'km' ? 'km' : (dist >= 100 ? 'm' : dist > 0 ? 'km' : '');
+  const _nd = normalizeDist(sportRaw, distRaw, unitRaw);
+  const dist = _nd.dist, unit = _nd.unit;
 
   // 주소창에 값이 남아 새로고침할 때마다 또 기록되는 것을 막는다
   try { history.replaceState(null, '', location.pathname); } catch (e) {}
@@ -5879,15 +5880,39 @@ function recalcWorkoutDay(dateK) {
   log.done = true;
 }
 
+// 칼로리 단위 보정. 지역/설정에 따라 건강 앱이 kJ(킬로줄)로 주는데
+// 그대로 두면 4.2배 부풀려 기록된다. 단위를 같이 받았을 때만 바로잡는다.
+function normalizeKcal(kcal, unitRaw) {
+  const v = Number(kcal) || 0;
+  if (v <= 0) return 0;
+  const u = String(unitRaw || '').toLowerCase().replace(/\s/g, '');
+  const isKJ = u === 'kj' || u === '킬로줄' || u === 'kilojoule' || u === 'kilojoules';
+  return Math.round(isKJ ? v / 4.184 : v);
+}
+
+// 거리 단위 정리. 건강 앱은 거리를 m로 주는 일이 많은데(5.2km → 5200),
+// 그대로 두면 "러닝 5200m"으로 보인다. 수영만 m를 쓰고 나머지는 km로 맞춘다.
+function normalizeDist(sport, dist, unitRaw) {
+  const d = Number(dist) || 0;
+  const u = String(unitRaw || '').toLowerCase();
+  if (d <= 0) return { dist: 0, unit: '' };
+  const key = sportMeta(sport || '').key;
+  const wantsMeters = key === '수영';
+  // 단축어가 단위를 명시했으면 그대로 믿는다
+  if (u === 'm')  return wantsMeters ? { dist: d, unit: 'm' } : { dist: Math.round(d / 100) / 10, unit: 'km' };
+  if (u === 'km') return wantsMeters ? { dist: Math.round(d * 1000), unit: 'm' } : { dist: d, unit: 'km' };
+  // 단위가 없으면 값 크기로 짐작한다 (수영 1200 → m, 러닝 5200 → 5.2km, 러닝 5.2 → km)
+  if (wantsMeters) return { dist: d < 30 ? Math.round(d * 1000) : d, unit: 'm' };
+  return d >= 100 ? { dist: Math.round(d / 100) / 10, unit: 'km' } : { dist: d, unit: 'km' };
+}
+
 // 세션 하나 추가 (같은 종목·시간이 연달아 들어오면 중복으로 보고 무시)
 function addWorkoutSession(dateK, s) {
   const sport = sportMeta(s.sport || '').key;
   const minutes = Math.round(Number(s.minutes) || 0);
   const kcal = Math.round(Number(s.kcal) || 0);
-  const dist = Number(s.dist) || 0;
-  const unit = String(s.unit || '').toLowerCase() === 'm' ? 'm'
-    : String(s.unit || '').toLowerCase() === 'km' ? 'km'
-    : (dist >= 100 ? 'm' : dist > 0 ? 'km' : '');
+  const _nd = normalizeDist(s.sport || '', s.dist, s.unit);
+  const dist = _nd.dist, unit = _nd.unit;
   if (minutes <= 0 && kcal <= 0 && dist <= 0 && !s.sport) return false;
 
   const prev = workoutLog[dateK] || {};
