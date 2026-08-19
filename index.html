@@ -4959,7 +4959,7 @@ function renderWorkout() {
       📸 운동 사진 넣기 <span style="font-weight:500; opacity:0.85;">(사진 + 기록 함께 저장)</span>
     </button>
     <button onclick="openHealthSyncGuide()" style="width:100%; margin-bottom:12px; padding:9px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:11px; font-weight:700; cursor:pointer; font-family:inherit;">
-      ⌚ 애플 건강·워치 연동하기
+      ⌚ 워치·건강앱 연동하기
     </button>`;
   html += renderInbodyCard();
 
@@ -5374,7 +5374,8 @@ function formatWorkoutNote(sport, dist, unit) {
 // HealthKit 은 웹앱에서 직접 못 읽는다 (네이티브 앱 전용 API).
 // 대신 iOS '단축어'가 건강 데이터를 읽어 이 앱을 URL 로 열어주면, 그 값을 받아 기록한다.
 //   예) https://내앱주소/?wo=수영&min=51&kcal=420&dist=1200&unit=m&date=2026-08-17
-// 안드로이드도 Bixby 루틴·Tasker 등으로 같은 URL 을 열면 동작한다.
+// URL 로 받는 방식이라 기기는 가리지 않는다. 다만 '운동이 끝나면 자동 실행'되는 트리거는
+// iOS 단축어가 확실하고, 안드로이드는 자동화 앱마다 달라 수동 실행이 될 수 있다.
 function consumeWorkoutFromUrl() {
   let params;
   try { params = new URLSearchParams(location.search); } catch (e) { return false; }
@@ -5426,13 +5427,12 @@ function openHealthSyncGuide() {
       <div class="modal-handle"></div>
       <div class="modal-header">
         <button class="modal-cancel" onclick="closeModal()">닫기</button>
-        <h2 style="font-size:15px;">⌚ 건강 앱 연동</h2>
+        <h2 style="font-size:15px;">⌚ 워치·건강앱 연동</h2>
         <span style="width:44px;"></span>
       </div>
 
       <div style="padding:11px 12px; background:var(--bg-warning); border-radius:10px; margin-bottom:12px; font-size:11px; color:var(--text-warning); line-height:1.7;">
-        애플 <b>건강(HealthKit)</b> 은 웹앱이 직접 읽을 수 없어요. 애플이 네이티브 앱에만 열어둔 기능이에요.<br>
-        대신 아이폰 <b>단축어</b> 앱으로 건강 기록을 이 앱에 넘길 수 있어요.
+        애플 <b>건강(HealthKit)</b>, 안드로이드 <b>Health Connect</b> 모두 웹앱이 직접 읽을 수 없어요.<br>네이티브 앱에만 열려 있는 기능이라 우회할 방법이 없어요. 대신 아래 방법으로 넣을 수 있어요.
       </div>
 
       <div style="font-size:12px; font-weight:700; margin:0 0 7px;">단축어 만들기</div>
@@ -5454,8 +5454,14 @@ function openHealthSyncGuide() {
         date = YYYY-MM-DD (없으면 오늘)
       </div>
 
-      <div style="margin-top:12px; padding:10px 12px; background:var(--bg-info); border-radius:10px; font-size:11px; color:var(--text-info); line-height:1.6;">
-        갤럭시는 Bixby 루틴이나 Tasker 로 같은 주소를 열면 똑같이 동작해요.
+      <div style="margin-top:12px; padding:11px 12px; background:var(--bg-secondary); border-radius:10px; font-size:11px; color:var(--text-secondary); line-height:1.8;">
+        <b>갤럭시 워치는?</b><br>
+        위 <b>주소로 기록을 넣는 것 자체는 기기를 안 가려요</b> — 안드로이드에서도 그대로 됩니다.<br><br>
+        다만 <b>운동이 끝나면 자동으로 실행</b>되는 부분이 달라요. 아이폰 단축어에는 '운동 종료' 트리거가 있지만,
+        삼성 헬스는 그런 트리거를 공식으로 열어두지 않아서 Bixby 루틴만으로는 어려울 수 있어요.
+        Tasker 같은 자동화 앱으로 알림을 감지해 실행하는 방법이 알려져 있는데, 기기·버전에 따라 다릅니다.<br><br>
+        <b>가장 확실한 건 사진을 넣는 방법이에요.</b> 삼성 헬스 결과 화면을 캡처해서 넣으면
+        사진과 함께 시간·칼로리·거리가 같이 기록돼요. 기기 상관없이 동작합니다.
       </div>
     </div>`;
   modal.classList.add('show');
