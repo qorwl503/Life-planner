@@ -5095,7 +5095,8 @@ function quickLogWorkout(minutes) {
   saveData();
   showToast(`${sportMeta(sport).emoji} ${sport} ${minutes}분 기록됨`);
   renderWorkout();
-  if (typeof renderCalendar === 'function') { try { renderCalendar(); } catch (e) {} }
+  // 지금 보고 있는 탭만 다시 그린다 (안 그러면 운동 탭이 캘린더 화면으로 덮인다)
+  if (currentTab === 'calendar' && typeof renderCalendar === 'function') { try { renderCalendar(); } catch (e) {} }
 }
 
 function renderWorkout() {
@@ -5463,6 +5464,8 @@ function quickToggleToday() {
 
 function toggleWorkoutDay(d) {
   const k = woKey(d);
+  // 운동을 미래에 할 수는 없다. 잘못 눌러 앞날에 기록이 박히는 것을 막는다.
+  if (k > todayKey()) { showToast('아직 오지 않은 날이에요'); return; }
   if (!workoutLog[k]) workoutLog[k] = { done: false };
   workoutLog[k].done = !workoutLog[k].done;
   if (workoutLog[k].done) {
@@ -5780,7 +5783,7 @@ async function drainWorkoutInbox(silent = true) {
           (window._workoutOcrRaw ? ` · AI 응답: ${String(window._workoutOcrRaw).slice(0, 200)}` : ''));
       }
       for (const r of read) {
-        const d = r.date || dateK;
+        const d = safeWorkoutDate(r.date, dateK);
         if (addWorkoutSession(d, r)) {
           applied++;
           logSyncEvent('workout', d + ' ' + formatWorkoutNote(r.sport, r.dist, r.unit) + ' ' + r.minutes + '분', '워치 캡처 사진에서 읽음');
@@ -6392,8 +6395,9 @@ async function clearWorkoutDay(dateK) {
   saveData();
   closeModal();
   showToast('🗑 기록을 지웠어요');
-  renderWorkout();
-  if (typeof renderCalendar === 'function') { try { renderCalendar(); } catch (e) {} }
+  if (currentTab === 'workout') renderWorkout();
+  // 지금 보고 있는 탭만 다시 그린다 (안 그러면 운동 탭이 캘린더 화면으로 덮인다)
+  if (currentTab === 'calendar' && typeof renderCalendar === 'function') { try { renderCalendar(); } catch (e) {} }
 }
 
 function openWorkoutPhoto(dateK) {
@@ -6459,6 +6463,19 @@ function workoutCellLabel(log) {
 // 카드 캡처와 같은 축소·폴백·잘림 처리 방식을 쓴다.
 // 이미지 1장에서 운동 기록을 읽어 항목 배열로 돌려준다.
 // 사진 추가 흐름과 여러 장 캡처 흐름이 같은 코드를 쓰도록 따로 뺐다.
+// 판독기가 화면의 숫자를 날짜로 잘못 읽으면 미래에 기록이 박힌다.
+// 운동 기록은 미래에 있을 수 없으므로, 오늘 이후면 기준 날짜로 되돌린다.
+function safeWorkoutDate(raw, fallback) {
+  const fb = fallback || todayKey();
+  const d = String(raw || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return fb;
+  const [yy, mm, dd] = d.split('-').map(Number);
+  const probe = new Date(yy, mm - 1, dd);
+  if (probe.getFullYear() !== yy || probe.getMonth() !== mm - 1 || probe.getDate() !== dd) return fb;
+  if (d > todayKey()) return fb;          // 미래 날짜는 쓰지 않는다
+  return d;
+}
+
 // 같은 사진이 또 들어왔는지 알아보기 위한 지문 (앞부분 + 길이면 충분히 구별된다)
 function photoFingerprint(b64) {
   const clean = String(b64 || '').replace(/[^A-Za-z0-9+/=]/g, '');
@@ -6612,7 +6629,7 @@ JSON 형식:
     const sport = sportMeta(it.sport || it.note || '').key;
     const unit = String(it.unit || '').toLowerCase() === 'm' ? 'm' : (dist > 0 ? 'km' : '');
     out.push({
-      date: it.date || today,
+      date: safeWorkoutDate(it.date, today),
       sport,
       minutes: min,
       kcal: Math.round(Number(it.kcal) || 0),
