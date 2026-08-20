@@ -5597,11 +5597,13 @@ const SPORTS = [
   { key: '기타',     emoji: '💪', unit: '',   step: 0,   alias: [] },
 ];
 function sportMeta(name) {
-  const n = String(name || '').toLowerCase();
+  // 띄어쓰기가 제각각이다 (정리 운동 / 정리운동, 실외 달리기 / 실외달리기)
+  // → 양쪽 공백을 모두 지우고 비교한다. 공백 하나로 기타가 되던 문제.
+  const squash = x => String(x || '').toLowerCase().replace(/\s+/g, '');
+  const n = squash(name);
   if (!n) return SPORTS[SPORTS.length - 1];
-  // 워치가 주는 이름은 '복합 유산소 운동', '실내 걷기' 처럼 길다 → 별칭이 포함돼 있으면 그 종목
   for (const s of SPORTS) {
-    if (s.key !== '기타' && s.alias.some(a => n.includes(a.toLowerCase()))) return s;
+    if (s.key !== '기타' && s.alias.some(a => n.includes(squash(a)))) return s;
   }
   return SPORTS[SPORTS.length - 1];
 }
@@ -6549,6 +6551,9 @@ async function readWorkoutFromImage(file, direct) {
 ⌚ 애플워치 요약 화면(운동 끝내고 크라운+옆버튼으로 캡처한 작은 세로 화면)
 - 맨 위에 운동 이름, 그 아래 큰 숫자가 순서대로 나온다: 총 시간 / 활동 칼로리 / 총 칼로리 / 거리 / 평균 심박수
 - <b>총 시간은 시:분:초</b> 형식이다. 0:01:10 → 1분, 0:42:30 → 43분, 1:05:30 → 66분 (초는 반올림)
+- 칼로리 항목 이름은 <b>활동 킬로칼로리 / 총 킬로칼로리</b> 로 나온다. <b>활동</b> 쪽 숫자를 kcal 로 쓴다
+- 짧은 운동은 칼로리가 <b>1~5 처럼 작게</b> 나온다. 작다고 무시하지 말고 그대로 적는다
+- 화면을 아래로 스크롤해야 보이는 항목은 안 보일 수 있다. <b>보이는 것만</b> 적고 나머지는 0
 - 종목마다 보이는 항목이 다르다. 근력·요가엔 거리가 없고, 수영엔 랩·거리가 있다. <b>없는 항목은 0</b>으로 두면 된다
 - kcal 은 **활동 칼로리**를 쓴다 (총 칼로리가 아니라). 활동 칼로리가 안 보이면 총 칼로리
 - 심박수(BPM)를 칼로리로 착각하지 마라
