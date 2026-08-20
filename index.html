@@ -5897,19 +5897,6 @@ async function openWatchPhotoSetup(regenerate = false) {
   const key = await ensureUploadKey(regenerate);
   if (!key) return;
   const r = watchUploadRecipe(key);
-  const rules = [
-    'match /uploadKeys/{k} {',
-    '  allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;',
-    '  allow delete: if request.auth != null && resource.data.uid == request.auth.uid;',
-    '}',
-    'match /users/{userId}/workoutInbox/{docId} {',
-    '  allow create: if request.resource.data.key is string',
-    '    && get(/databases/$(database)/documents/uploadKeys/$(request.resource.data.key)).data.uid == userId',
-    '    && request.resource.data.photo is string',
-    '    && request.resource.data.photo.size() < 900000',
-    "    && request.resource.data.keys().hasOnly(['key','photo','photoMime','date','via','at']);",
-    '}',
-  ].join('\n');
 
   const copyBtn = (label, text) =>
     `<button onclick="navigator.clipboard?.writeText(${jsString(text)}).then(()=>showToast('📋 복사했어요')).catch(()=>showToast('복사 실패'))" style="width:100%; margin-top:7px; padding:10px; border:none; background:var(--accent-tab, #6B5B96); color:white; border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">${label}</button>`;
@@ -5936,14 +5923,7 @@ async function openWatchPhotoSetup(regenerate = false) {
           <span style="color:var(--text-tertiary);">설정은 한 번만 하면 됩니다. 서버도, 로그인도 필요 없어요.</span>
         </div>
 
-        <div style="font-size:12px; font-weight:800; margin:0 0 6px;">1 · Firestore 규칙에 추가</div>
-        <div style="font-size:11px; color:var(--text-tertiary); line-height:1.7; margin-bottom:6px;">
-          Firebase 콘솔 → Firestore Database → 규칙. 기존 규칙 안에 붙여넣으세요.
-        </div>
-        ${box(rules)}
-        ${copyBtn('📋 규칙 복사', rules)}
-
-        <div style="font-size:12px; font-weight:800; margin:18px 0 6px;">2 · 단축어 만들기</div>
+        <div style="font-size:12px; font-weight:800; margin:0 0 6px;">단축어 만들기</div>
         <div style="font-size:11px; color:var(--text-secondary); line-height:1.9;">
           단축어 앱 → 자동화 → <b>Apple Watch 운동</b> → 종료될 때 → <b>즉시 실행</b><br>
           동작 4개를 순서대로 넣습니다:<br>
