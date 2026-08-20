@@ -472,11 +472,14 @@ const firebaseConfig = {
     font-family: inherit;
   }
   .cat-btn.active {
-    background: var(--bg-warning);
-    color: var(--text-warning);
-    border: none;
-    font-weight: 500;
+    /* 연한 배경이라 고른 게 안 보였다 → 꽉 채우고 테두리까지 준다 */
+    background: var(--accent-tab, #6B5B96);
+    color: #fff;
+    border: 0.5px solid var(--accent-tab, #6B5B96);
+    font-weight: 700;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.18);
   }
+  .cat-btn.active i { color: #fff; }
   .cat-btn i { font-size: 18px; }
   .cat-btn span { font-size: 10px; }
 
@@ -12704,10 +12707,10 @@ function openExpenseModal(forDateKey) {
 
       <!-- 지출/입금 토글 -->
       <div style="display:flex; gap:6px; padding:3px; background:var(--bg-secondary); border-radius:10px; margin-bottom:14px;">
-        <button id="type-expense" class="active" onclick="setExpType('expense')" style="flex:1; padding:10px; border:none; background:var(--bg-primary); color:var(--text-danger); font-size:13px; font-weight:600; border-radius:8px; cursor:pointer; font-family:inherit; box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+        <button id="type-expense" class="active" onclick="setExpType('expense')" style="flex:1; padding:10px; border:none; background:var(--text-danger); color:#fff; font-size:13px; font-weight:800; border-radius:8px; cursor:pointer; font-family:inherit; box-shadow:0 1px 4px rgba(0,0,0,0.18);">
           💸 지출
         </button>
-        <button id="type-income" onclick="setExpType('income')" style="flex:1; padding:10px; border:none; background:transparent; color:var(--text-secondary); font-size:13px; font-weight:600; border-radius:8px; cursor:pointer; font-family:inherit;">
+        <button id="type-income" onclick="setExpType('income')" style="flex:1; padding:10px; border:none; background:transparent; color:var(--text-tertiary); font-size:13px; font-weight:600; border-radius:8px; cursor:pointer; font-family:inherit;">
           💵 입금
         </button>
       </div>
@@ -12925,24 +12928,28 @@ function setExpType(type) {
 
   if (type === 'income') {
     expBtn.style.background = 'transparent';
-    expBtn.style.color = 'var(--text-secondary)';
+    expBtn.style.color = 'var(--text-tertiary)';
     expBtn.style.boxShadow = 'none';
+    expBtn.style.fontWeight = '600';
     expBtn.classList.remove('active');
-    incBtn.style.background = 'white';
-    incBtn.style.color = 'var(--text-success)';
-    incBtn.style.boxShadow = '0 1px 3px rgba(0,0,0,0.08)';
+    incBtn.style.background = 'var(--text-success)';
+    incBtn.style.color = '#fff';
+    incBtn.style.boxShadow = '0 1px 4px rgba(0,0,0,0.18)';
+    incBtn.style.fontWeight = '800';
     incBtn.classList.add('active');
     expSection.style.display = 'none';
     incSection.style.display = 'block';
     if (investExtra) investExtra.style.display = 'none';
   } else {
     incBtn.style.background = 'transparent';
-    incBtn.style.color = 'var(--text-secondary)';
+    incBtn.style.color = 'var(--text-tertiary)';
     incBtn.style.boxShadow = 'none';
+    incBtn.style.fontWeight = '600';
     incBtn.classList.remove('active');
-    expBtn.style.background = 'white';
-    expBtn.style.color = 'var(--text-danger)';
-    expBtn.style.boxShadow = '0 1px 3px rgba(0,0,0,0.08)';
+    expBtn.style.background = 'var(--text-danger)';
+    expBtn.style.color = '#fff';
+    expBtn.style.boxShadow = '0 1px 4px rgba(0,0,0,0.18)';
+    expBtn.style.fontWeight = '800';
     expBtn.classList.add('active');
     expSection.style.display = 'block';
     incSection.style.display = 'none';
