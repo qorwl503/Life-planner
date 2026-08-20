@@ -5763,6 +5763,18 @@ async function drainWorkoutInbox(silent = true) {
 
   if (applied > 0) {
     logSyncEvent('workout', `수신함에서 ${applied}건`, '앱이 꺼져 있는 동안 쌓인 기록');
+    // 🔔 조용히 들어오면 들어온 줄 모른다 → 배너·시스템 알림으로 알려준다
+    try {
+      const dayK = todayKey();
+      const today = workoutLog[dayK];
+      const summary = today ? workoutSessions(today).map(x => formatWorkoutNote(x.sport, x.dist, x.unit)).join(' · ') : '';
+      recordAlertHits([{
+        kind: 'workout',
+        name: `운동 ${applied}건 기록됨`,
+        msg: summary ? `${summary}${Number(today.minutes) > 0 ? ` · ${today.minutes}분` : ''}` : '워치에서 보낸 기록이 들어왔어요',
+        at: Date.now(),
+      }], `💪 운동 ${applied}건이 들어왔어요`);
+    } catch (e) { console.warn('운동 알림 실패:', e); }
     saveData();
     showToast(`⌚ 워치 운동 ${applied}건 들어왔어요`);
     if (currentTab === 'workout') renderWorkout();
@@ -5902,6 +5914,9 @@ async function openWatchPhotoSetup(regenerate = false) {
   const copyBtn = (label, text) =>
     `<button onclick="navigator.clipboard?.writeText(${jsString(text)}).then(()=>showToast('📋 복사했어요')).catch(()=>showToast('복사 실패'))" style="width:100%; margin-top:7px; padding:10px; border:none; background:var(--accent-tab, #6B5B96); color:white; border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">${label}</button>`;
 
+  // 열쇠는 화면에 그대로 띄우지 않는다. 캡처를 남에게 보여줘도 새지 않도록.
+  const maskKey = (text) => text.split(key).join('●'.repeat(12));
+
   const box = (text) =>
     `<pre style="white-space:pre-wrap; word-break:break-all; font-size:9.5px; line-height:1.6; padding:10px; background:var(--bg-secondary); border-radius:10px; font-family:ui-monospace,monospace; margin:0;">${escapeHTML(text)}</pre>`;
 
@@ -5939,12 +5954,17 @@ async function openWatchPhotoSetup(regenerate = false) {
         </div>
 
         <div style="font-size:11.5px; font-weight:700; margin:14px 0 4px;">④의 주소</div>
-        ${box(r.url)}
+        ${box(r.url.replace(currentUser.uid, currentUser.uid.slice(0,4) + '●●●●●●●●'))}
         ${copyBtn('📋 주소 복사', r.url)}
 
         <div style="font-size:11.5px; font-weight:700; margin:14px 0 4px;">④의 본문 — 앞부분</div>
-        ${box(r.bodyHead)}
+        ${box(maskKey(r.bodyHead))}
         ${copyBtn('📋 앞부분 복사', r.bodyHead)}
+
+        <div style="font-size:11px; color:var(--text-tertiary); line-height:1.7; margin-top:6px;">
+          🔒 <b>●●●</b> 부분은 일부러 가려놨어요. <b>복사 버튼을 쓰면 진짜 값이 복사</b>됩니다.
+          이 화면을 캡처해서 남에게 보여줘도 안전해요.
+        </div>
 
         <div style="font-size:11px; color:var(--text-warning); line-height:1.7; margin-top:8px; padding:9px 10px; background:var(--bg-warning); border-radius:9px;">
           앞부분을 붙여넣은 뒤, <b>맨 끝에 ③의 결과(Base64) 변수를 끼우고</b>, 그다음 아래 뒷부분을 붙여넣으세요.
@@ -5970,12 +5990,6 @@ async function openWatchPhotoSetup(regenerate = false) {
 }
 
 function openHealthSyncGuide() {
-  const base = location.origin + location.pathname;
-  const sample = `${base}?wo=러닝&min=31&kcal=320&dist=5.2&unit=km`;
-  const proj = (window._fbProjectId || 'life-planner-a03d2');
-  const uid = currentUser ? currentUser.uid : '(로그인 필요)';
-  const inboxUrl = `https://firestore.googleapis.com/v1/projects/${proj}/databases/(default)/documents/users/${uid}/workoutInbox`;
-
   modal.innerHTML = `
     <div class="modal">
       <div class="modal-handle"></div>
@@ -5984,74 +5998,26 @@ function openHealthSyncGuide() {
         <h2 style="font-size:15px;">⌚ 워치·운동앱 연동</h2>
         <span style="width:44px;"></span>
       </div>
+      <div style="padding:0 16px 20px;">
 
-      <div style="padding:11px 12px; background:var(--bg-info); border-radius:10px; margin-bottom:14px; font-size:11px; color:var(--text-info); line-height:1.8;">
-        <b>런데이·나이키런·스트라바를 써도 괜찮아요.</b><br>
-        이 앱들은 운동이 끝나면 아이폰 <b>건강 앱</b>에 기록을 넣어줘요.
-        그래서 어떤 앱으로 뛰든 건강 앱에 모이고, 아래 방법이 그걸 그대로 가져옵니다.<br>
-        <span style="opacity:0.85;">(각 앱 설정에서 '건강 앱에 쓰기' 권한만 허용돼 있으면 돼요)</span>
-      </div>
+        <div style="padding:12px 13px; background:var(--bg-secondary); border-radius:11px; font-size:11.5px; color:var(--text-secondary); line-height:1.9;">
+          운동 끝나고 워치에서 <b>크라운 + 옆버튼</b>을 눌러 화면을 캡처하면,
+          단축어가 그 사진을 앱으로 보내줍니다.<br>
+          앱은 사진을 읽어 <b>종목 · 시간 · 칼로리 · 거리</b>를 기록하고, 사진도 그 날짜에 남겨요.
+        </div>
 
-      <div style="font-size:12px; font-weight:700; margin:0 0 8px;">방법 1 · 사진 넣기 <span style="font-size:10px; color:var(--text-tertiary); font-weight:500;">— 가장 간단</span></div>
-      <div style="font-size:11px; color:var(--text-secondary); line-height:1.8; padding:11px 12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:14px;">
-        운동 끝난 결과 화면을 캡처해서 <b>📸 운동 사진 넣기</b>로 올리면 끝이에요.<br>
-        사진이 달력에 남고 시간·칼로리·거리도 같이 기록돼요.<br>
-        <span style="opacity:0.85;">기기·앱 상관없이 동작해요. 갤럭시도 마찬가지예요.</span>
-      </div>
+        <div style="margin-top:10px; font-size:11px; color:var(--text-tertiary); line-height:1.9;">
+          · 설정은 <b>한 번만</b> 하면 됩니다<br>
+          · 앱이 열리지 않아요 — 다음에 켤 때 조용히 들어옵니다<br>
+          · 런데이·나이키런·삼성헬스 화면을 캡처해도 똑같이 읽습니다
+        </div>
 
-      <div style="font-size:12px; font-weight:700; margin:0 0 8px;">방법 2 · 단축어 <span style="font-size:10px; color:var(--text-tertiary); font-weight:500;">— 가장 쉬운 버전 (변수 1개)</span></div>
-      <div style="font-size:11px; color:var(--text-secondary); line-height:1.9; padding:11px 12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:10px;">
-        제일 덜 틀리는 방식은 <b>raw 한 줄</b>로 보내는 거예요.
-        단축어가 만든 문장 안에서 운동종류·시간·칼로리·거리를 앱이 자동으로 읽습니다.<br><br>
-        1. 단축어 → <b>자동화</b> → <b>+</b> → <b>운동</b> → 종료될 때 → <b>즉시 실행</b> 켜기<br>
-        2. <b>대기 10초</b><br>
-        3. <b>건강 샘플 찾기</b> → 유형: 운동, 시작일: 오늘, 최신순, 제한 1개<br>
-        4. <b>텍스트</b> 동작을 만들고 건강 샘플 변수를 넣기<br>
-        5. <b>URL</b> 동작에 아래 주소 + 텍스트 변수를 붙이기<br>
-        6. 마지막에 <b>URL 열기</b>
-      </div>
-      <pre style="white-space:pre-wrap; word-break:break-all; font-size:10px; line-height:1.6; padding:11px; background:var(--bg-secondary); border-radius:10px; font-family:ui-monospace,monospace;">${escapeHTML(base + '?raw=')}</pre>
-      <button onclick="navigator.clipboard?.writeText('${base}?raw=').then(()=>showToast('📋 복사했어요 — 끝에 텍스트 변수를 붙이세요')).catch(()=>showToast('복사 실패'))" style="width:100%; margin-top:8px; padding:11px; border:none; background:var(--accent-primary, #6B5B96); color:white; border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">📋 raw 주소 복사</button>
-      <div style="font-size:10px; color:var(--text-tertiary); line-height:1.7; margin-top:6px;">
-        raw 예시: <b>러닝 31분 320kcal 5.2km</b> / <b>수영 51분 420kcal 1200m</b>
-      </div>
+        <button onclick="openWatchPhotoSetup()" style="width:100%; margin-top:14px; padding:13px; border:none; background:var(--accent-tab, #6B5B96); color:white; border-radius:11px; font-size:13px; font-weight:800; cursor:pointer; font-family:inherit;">⌚ 연동 설정하기</button>
 
-      <div style="font-size:12px; font-weight:700; margin:16px 0 8px;">방법 2-B · 숫자까지 다 넣기 <span style="font-size:10px; color:var(--text-tertiary); font-weight:500;">— 변수 4개</span></div>
-      <div style="font-size:11px; color:var(--text-secondary); line-height:1.8; padding:11px 12px; background:var(--bg-secondary); border-radius:10px; margin-bottom:10px;">
-        <b>'단축어'는 아이폰에 기본으로 깔린 앱</b>이에요. 만들거나 설치할 필요 없어요.<br><br>
-        1. 단축어 앱 → 아래 <b>자동화</b> 탭<br>
-        2. <b>+ → 운동</b> → '종료될 때' 선택<br>
-        3. <b>즉시 실행</b> 켜기<br>
-        4. 동작 추가 → <b>URL 열기</b> → 아래 주소에 건강 앱 변수를 끼워 넣기<br><br>
-        <b>종목마다 따로 만들 필요 없어요.</b> 자동화 하나면 러닝·수영·홈트 전부 잡히고,
-        워치로 한 운동도 아이폰에 동기화되니 그대로 들어와요.
-      </div>
-      <pre style="white-space:pre-wrap; word-break:break-all; font-size:10px; line-height:1.6; padding:11px; background:var(--bg-secondary); border-radius:10px; font-family:ui-monospace,monospace;">${escapeHTML(sample)}</pre>
-      <button onclick="navigator.clipboard?.writeText('${sample}').then(()=>showToast('📋 복사했어요')).catch(()=>showToast('복사 실패'))" style="width:100%; margin-top:8px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">📋 주소 복사</button>
-      <div style="font-size:11px; color:var(--text-tertiary); line-height:1.8; margin-top:8px;">
-        <b>종목은 아무거나 됩니다.</b> ${SPORTS.map(s => s.emoji + s.key).join(' · ')}<br>
-        수영은 <b>unit=m</b>, 러닝·자전거·등산은 <b>unit=km</b><br>
-        <span style="color:var(--text-warning);">단, 이 방법은 기록될 때 앱이 잠깐 열려요.</span>
-      </div>
-
-      <div style="font-size:12px; font-weight:700; margin:16px 0 8px;">방법 3 · 워치 캡처 자동 연동 <span style="font-size:10px; color:var(--text-tertiary); font-weight:500;">— 앱 안 열리고 숫자까지 다 들어옴</span></div>
-      <div style="font-size:11px; color:var(--text-secondary); line-height:1.8; padding:11px 12px; background:var(--bg-secondary); border-radius:10px;">
-        운동 끝나고 워치에서 <b>크라운 + 옆버튼</b>으로 화면을 캡처하면, 단축어가 그 사진을 앱으로 보내줍니다.
-        앱은 사진을 읽어 <b>종목·시간·칼로리·거리</b>를 기록해요.<br>
-        서버도 로그인 정보도 필요 없고, 설정은 한 번만 하면 됩니다.
-      </div>
-      <button onclick="openWatchPhotoSetup()" style="width:100%; margin-top:8px; padding:12px; border:none; background:var(--accent-tab, #6B5B96); color:white; border-radius:10px; font-size:12.5px; font-weight:800; cursor:pointer; font-family:inherit;">⌚ 연동 설정하기</button>
-      <div style="margin-top:14px; padding:11px 12px; background:var(--bg-secondary); border-radius:10px; font-size:11px; color:var(--text-secondary); line-height:1.8;">
-        <b>갤럭시 워치는?</b><br>
-        방법 1(사진)은 그대로 됩니다. 방법 2·3의 주소도 안드로이드에서 동작해요.<br>
-        다만 <b>운동이 끝나면 자동 실행</b>되는 부분은 삼성 헬스가 공식 트리거를 안 열어둬서
-        Bixby 루틴만으로는 어려울 수 있어요. Tasker 같은 앱으로 알림을 감지하는 방법이 알려져 있는데
-        기기·버전에 따라 달라요.
-      </div>
-
-      <div style="margin-top:12px; padding:11px 12px; background:var(--bg-warning); border-radius:10px; font-size:11px; color:var(--text-warning); line-height:1.7;">
-        애플 <b>건강(HealthKit)</b>, 안드로이드 <b>Health Connect</b> 는 웹앱이 직접 읽을 수 없어요.
-        네이티브 앱에만 열려 있는 기능이라 우회할 방법이 없어서, 위 방법들로 넘겨받는 구조예요.
+        <div style="margin-top:14px; padding:11px 12px; background:var(--bg-secondary); border-radius:10px; font-size:11px; color:var(--text-tertiary); line-height:1.8;">
+          설정 없이 쓰시려면 운동 탭의 <b>📸 운동 사진 넣기</b>로 캡처를 직접 올리셔도 됩니다.
+          판독은 똑같아요.
+        </div>
       </div>
     </div>`;
   modal.classList.add('show');
@@ -15407,7 +15373,7 @@ function openSmsSyncGuide() {
         <b>URL 열기</b> 대신 <b>URL의 콘텐츠 가져오기</b>로 아래 주소에 보내면 조용히 쌓이고,
         앱을 켤 때 자동으로 들어옵니다. (로그인 토큰이 필요해요 — 자세한 건 WATCH-SYNC 문서와 같은 방식)
       </div>
-      <pre style="white-space:pre-wrap; word-break:break-all; font-size:9px; line-height:1.6; padding:11px; background:var(--bg-secondary); border-radius:10px; font-family:ui-monospace,monospace; margin-top:8px;">${escapeHTML(inboxUrl)}</pre>
+      <pre style="white-space:pre-wrap; word-break:break-all; font-size:9px; line-height:1.6; padding:11px; background:var(--bg-secondary); border-radius:10px; font-family:ui-monospace,monospace; margin-top:8px;">${escapeHTML(uid.length > 8 ? inboxUrl.replace(uid, uid.slice(0,4) + '●●●●●●●●') : inboxUrl)}</pre>
       <button onclick="navigator.clipboard?.writeText('${inboxUrl}').then(()=>showToast('📋 복사했어요')).catch(()=>showToast('복사 실패'))" style="width:100%; margin-top:8px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">📋 수신 주소 복사</button>
     </div>`;
   modal.classList.add('show');
@@ -21992,13 +21958,13 @@ function checkPriceAlerts() {
 }
 
 // 도달 기록 저장 + 알림 (자산·관심종목·시장지표 공용)
-function recordAlertHits(hits) {
+function recordAlertHits(hits, toastMsg) {
   if (!hits || hits.length === 0) return 0;
   if (!settings.alertHits) settings.alertHits = [];
   settings.alertHits = hits.concat(settings.alertHits).slice(0, 30); // 최근 30건만 보관
   saveData();
   hits.forEach(h => sendSystemNotification(h));
-  showToast(`🔔 목표 도달! ${hits.map(h => h.name).join(', ')}`);
+  showToast(toastMsg || `🔔 목표 도달! ${hits.map(h => h.name).join(', ')}`);
   renderAlertBanner();
   return hits.length;
 }
@@ -22192,11 +22158,13 @@ function renderAlertBanner() {
   // 목표가 알림 외의 종류(오늘 일정 등)가 섞여도 안전하게
   const isPrice = Number(top.target) > 0 && Number(top.price) > 0;
   const dir = top.kind === 'today' ? '📅 오늘 일정'
+    : top.kind === 'workout' ? '💪 운동 기록됨'
     : top.kind === 'below' ? '↓ 목표가 이하' : '↑ 목표가 이상';
   const color = top.kind === 'today' ? '#456E9E'
+    : top.kind === 'workout' ? '#3D8168'
     : top.kind === 'below' ? '#127153' : '#895B29';
-  const headline = top.kind === 'today'
-    ? escapeHTML(top.name || '오늘 일정')
+  const headline = (top.kind === 'today' || top.kind === 'workout')
+    ? escapeHTML(top.name || '알림')
     : `${escapeHTML(top.name || '알림')} 목표가 도달`;
   const sub = isPrice
     ? `${dir} · 목표 ${Number(top.target).toLocaleString()} → 현재 ${Number(top.price).toLocaleString()}`
