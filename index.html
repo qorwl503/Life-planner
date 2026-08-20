@@ -5718,6 +5718,29 @@ async function drainWorkoutInbox(silent = true) {
       if (probe.getFullYear() === yy && probe.getMonth() === mm - 1 && probe.getDate() === dd) dateK = raw;
     }
 
+    // ⌚ 단축어가 보낸 워치 캡처 사진 — 여기서 판독해 기록으로 바꾼다
+    if (it.photo) {
+      let read = [];
+      try { read = await readWorkoutFromImage(null, { base64: it.photo, mimeType: it.photoMime || 'image/jpeg' }); }
+      catch (e) { console.warn('수신 사진 판독 실패:', e); }
+      if (read.length === 0) {
+        logSyncEvent('workout', dateK + ' 사진에서 값을 못 읽음', window._workoutOcrErr || '판독 실패');
+      }
+      for (const r of read) {
+        const d = r.date || dateK;
+        if (addWorkoutSession(d, r)) {
+          applied++;
+          logSyncEvent('workout', d + ' ' + formatWorkoutNote(r.sport, r.dist, r.unit) + ' ' + r.minutes + '분', '워치 캡처 사진에서 읽음');
+          try { await putWorkoutPhoto(d, 'data:' + (it.photoMime || 'image/jpeg') + ';base64,' + it.photo); } catch (e) {}
+        }
+      }
+      try {
+        const { deleteDoc, doc, db } = window._fb;
+        await deleteDoc(doc(db, 'users', currentUser.uid, WORKOUT_INBOX, it.id));
+      } catch (e) { console.warn('수신함 정리 실패:', it.id, e); }
+      continue;
+    }
+
     const minutes = Math.round(Number(it.minutes) || 0);
     const kcal = normalizeKcal(it.kcal, it.unit);
     const sport = sportMeta(it.sport || '').key;
@@ -5812,6 +5835,140 @@ function consumeWorkoutFromUrl() {
 }
 
 // 단축어 만드는 법 안내 — 사용자가 주소를 그대로 복사해 갈 수 있게
+// ===== ⌚ 워치 캡처 자동 연동 (전송 열쇠 방식) =====
+// 단축어가 로그인할 방법이 없으므로, 앱이 사용자마다 긴 무작위 열쇠를 만들어 준다.
+// 그 열쇠는 Firestore 의 uploadKeys/{열쇠} 에 {uid} 로 저장되고,
+// 보안 규칙이 "이 열쇠의 주인이 맞는 사람인가"만 확인해 수신함 쓰기를 허용한다.
+// → 열쇠가 새도 그 사람 수신함에 사진을 넣는 것 외엔 아무것도 못 한다 (읽기·삭제 불가).
+
+function newUploadKey() {
+  const buf = new Uint8Array(24);
+  (crypto || window.crypto).getRandomValues(buf);
+  return Array.from(buf).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function ensureUploadKey(force = false) {
+  if (!photosReady()) { showToast('먼저 로그인해주세요'); return null; }
+  const old = settings.uploadKey || '';
+  if (old && !force) return old;
+
+  const { doc, setDoc, deleteDoc, db } = window._fb;
+  const key = newUploadKey();
+  try {
+    await setDoc(doc(db, 'uploadKeys', key), { uid: currentUser.uid, at: Date.now() });
+  } catch (e) {
+    console.warn('전송 열쇠 발급 실패:', e);
+    showToast('열쇠 발급 실패 — Firestore 규칙을 확인해주세요');
+    return null;
+  }
+  // 새로 만들었으면 옛 열쇠는 못 쓰게 지운다
+  if (old) { try { await deleteDoc(doc(db, 'uploadKeys', old)); } catch (e) {} }
+
+  settings.uploadKey = key;
+  saveData(true);
+  return key;
+}
+
+// 단축어에 붙여넣을 주소와 본문을 만든다
+function watchUploadRecipe(key) {
+  const proj = window._fbProjectId || '';
+  const apiKey = window._fbApiKey || '';
+  const uid = currentUser ? currentUser.uid : '';
+  const url = `https://firestore.googleapis.com/v1/projects/${proj}/databases/(default)/documents/users/${uid}/workoutInbox?key=${apiKey}`;
+  // 사진(base64)이 들어갈 자리를 표시해 둔다. 단축어에서 이 자리에 변수를 끼운다.
+  const bodyHead = `{"fields":{"key":{"stringValue":"${key}"},"photoMime":{"stringValue":"image/jpeg"},"photo":{"stringValue":"`;
+  const bodyTail = `"}}}`;
+  return { url, bodyHead, bodyTail };
+}
+
+async function openWatchPhotoSetup(regenerate = false) {
+  const key = await ensureUploadKey(regenerate);
+  if (!key) return;
+  const r = watchUploadRecipe(key);
+  const rules = [
+    'match /uploadKeys/{k} {',
+    '  allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;',
+    '  allow delete: if request.auth != null && resource.data.uid == request.auth.uid;',
+    '}',
+    'match /users/{userId}/workoutInbox/{docId} {',
+    '  allow create: if request.resource.data.key is string',
+    '    && get(/databases/$(database)/documents/uploadKeys/$(request.resource.data.key)).data.uid == userId',
+    '    && request.resource.data.photo is string',
+    '    && request.resource.data.photo.size() < 900000',
+    "    && request.resource.data.keys().hasOnly(['key','photo','photoMime','date','via','at']);",
+    '}',
+  ].join('\n');
+
+  const copyBtn = (label, text) =>
+    `<button onclick="navigator.clipboard?.writeText(${jsString(text)}).then(()=>showToast('📋 복사했어요')).catch(()=>showToast('복사 실패'))" style="width:100%; margin-top:7px; padding:10px; border:none; background:var(--accent-tab, #6B5B96); color:white; border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">${label}</button>`;
+
+  const box = (text) =>
+    `<pre style="white-space:pre-wrap; word-break:break-all; font-size:9.5px; line-height:1.6; padding:10px; background:var(--bg-secondary); border-radius:10px; font-family:ui-monospace,monospace; margin:0;">${escapeHTML(text)}</pre>`;
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="openHealthSyncGuide()">뒤로</button>
+        <h2 style="font-size:15px;">⌚ 워치 캡처 자동 연동</h2>
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+      </div>
+      <div style="padding:0 16px 20px;">
+
+        <div style="padding:11px 12px; background:var(--bg-secondary); border-radius:10px; font-size:11.5px; color:var(--text-secondary); line-height:1.8; margin-bottom:14px;">
+          운동 끝나고 워치에서 <b>크라운 + 옆버튼</b>을 눌러 화면을 캡처하면,
+          단축어가 그 사진을 앱으로 보내줍니다. 앱은 사진을 읽어 종목·시간·칼로리·거리를 기록해요.<br>
+          <span style="color:var(--text-tertiary);">설정은 한 번만 하면 됩니다. 서버도, 로그인도 필요 없어요.</span>
+        </div>
+
+        <div style="font-size:12px; font-weight:800; margin:0 0 6px;">1 · Firestore 규칙에 추가</div>
+        <div style="font-size:11px; color:var(--text-tertiary); line-height:1.7; margin-bottom:6px;">
+          Firebase 콘솔 → Firestore Database → 규칙. 기존 규칙 안에 붙여넣으세요.
+        </div>
+        ${box(rules)}
+        ${copyBtn('📋 규칙 복사', rules)}
+
+        <div style="font-size:12px; font-weight:800; margin:18px 0 6px;">2 · 단축어 만들기</div>
+        <div style="font-size:11px; color:var(--text-secondary); line-height:1.9;">
+          단축어 앱 → 자동화 → <b>Apple Watch 운동</b> → 종료될 때 → <b>즉시 실행</b><br>
+          동작 4개를 순서대로 넣습니다:<br>
+          <b>①</b> 대기 — <b>15초</b><br>
+          <b>②</b> 최근 사진 가져오기 — <b>1개</b><br>
+          <b>③</b> Base64 인코딩<br>
+          <b>④</b> URL의 콘텐츠 가져오기 — 방법 <b>POST</b>, 본문 <b>JSON 아님 / 파일 아님 → 텍스트</b>
+        </div>
+
+        <div style="font-size:11.5px; font-weight:700; margin:14px 0 4px;">④의 주소</div>
+        ${box(r.url)}
+        ${copyBtn('📋 주소 복사', r.url)}
+
+        <div style="font-size:11.5px; font-weight:700; margin:14px 0 4px;">④의 본문 — 앞부분</div>
+        ${box(r.bodyHead)}
+        ${copyBtn('📋 앞부분 복사', r.bodyHead)}
+
+        <div style="font-size:11px; color:var(--text-warning); line-height:1.7; margin-top:8px; padding:9px 10px; background:var(--bg-warning); border-radius:9px;">
+          앞부분을 붙여넣은 뒤, <b>맨 끝에 ③의 결과(Base64) 변수를 끼우고</b>, 그다음 아래 뒷부분을 붙여넣으세요.
+        </div>
+
+        <div style="font-size:11.5px; font-weight:700; margin:14px 0 4px;">④의 본문 — 뒷부분</div>
+        ${box(r.bodyTail)}
+        ${copyBtn('📋 뒷부분 복사', r.bodyTail)}
+
+        <div style="margin-top:18px; padding:11px 12px; background:var(--bg-secondary); border-radius:10px; font-size:11px; color:var(--text-secondary); line-height:1.8;">
+          <b>먼저 켜두세요</b> — 아이폰 <b>Watch 앱 → 일반 → 스크린샷 활성화</b><br>
+          <b>확인</b> — 운동 하나 끝내고 캡처한 뒤, 운동 탭의 <b>📜 자동으로 들어온 기록 보기</b>에서 뭐가 들어왔는지 볼 수 있어요.
+        </div>
+
+        <div style="margin-top:12px; padding:11px 12px; background:var(--bg-secondary); border-radius:10px; font-size:11px; color:var(--text-tertiary); line-height:1.8;">
+          이 열쇠로는 <b>내 수신함에 사진을 넣는 것만</b> 됩니다. 데이터를 읽거나 지울 수는 없어요.
+          그래도 새어 나간 것 같으면 아래에서 다시 발급하세요. 예전 열쇠는 바로 못 쓰게 됩니다.
+        </div>
+        <button onclick="if(confirm('열쇠를 다시 만들면 지금 단축어는 작동하지 않아요. 새 본문을 다시 붙여넣어야 합니다. 계속할까요?')) openWatchPhotoSetup(true)" style="width:100%; margin-top:8px; padding:10px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:11.5px; font-weight:700; cursor:pointer; font-family:inherit;">🔄 전송 열쇠 다시 발급</button>
+      </div>
+    </div>`;
+  modal.classList.add('show');
+}
+
 function openHealthSyncGuide() {
   const base = location.origin + location.pathname;
   const sample = `${base}?wo=러닝&min=31&kcal=320&dist=5.2&unit=km`;
@@ -5877,22 +6034,13 @@ function openHealthSyncGuide() {
         <span style="color:var(--text-warning);">단, 이 방법은 기록될 때 앱이 잠깐 열려요.</span>
       </div>
 
-      <div style="font-size:12px; font-weight:700; margin:16px 0 8px;">방법 3 · 앱 안 열리게 <span style="font-size:10px; color:var(--text-tertiary); font-weight:500;">— 설정이 조금 복잡</span></div>
+      <div style="font-size:12px; font-weight:700; margin:16px 0 8px;">방법 3 · 워치 캡처 자동 연동 <span style="font-size:10px; color:var(--text-tertiary); font-weight:500;">— 앱 안 열리고 숫자까지 다 들어옴</span></div>
       <div style="font-size:11px; color:var(--text-secondary); line-height:1.8; padding:11px 12px; background:var(--bg-secondary); border-radius:10px;">
-        단축어에서 <b>'URL 열기'</b> 대신 <b>'URL의 콘텐츠 가져오기'</b>를 쓰면 앱이 안 열리고 조용히 전송돼요.
-        보낸 기록은 앱을 켤 때 자동으로 들어옵니다.<br><br>
-        요청을 두 번 보내야 해요.<br>
-        <b>①</b> 로그인해서 토큰 받기<br>
-        <b>②</b> 아래 주소로 운동 기록 보내기 (헤더에 토큰)<br><br>
-        <span style="opacity:0.85;">②의 주소예요:</span>
+        운동 끝나고 워치에서 <b>크라운 + 옆버튼</b>으로 화면을 캡처하면, 단축어가 그 사진을 앱으로 보내줍니다.
+        앱은 사진을 읽어 <b>종목·시간·칼로리·거리</b>를 기록해요.<br>
+        서버도 로그인 정보도 필요 없고, 설정은 한 번만 하면 됩니다.
       </div>
-      <pre style="white-space:pre-wrap; word-break:break-all; font-size:9px; line-height:1.6; padding:11px; background:var(--bg-secondary); border-radius:10px; font-family:ui-monospace,monospace; margin-top:8px;">${escapeHTML(inboxUrl)}</pre>
-      <button onclick="navigator.clipboard?.writeText('${inboxUrl}').then(()=>showToast('📋 복사했어요')).catch(()=>showToast('복사 실패'))" style="width:100%; margin-top:8px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">📋 수신 주소 복사</button>
-      <div style="font-size:11px; color:var(--text-tertiary); line-height:1.8; margin-top:8px;">
-        이 방법은 단축어에 <b>로그인 정보를 넣어야</b> 해요. 본인 폰에만 두시고, 설정이 어려우면
-        방법 1·2로도 충분해요. 자세한 순서가 필요하면 말씀해주세요.
-      </div>
-
+      <button onclick="openWatchPhotoSetup()" style="width:100%; margin-top:8px; padding:12px; border:none; background:var(--accent-tab, #6B5B96); color:white; border-radius:10px; font-size:12.5px; font-weight:800; cursor:pointer; font-family:inherit;">⌚ 연동 설정하기</button>
       <div style="margin-top:14px; padding:11px 12px; background:var(--bg-secondary); border-radius:10px; font-size:11px; color:var(--text-secondary); line-height:1.8;">
         <b>갤럭시 워치는?</b><br>
         방법 1(사진)은 그대로 됩니다. 방법 2·3의 주소도 안드로이드에서 동작해요.<br>
@@ -6229,10 +6377,13 @@ function workoutCellLabel(log) {
 // 카드 캡처와 같은 축소·폴백·잘림 처리 방식을 쓴다.
 // 이미지 1장에서 운동 기록을 읽어 항목 배열로 돌려준다.
 // 사진 추가 흐름과 여러 장 캡처 흐름이 같은 코드를 쓰도록 따로 뺐다.
-async function readWorkoutFromImage(file) {
+// direct = { base64, mimeType } 를 주면 파일 없이도 판독한다 (수신함으로 들어온 사진용)
+async function readWorkoutFromImage(file, direct) {
   if (!window.GEMINI_API_KEY) return [];
-  const shrunk = await shrinkImageForOcr(file).catch(() => null);
   let b64, mime;
+  if (direct && direct.base64) { b64 = direct.base64; mime = direct.mimeType || 'image/jpeg'; }
+  else {
+  const shrunk = await shrinkImageForOcr(file).catch(() => null);
   if (shrunk) { b64 = shrunk.base64; mime = shrunk.mimeType; }
   else {
     b64 = await new Promise((res, rej) => {
@@ -6242,6 +6393,7 @@ async function readWorkoutFromImage(file) {
       r.readAsDataURL(file);
     });
     mime = file.type || 'image/jpeg';
+  }
   }
 
   const today = todayKey();
