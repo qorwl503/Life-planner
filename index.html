@@ -5633,6 +5633,32 @@ function formatWorkoutNote(sport, dist, unit) {
 // ===== 📜 연동 기록 — 무엇이 어떻게 들어왔는지 확인 =====
 // 워치·단축어·문자로 들어온 기록은 화면에 잠깐 뜨는 안내만으로는 확인이 어렵다.
 // 최근 것들을 남겨두고 언제든 열어볼 수 있게 한다. (settings 에 최근 30건만)
+// ⌚ 워치에서 기록이 들어오면 팝업으로 보여준다 (배너만으론 놓치기 쉬움)
+function showWorkoutArrivedPopup(entries) {
+  if (!entries || entries.length === 0) return;
+  const rows = entries.map(e => `
+    <div style="padding:10px 11px; background:var(--bg-secondary); border-radius:10px; margin-bottom:6px;">
+      <div style="font-size:13px; font-weight:700;">${escapeHTML(e.text)}</div>
+      ${e.detail ? `<div style="font-size:11px; color:var(--text-tertiary); margin-top:3px; word-break:break-all;">${escapeHTML(e.detail)}</div>` : ''}
+    </div>`).join('');
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <span style="width:44px;"></span>
+        <h2 style="font-size:15px;">⌚ 운동 기록이 들어왔어요</h2>
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+      </div>
+      <div style="padding:0 16px 20px;">
+        ${rows}
+        <button onclick="closeModal(); nav('workout');" style="width:100%; margin-top:10px; padding:12px; border:none; background:var(--accent-tab, #6B5B96); color:white; border-radius:11px; font-size:13px; font-weight:800; cursor:pointer; font-family:inherit;">운동 탭에서 보기</button>
+        <button onclick="closeModal(); openSyncLog();" style="width:100%; margin-top:7px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">📜 들어온 값 자세히 보기</button>
+      </div>
+    </div>`;
+  modal.classList.add('show');
+}
+
 function logSyncEvent(kind, text, detail) {
   if (!settings.syncLog) settings.syncLog = [];
   settings.syncLog.unshift({
@@ -5642,6 +5668,8 @@ function logSyncEvent(kind, text, detail) {
     detail: String(detail || ''),
   });
   settings.syncLog = settings.syncLog.slice(0, 30);
+  // 저장하지 않으면 새로고침 때 사라진다 (버튼 개수만 남고 목록은 비는 증상)
+  try { saveData(); } catch (e) {}
 }
 
 function openSyncLog() {
@@ -5700,6 +5728,7 @@ async function drainWorkoutInbox(silent = true) {
     return 0;
   }
 
+  const logBefore = (settings.syncLog || []).length;
   const picked = [];
   snap.forEach(d => picked.push({ id: d.id, ...(d.data() || {}) }));
   if (picked.length === 0) {
@@ -5721,17 +5750,20 @@ async function drainWorkoutInbox(silent = true) {
     // ⌚ 단축어가 보낸 워치 캡처 사진 — 여기서 판독해 기록으로 바꾼다
     if (it.photo) {
       let read = [];
-      try { read = await readWorkoutFromImage(null, { base64: it.photo, mimeType: it.photoMime || 'image/jpeg' }); }
+      const realMime = sniffImageMime(it.photo, it.photoMime);
+      try { read = await readWorkoutFromImage(null, { base64: it.photo, mimeType: realMime }); }
       catch (e) { console.warn('수신 사진 판독 실패:', e); }
       if (read.length === 0) {
-        logSyncEvent('workout', dateK + ' 사진에서 값을 못 읽음', window._workoutOcrErr || '판독 실패');
+        logSyncEvent('workout', dateK + ' 사진에서 값을 못 읽음',
+          `이유: ${window._workoutOcrErr || '알 수 없음'} · 형식 ${realMime}(보낸 값 ${it.photoMime || '없음'}) · 크기 ${Math.round(String(it.photo).length / 1024)}KB` +
+          (window._workoutOcrRaw ? ` · AI 응답: ${String(window._workoutOcrRaw).slice(0, 200)}` : ''));
       }
       for (const r of read) {
         const d = r.date || dateK;
         if (addWorkoutSession(d, r)) {
           applied++;
           logSyncEvent('workout', d + ' ' + formatWorkoutNote(r.sport, r.dist, r.unit) + ' ' + r.minutes + '분', '워치 캡처 사진에서 읽음');
-          try { await putWorkoutPhoto(d, 'data:' + (it.photoMime || 'image/jpeg') + ';base64,' + it.photo); } catch (e) {}
+          try { await putWorkoutPhoto(d, 'data:' + realMime + ';base64,' + it.photo); } catch (e) {}
         }
       }
       try {
@@ -5759,6 +5791,11 @@ async function drainWorkoutInbox(silent = true) {
       const { deleteDoc, doc, db } = window._fb;
       await deleteDoc(doc(db, 'users', currentUser.uid, WORKOUT_INBOX, it.id));
     } catch (e) { console.warn('수신함 정리 실패:', it.id, e); }
+  }
+
+  const added = (settings.syncLog || []).length - logBefore;
+  if (added > 0) {
+    try { showWorkoutArrivedPopup((settings.syncLog || []).slice(0, added)); } catch (e) {}
   }
 
   if (applied > 0) {
@@ -6323,6 +6360,17 @@ function workoutCellLabel(log) {
 // 카드 캡처와 같은 축소·폴백·잘림 처리 방식을 쓴다.
 // 이미지 1장에서 운동 기록을 읽어 항목 배열로 돌려준다.
 // 사진 추가 흐름과 여러 장 캡처 흐름이 같은 코드를 쓰도록 따로 뺐다.
+// base64 앞머리로 실제 이미지 형식을 알아낸다 (보내는 쪽이 잘못 적어도 판독되게)
+function sniffImageMime(b64, fallback) {
+  const head = String(b64 || '').slice(0, 16);
+  if (head.startsWith('iVBORw0KGgo')) return 'image/png';
+  if (head.startsWith('/9j/')) return 'image/jpeg';
+  if (head.startsWith('R0lGOD')) return 'image/gif';
+  if (head.startsWith('UklGR')) return 'image/webp';
+  if (head.startsWith('AAAAIGZ0eX') || head.startsWith('AAAAHGZ0eX')) return 'image/heic';
+  return fallback || 'image/jpeg';
+}
+
 // direct = { base64, mimeType } 를 주면 파일 없이도 판독한다 (수신함으로 들어온 사진용)
 async function readWorkoutFromImage(file, direct) {
   if (!window.GEMINI_API_KEY) return [];
