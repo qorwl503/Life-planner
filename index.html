@@ -6362,7 +6362,7 @@ function workoutCellLabel(log) {
 // 사진 추가 흐름과 여러 장 캡처 흐름이 같은 코드를 쓰도록 따로 뺐다.
 // base64 앞머리로 실제 이미지 형식을 알아낸다 (보내는 쪽이 잘못 적어도 판독되게)
 function sniffImageMime(b64, fallback) {
-  const head = String(b64 || '').slice(0, 16);
+  const head = String(b64 || '').replace(/[^A-Za-z0-9+/=]/g, '').slice(0, 16);
   if (head.startsWith('iVBORw0KGgo')) return 'image/png';
   if (head.startsWith('/9j/')) return 'image/jpeg';
   if (head.startsWith('R0lGOD')) return 'image/gif';
@@ -6375,7 +6375,11 @@ function sniffImageMime(b64, fallback) {
 async function readWorkoutFromImage(file, direct) {
   if (!window.GEMINI_API_KEY) return [];
   let b64, mime;
-  if (direct && direct.base64) { b64 = direct.base64; mime = direct.mimeType || 'image/jpeg'; }
+  if (direct && direct.base64) {
+    // 단축어의 Base64 인코딩은 76자마다 줄바꿈을 넣는다. 그대로 보내면 판독기가 디코딩에 실패한다.
+    b64 = String(direct.base64).replace(/[^A-Za-z0-9+/=]/g, '');
+    mime = direct.mimeType || 'image/jpeg';
+  }
   else {
   const shrunk = await shrinkImageForOcr(file).catch(() => null);
   if (shrunk) { b64 = shrunk.base64; mime = shrunk.mimeType; }
