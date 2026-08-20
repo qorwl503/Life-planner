@@ -5748,14 +5748,35 @@ async function drainWorkoutInbox(silent = true) {
     }
 
     // ⌚ 단축어가 보낸 워치 캡처 사진 — 여기서 판독해 기록으로 바꾼다
-    if (it.photo) {
+    //    워치 요약이 두 화면이면 photo2 로 두 번째 캡처가 같이 온다 (같은 운동의 아랫부분)
+    if (it.photo || it.photo2) {
+      const shots = [it.photo, it.photo2].filter(Boolean);
       let read = [];
-      const realMime = sniffImageMime(it.photo, it.photoMime);
-      try { read = await readWorkoutFromImage(null, { base64: it.photo, mimeType: realMime }); }
-      catch (e) { console.warn('수신 사진 판독 실패:', e); }
+      let realMime = it.photoMime || 'image/jpeg';
+      let firstShot = '';
+      for (const shot of shots) {
+        // 이미 처리한 사진은 건너뛴다 (같은 캡처가 두 번 들어오는 경우)
+        const fp = photoFingerprint(shot);
+        if (seenPhotoBefore(fp)) continue;
+        rememberPhoto(fp);
+        if (!firstShot) firstShot = shot;
+        realMime = sniffImageMime(shot, it.photoMime);
+        try {
+          const one = await readWorkoutFromImage(null, { base64: shot, mimeType: realMime });
+          read = read.concat(one);
+        } catch (e) { console.warn('수신 사진 판독 실패:', e); }
+      }
+      if (!firstShot) {
+        // 두 장 다 이미 처리한 것 → 조용히 정리
+        try {
+          const { deleteDoc, doc, db } = window._fb;
+          await deleteDoc(doc(db, 'users', currentUser.uid, WORKOUT_INBOX, it.id));
+        } catch (e) {}
+        continue;
+      }
       if (read.length === 0) {
         logSyncEvent('workout', dateK + ' 사진에서 값을 못 읽음',
-          `이유: ${window._workoutOcrErr || '알 수 없음'} · 형식 ${realMime}(보낸 값 ${it.photoMime || '없음'}) · 크기 ${Math.round(String(it.photo).length / 1024)}KB` +
+          `이유: ${window._workoutOcrErr || '알 수 없음'} · 형식 ${realMime}(보낸 값 ${it.photoMime || '없음'}) · 크기 ${Math.round(String(firstShot).length / 1024)}KB · 장수 ${shots.length}` +
           (window._workoutOcrRaw ? ` · AI 응답: ${String(window._workoutOcrRaw).slice(0, 200)}` : ''));
       }
       for (const r of read) {
@@ -5763,7 +5784,7 @@ async function drainWorkoutInbox(silent = true) {
         if (addWorkoutSession(d, r)) {
           applied++;
           logSyncEvent('workout', d + ' ' + formatWorkoutNote(r.sport, r.dist, r.unit) + ' ' + r.minutes + '분', '워치 캡처 사진에서 읽음');
-          try { await putWorkoutPhoto(d, 'data:' + realMime + ';base64,' + it.photo); } catch (e) {}
+          try { await putWorkoutPhoto(d, 'data:' + realMime + ';base64,' + firstShot); } catch (e) {}
         }
       }
       try {
@@ -5926,8 +5947,9 @@ function watchUploadRecipe(key) {
   const url = `https://firestore.googleapis.com/v1/projects/${proj}/databases/(default)/documents/users/${uid}/workoutInbox?key=${apiKey}`;
   // 사진(base64)이 들어갈 자리를 표시해 둔다. 단축어에서 이 자리에 변수를 끼운다.
   const bodyHead = `{"fields":{"key":{"stringValue":"${key}"},"photoMime":{"stringValue":"image/jpeg"},"photo":{"stringValue":"`;
+  const bodyMid = `"},"photo2":{"stringValue":"`;
   const bodyTail = `"}}}`;
-  return { url, bodyHead, bodyTail };
+  return { url, bodyHead, bodyMid, bodyTail };
 }
 
 async function openWatchPhotoSetup(regenerate = false) {
@@ -5963,33 +5985,48 @@ async function openWatchPhotoSetup(regenerate = false) {
         <div style="font-size:12px; font-weight:800; margin:0 0 6px;">단축어 만들기</div>
         <div style="font-size:11px; color:var(--text-secondary); line-height:1.9;">
           단축어 앱 → 자동화 → <b>Apple Watch 운동</b> → 종료될 때 → <b>즉시 실행</b><br>
-          동작 4개를 순서대로 넣습니다:<br>
-          <b>①</b> 대기 — <b>15초</b><br>
-          <b>②</b> 최근 사진 가져오기 — <b>1개</b><br>
+          동작을 <b>순서대로 추가</b>하면 됩니다. 끌어옮길 일 없어요.<br><br>
+          <b>①</b> 대기 — <b>10초</b><br>
+          <b>②</b> 최근 스크린샷 가져오기 — <b>2장</b><br>
           <b>③</b> Base64 인코딩<br>
-          <b>④</b> URL의 콘텐츠 가져오기 — 방법 <b>POST</b>, 본문 <b>JSON 아님 / 파일 아님 → 텍스트</b>
+          <b>④</b> 목록에서 항목 가져오기 — <b>첫 번째 항목</b><br>
+          <b>⑤</b> 목록에서 항목 가져오기 — <b>마지막 항목</b><br>
+          <b>⑥</b> 텍스트<br>
+          <b>⑦</b> URL의 콘텐츠 가져오기 — <b>POST</b>, 본문 <b>파일</b> → ⑥의 텍스트
         </div>
 
-        <div style="font-size:11.5px; font-weight:700; margin:14px 0 4px;">④의 주소</div>
+        <div style="margin-top:10px; padding:10px 11px; background:var(--bg-secondary); border-radius:10px; font-size:11px; color:var(--text-tertiary); line-height:1.8;">
+          ④⑤ 의 입력은 둘 다 <b>③ Base64 결과</b>여야 합니다.
+          한 장만 찍은 날은 ④와 ⑤가 같은 사진이 되는데, 앱이 알아서 한 번만 읽습니다.
+        </div>
+
+        <div style="font-size:11.5px; font-weight:700; margin:14px 0 4px;">⑦의 주소</div>
         ${box(r.url.replace(currentUser.uid, currentUser.uid.slice(0,4) + '●●●●●●●●'))}
         ${copyBtn('📋 주소 복사', r.url)}
 
-        <div style="font-size:11.5px; font-weight:700; margin:14px 0 4px;">④의 본문 — 앞부분</div>
+        <div style="font-size:11.5px; font-weight:700; margin:16px 0 4px;">⑥의 텍스트 — 순서대로 넣으세요</div>
+        <div style="font-size:11px; color:var(--text-secondary); line-height:1.9; margin-bottom:6px;">
+          <b>1</b> 아래 <b>앞부분</b> 붙여넣기<br>
+          <b>2</b> <b>④ 첫 번째 항목</b> 변수 끼우기<br>
+          <b>3</b> 아래 <b>중간</b> 붙여넣기<br>
+          <b>4</b> <b>⑤ 마지막 항목</b> 변수 끼우기<br>
+          <b>5</b> 아래 <b>뒷부분</b> 붙여넣기
+        </div>
+
         ${box(maskKey(r.bodyHead))}
         ${copyBtn('📋 앞부분 복사', r.bodyHead)}
 
-        <div style="font-size:11px; color:var(--text-tertiary); line-height:1.7; margin-top:6px;">
-          🔒 <b>●●●</b> 부분은 일부러 가려놨어요. <b>복사 버튼을 쓰면 진짜 값이 복사</b>됩니다.
-          이 화면을 캡처해서 남에게 보여줘도 안전해요.
-        </div>
+        ${box(r.bodyMid)}
+        ${copyBtn('📋 중간 복사', r.bodyMid)}
 
-        <div style="font-size:11px; color:var(--text-warning); line-height:1.7; margin-top:8px; padding:9px 10px; background:var(--bg-warning); border-radius:9px;">
-          앞부분을 붙여넣은 뒤, <b>맨 끝에 ③의 결과(Base64) 변수를 끼우고</b>, 그다음 아래 뒷부분을 붙여넣으세요.
-        </div>
-
-        <div style="font-size:11.5px; font-weight:700; margin:14px 0 4px;">④의 본문 — 뒷부분</div>
         ${box(r.bodyTail)}
         ${copyBtn('📋 뒷부분 복사', r.bodyTail)}
+
+        <div style="font-size:11px; color:var(--text-tertiary); line-height:1.7; margin-top:8px;">
+          🔒 <b>●●●</b> 부분은 일부러 가려놨어요. <b>복사 버튼을 쓰면 진짜 값이 복사</b>됩니다.
+          이 화면을 캡처해서 남에게 보여줘도 안전해요.
+          <span style="color:var(--text-warning);">단, 단축어의 텍스트 칸에는 진짜 값이 들어가니 그 화면은 캡처하지 마세요.</span>
+        </div>
 
         <div style="margin-top:18px; padding:11px 12px; background:var(--bg-secondary); border-radius:10px; font-size:11px; color:var(--text-secondary); line-height:1.8;">
           <b>먼저 켜두세요</b> — 아이폰 <b>Watch 앱 → 일반 → 스크린샷 활성화</b><br>
@@ -6422,6 +6459,26 @@ function workoutCellLabel(log) {
 // 카드 캡처와 같은 축소·폴백·잘림 처리 방식을 쓴다.
 // 이미지 1장에서 운동 기록을 읽어 항목 배열로 돌려준다.
 // 사진 추가 흐름과 여러 장 캡처 흐름이 같은 코드를 쓰도록 따로 뺐다.
+// 같은 사진이 또 들어왔는지 알아보기 위한 지문 (앞부분 + 길이면 충분히 구별된다)
+function photoFingerprint(b64) {
+  const clean = String(b64 || '').replace(/[^A-Za-z0-9+/=]/g, '');
+  if (!clean) return '';
+  return clean.length + ':' + clean.slice(0, 32) + clean.slice(-16);
+}
+
+function seenPhotoBefore(fp) {
+  if (!fp) return false;
+  return (settings.seenPhotos || []).includes(fp);
+}
+
+function rememberPhoto(fp) {
+  if (!fp) return;
+  if (!settings.seenPhotos) settings.seenPhotos = [];
+  if (settings.seenPhotos.includes(fp)) return;
+  settings.seenPhotos.unshift(fp);
+  settings.seenPhotos = settings.seenPhotos.slice(0, 60);   // 최근 60장만 기억
+}
+
 // base64 앞머리로 실제 이미지 형식을 알아낸다 (보내는 쪽이 잘못 적어도 판독되게)
 function sniffImageMime(b64, fallback) {
   const head = String(b64 || '').replace(/[^A-Za-z0-9+/=]/g, '').slice(0, 16);
