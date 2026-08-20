@@ -5274,7 +5274,7 @@ function renderWorkout() {
       const _dk = woKey(dayNum);
       const _photo = workoutCellPhoto(_dk);
       const _label = workoutCellLabel(log);
-      html += `<button class="${cellClass}" onclick="toggleWorkoutDay(${dayNum})" style="position:relative; overflow:hidden;">
+      html += `<button class="${cellClass}" onclick="openWorkoutDay(${dayNum})" style="position:relative; overflow:hidden;">
         ${_photo}
         <span style="position:relative; z-index:1; ${_photo ? 'color:#fff; text-shadow:0 1px 3px rgba(0,0,0,0.75); font-weight:700;' : ''}">${dayNum}</span>
         ${_label ? `<span style="position:absolute; left:0; right:0; bottom:2px; z-index:1; font-size:9px; font-weight:700; text-align:center; ${_photo ? 'color:#fff; text-shadow:0 1px 3px rgba(0,0,0,0.8);' : 'color:var(--text-tertiary);'}">${_label}</span>` : ''}
@@ -5287,7 +5287,7 @@ function renderWorkout() {
   html += `</div>`;
 
   html += `<div style="font-size:11px; color:var(--text-tertiary); text-align:center; margin-bottom:14px;">
-    셀 탭 = 운동 O/X 토글 · 자세한 입력은 + 버튼
+    빈 날 탭 = 운동 O/X · 기록 있는 날 탭 = 크게 보기(사진·삭제)
   </div>`;
 
   // 이번 주 상세 제거됨 - 위 달력에 통합
@@ -6140,7 +6140,28 @@ function addWorkoutSession(dateK, s) {
   const dup = list.some(x => x.sport === sport && Number(x.minutes) === minutes && Number(x.kcal) === kcal);
   if (dup) return false;
 
-  list.push({ sport, minutes, kcal, dist, unit, at: Date.now() });
+  // 🔧 워치 요약이 한 화면에 안 들어가면 두 장을 찍게 된다.
+  //    같은 종목이 방금(10분 내) 들어왔고 값이 서로 겹치지 않으면 = 같은 운동의 다른 조각 → 합친다.
+  //    값이 서로 다르게 채워져 있으면(진짜 두 번 한 운동) 합치지 않고 따로 남긴다.
+  const now = Date.now();
+  const fits = (a, b) => !(a > 0 && b > 0 && a !== b);   // 둘 다 채워져 있는데 다르면 다른 운동
+  const partner = list.find(x =>
+    x.sport === sport &&
+    now - (Number(x.at) || 0) < 10 * 60 * 1000 &&
+    fits(Number(x.minutes) || 0, minutes) &&
+    fits(Number(x.kcal) || 0, kcal) &&
+    fits(Number(x.dist) || 0, dist));
+  if (partner) {
+    partner.minutes = Math.max(Number(partner.minutes) || 0, minutes);
+    partner.kcal = Math.max(Number(partner.kcal) || 0, kcal);
+    if (dist > 0) { partner.dist = dist; partner.unit = unit; }
+    partner.at = now;
+    workoutLog[dateK] = { ...prev, sessions: list };
+    recalcWorkoutDay(dateK);
+    return true;
+  }
+
+  list.push({ sport, minutes, kcal, dist, unit, at: now });
   workoutLog[dateK] = { ...prev, sessions: list };
   recalcWorkoutDay(dateK);
   return true;
@@ -6290,14 +6311,54 @@ function pickWorkoutPhoto(dateK) {
   inp.click();
 }
 
-async function removeWorkoutPhoto(dateK) {
-  if (!confirm('이 날 사진을 삭제할까요?')) return;
+// silent=true 면 묻지 않는다 (그 날 기록 전체 삭제에서 이미 한 번 물었으므로)
+async function removeWorkoutPhoto(dateK, silent) {
+  if (!silent && !confirm('이 날 사진을 삭제할까요?')) return;
   await deleteWorkoutPhotoDoc(dateK);
-  showToast('사진 삭제됨');
+  if (!silent) showToast('사진 삭제됨');
   if (currentTab === 'workout') renderWorkout();
 }
 
 // 사진 크게 보기 + 교체·삭제
+// 달력 셀을 눌렀을 때: 기록이 있으면 크게 보여주고, 없으면 예전처럼 O/X 토글
+function openWorkoutDay(dayNum) {
+  const dateK = woKey(dayNum);
+  const log = workoutLog[dateK] || {};
+  const hasPhoto = !!(window._woPhotos && window._woPhotos[dateK]);
+  const hasSession = workoutSessions(log).length > 0;
+  if (hasPhoto || hasSession) { openWorkoutPhoto(dateK); return; }
+  toggleWorkoutDay(dayNum);
+}
+
+// 그 날 운동 기록을 통째로 지운다 (사진 포함). 되돌릴 수 없으니 한 번 묻는다.
+async function clearWorkoutDay(dateK) {
+  const log = workoutLog[dateK] || {};
+  const list = workoutSessions(log);
+  const what = [];
+  if (list.length > 0) what.push(`운동 ${list.length}건`);
+  if (window._woPhotos && window._woPhotos[dateK]) what.push('사진');
+  if (what.length === 0) { closeModal(); return; }
+  if (!confirm(`${dateK} 의 ${what.join('과 ')}을(를) 지울까요? 되돌릴 수 없어요.`)) return;
+
+  try { await removeWorkoutPhoto(dateK, true); } catch (e) {}
+
+  // 인바디 같은 그 날의 다른 기록은 남긴다
+  const keep = { ...log };
+  delete keep.sessions;
+  delete keep.minutes;
+  delete keep.kcal;
+  delete keep.note;
+  keep.done = false;
+  if (Object.keys(keep).filter(k => k !== 'done').length === 0) delete workoutLog[dateK];
+  else workoutLog[dateK] = keep;
+
+  saveData();
+  closeModal();
+  showToast('🗑 기록을 지웠어요');
+  renderWorkout();
+  if (typeof renderCalendar === 'function') { try { renderCalendar(); } catch (e) {} }
+}
+
 function openWorkoutPhoto(dateK) {
   const src = window._woPhotos[dateK];
   const log = workoutLog[dateK] || {};
@@ -6331,7 +6392,8 @@ function openWorkoutPhoto(dateK) {
           : '';
         return `<div style="margin-top:10px;">${total}${rows}</div>`;
       })()}
-      <div style="display:flex; gap:6px; margin-top:12px;">
+      <button onclick="clearWorkoutDay('${dateK}')" style="width:100%; margin-top:12px; padding:11px; border:0.5px solid var(--text-danger); background:transparent; color:var(--text-danger); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">🗑 이 날 기록 전부 지우기</button>
+      <div style="display:flex; gap:6px; margin-top:6px;">
         <button onclick="pickWorkoutPhoto('${dateK}')" style="flex:1; padding:11px; border:none; background:var(--bg-info); color:var(--text-info); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">${src ? '사진 바꾸기' : '📷 사진 추가'}</button>
         ${src ? `<button onclick="removeWorkoutPhoto('${dateK}')" style="flex:0 0 auto; padding:11px 14px; border:0.5px solid var(--border-tertiary); background:transparent; color:var(--text-danger); border-radius:10px; font-size:12px; cursor:pointer; font-family:inherit;">삭제</button>` : ''}
       </div>
