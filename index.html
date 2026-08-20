@@ -2007,6 +2007,7 @@ function render() {
   // ⌚ 단축어가 넘겨준 운동 기록 처리 (앱이 켜진 뒤 한 번만)
   if (!window._urlWorkoutDone) {
     window._urlWorkoutDone = true;
+    try { repairChallengeUnits(); } catch (e) { console.warn('챌린지 단위 보정 실패:', e); }
     try { consumeWorkoutFromUrl(); } catch (e) { console.warn('URL 운동 기록 실패:', e); }
     try { consumeExpenseFromUrl(); } catch (e) { console.warn('URL 가계부 기록 실패:', e); }
     // 📥 워치·문자가 보내둔 기록 가져오기 (앱이 안 열려 있던 동안 쌓인 것)
@@ -4389,6 +4390,47 @@ function quickChallenge(preset) {
   saveData();
   showToast(`"${preset.title}" 챌린지 시작! 🚀`);
   renderTodo();
+}
+
+// 제목에서 '하루 목표'를 읽어낸다. "하루 30분 · 주4회 운동" → 30분 (주4회는 빈도지 목표가 아니다)
+function guessDailyTargetFromTitle(title) {
+  const t = String(title || '');
+  // '주 4회', '주4회' 같은 빈도 표현은 목표가 아니므로 먼저 지운다
+  const cleaned = t.replace(/주\s*\d+\s*회/g, ' ');
+  const m = cleaned.match(/(\d+(?:\.\d+)?)\s*(페이지|분|시간|보|잔|킬로|km|kcal|l|리터|회|개)/i);
+  if (!m) return null;
+  let value = Number(m[1]);
+  let unit = m[2].toLowerCase();
+  if (unit === '시간') { value = value * 60; unit = '분'; }
+  else if (unit === 'l' || unit === '리터') unit = 'L';
+  else if (unit === '킬로' || unit === 'km') unit = 'km';
+  if (!(value > 0)) return null;
+  return { value, unit: m[2] === '시간' ? '분' : unit };
+}
+
+// 옛 챌린지 바로잡기 — 사용자가 직접 정한 값은 건드리지 않는다
+function repairChallengeUnits() {
+  if (!Array.isArray(challenges) || challenges.length === 0) return 0;
+  let fixed = 0;
+  for (const c of challenges) {
+    const guess = guessDailyTargetFromTitle(c.title);
+    if (!guess) continue;
+    const hasTarget = Number(c.dailyTarget) > 0;
+    const unit = c.unit || '';
+    // ① 목표치가 아예 없다 → 제목에서 채운다
+    // ② 목표치는 있는데 단위가 없거나 '회'인데 제목은 다른 단위다 → 단위를 바로잡는다
+    if (!hasTarget) {
+      c.dailyTarget = guess.value;
+      c.unit = guess.unit;
+      fixed++;
+    } else if ((!unit || unit === '회') && guess.unit !== '회') {
+      c.unit = guess.unit;
+      if (Number(c.dailyTarget) !== guess.value) c.dailyTarget = guess.value;
+      fixed++;
+    }
+  }
+  if (fixed > 0) saveData();
+  return fixed;
 }
 
 function checkChallenge(id, value) {
