@@ -2008,6 +2008,7 @@ function render() {
   if (!window._urlWorkoutDone) {
     window._urlWorkoutDone = true;
     try { repairChallengeUnits(); } catch (e) { console.warn('챌린지 단위 보정 실패:', e); }
+    try { refreshPushSubscription(); } catch (e) { console.warn('푸시 재등록 실패:', e); }
     try { consumeWorkoutFromUrl(); } catch (e) { console.warn('URL 운동 기록 실패:', e); }
     try { consumeExpenseFromUrl(); } catch (e) { console.warn('URL 가계부 기록 실패:', e); }
     // 📥 워치·문자가 보내둔 기록 가져오기 (앱이 안 열려 있던 동안 쌓인 것)
@@ -5767,8 +5768,19 @@ function openSyncLog() {
 // 처리한 문서는 지워서 두 번 반영되지 않게 한다.
 const WORKOUT_INBOX = 'workoutInbox';
 
+// 클라우드에서 내 데이터를 다 받아올 때까지 기다린다 (최대 15초).
+// 이걸 안 기다리면 방금 넣은 기록이 뒤늦게 온 클라우드 데이터에 덮인다.
+async function waitForCloudLoad(maxMs = 15000) {
+  const started = Date.now();
+  while (window._cloudLoadPending && Date.now() - started < maxMs) {
+    await new Promise(r => setTimeout(r, 200));
+  }
+  return !window._cloudLoadPending;
+}
+
 async function drainWorkoutInbox(silent = true) {
   if (!photosReady()) return 0;   // 로그인 + Firestore 준비 상태 확인 (사진 기능과 동일 조건)
+  await waitForCloudLoad();       // 로드 전에 기록하면 뒤늦게 온 클라우드 데이터가 덮어쓴다
   let snap;
   try {
     const { collection, getDocs, db } = window._fb;
@@ -15503,6 +15515,7 @@ function consumeExpenseFromUrl() {
 // 조용히 쌓아둔 문자들을 앱 켤 때 가져온다
 async function drainExpenseInbox(silent = true) {
   if (!photosReady()) return 0;
+  await waitForCloudLoad();   // 위와 같은 이유
   let snap;
   try {
     const { collection, getDocs, db } = window._fb;
@@ -25015,6 +25028,240 @@ function openDataCheck() {
   document.body.appendChild(modal);
 }
 
+
+// ===== 🔔 웹 푸시 =====
+// 흐름: 서비스워커 등록 → 알림 권한 → 푸시 구독 → 구독 정보를 내 서버(Worker)에 등록
+// iOS 는 '홈 화면에 추가한 웹앱'에서만 푸시를 받는다. 사파리 탭에서는 안 된다.
+
+const PUSH_SW_PATH = './sw.js';
+
+function pushSupported() {
+  return typeof navigator !== 'undefined'
+    && 'serviceWorker' in navigator
+    && typeof PushManager !== 'undefined'
+    && typeof Notification !== 'undefined';
+}
+
+// iOS 는 홈 화면 앱일 때만 푸시가 된다 — 미리 알려줘야 헤매지 않는다
+function isStandaloneApp() {
+  try {
+    return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  } catch (e) { return false; }
+}
+
+function isIOSDevice() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent || '');
+}
+
+// VAPID 공개키는 공개돼도 되는 값이다 (비밀키만 서버에 둔다)
+function pushPublicKey() {
+  return (settings.pushPublicKey || localStorage.getItem('push_public_key') || '').trim();
+}
+
+// 알림을 보낼 서버 주소 (Cloudflare Worker)
+function pushServerUrl() {
+  return (settings.pushServer || localStorage.getItem('push_server') || '').trim();
+}
+
+// base64url → Uint8Array (푸시 구독이 요구하는 형식)
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+async function registerPushWorker() {
+  if (!pushSupported()) return null;
+  try {
+    const reg = await navigator.serviceWorker.register(PUSH_SW_PATH);
+    await navigator.serviceWorker.ready;
+    return reg;
+  } catch (e) {
+    console.warn('서비스워커 등록 실패:', e);
+    return null;
+  }
+}
+
+// 구독 정보를 서버에 등록한다. 서버가 이걸 알아야 알림을 보낼 수 있다.
+async function sendSubscriptionToServer(sub) {
+  const url = pushServerUrl();
+  const key = settings.uploadKey || '';
+  if (!url) throw new Error('알림 서버 주소를 먼저 넣어주세요');
+  if (!key) throw new Error('전송 열쇠가 없어요 (워치 연동 설정을 한 번 열어주세요)');
+
+  const res = await fetch(url.replace(/\/+$/, '') + '/push/subscribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key, sub: sub.toJSON ? sub.toJSON() : sub }),
+  });
+  if (!res.ok) throw new Error('서버 등록 실패 (' + res.status + ')');
+  return true;
+}
+
+async function enablePush() {
+  if (!pushSupported()) { showToast('이 브라우저는 푸시 알림을 지원하지 않아요'); return false; }
+  if (isIOSDevice() && !isStandaloneApp()) {
+    showToast('아이폰은 홈 화면에 추가한 뒤에만 알림을 받을 수 있어요');
+    return false;
+  }
+  const pub = pushPublicKey();
+  if (!pub) { showToast('알림 공개키를 먼저 넣어주세요'); return false; }
+
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') { showToast('알림이 거부돼 있어요. 설정에서 허용해주세요'); return false; }
+
+  const reg = await registerPushWorker();
+  if (!reg) { showToast('알림 준비에 실패했어요'); return false; }
+
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) {
+    try {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(pub),
+      });
+    } catch (e) {
+      console.warn('푸시 구독 실패:', e);
+      showToast('구독 실패 — 공개키가 맞는지 확인해주세요');
+      return false;
+    }
+  }
+
+  try {
+    await sendSubscriptionToServer(sub);
+  } catch (e) {
+    console.warn('구독 서버 등록 실패:', e);
+    showToast(e.message || '서버 등록 실패');
+    return false;
+  }
+
+  settings.pushEnabled = true;
+  saveData();
+  showToast('🔔 알림을 켰어요');
+  return true;
+}
+
+async function disablePush() {
+  settings.pushEnabled = false;
+  saveData();
+  try {
+    const reg = await navigator.serviceWorker.getRegistration(PUSH_SW_PATH);
+    const sub = reg && await reg.pushManager.getSubscription();
+    if (sub) await sub.unsubscribe();
+  } catch (e) { console.warn('구독 해지 실패:', e); }
+  showToast('알림을 껐어요');
+}
+
+// 앱이 켜질 때 조용히 다시 등록한다 (구독은 만료되기도 한다)
+async function refreshPushSubscription() {
+  if (!settings.pushEnabled || !pushSupported()) return;
+  if (Notification.permission !== 'granted') return;
+  const reg = await registerPushWorker();
+  if (!reg) return;
+  try {
+    let sub = await reg.pushManager.getSubscription();
+    const pub = pushPublicKey();
+    if (!sub && pub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(pub),
+      });
+    }
+    if (sub) await sendSubscriptionToServer(sub);
+  } catch (e) { console.warn('푸시 재등록 실패:', e); }
+}
+
+async function sendTestPush() {
+  const url = pushServerUrl();
+  const key = settings.uploadKey || '';
+  if (!url || !key) { showToast('서버 주소와 열쇠가 필요해요'); return; }
+  try {
+    const res = await fetch(url.replace(/\/+$/, '') + '/push/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key }),
+    });
+    const txt = await res.text();
+    if (!res.ok) { showToast('테스트 실패: ' + txt.slice(0, 80)); return; }
+    showToast('테스트 알림을 보냈어요');
+  } catch (e) {
+    showToast('보내기 실패: ' + (e.message || ''));
+  }
+}
+
+function pushStatusText() {
+  if (!pushSupported()) return '이 브라우저는 지원 안 함';
+  if (isIOSDevice() && !isStandaloneApp()) return '홈 화면에 추가해야 받을 수 있어요';
+  if (Notification.permission === 'denied') return '알림이 차단됨 (기기 설정에서 허용)';
+  if (!pushPublicKey()) return '공개키 미설정';
+  if (!pushServerUrl()) return '서버 주소 미설정';
+  return settings.pushEnabled ? '켜짐' : '꺼짐';
+}
+
+function openPushSettings() {
+  const on = !!settings.pushEnabled;
+  const stat = pushStatusText();
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+        <h2 style="font-size:15px;">🔔 알림</h2>
+        <span style="width:44px;"></span>
+      </div>
+      <div style="padding:0 16px 20px;">
+
+        <div style="padding:12px 13px; background:var(--bg-secondary); border-radius:11px; font-size:11.5px; color:var(--text-secondary); line-height:1.9; margin-bottom:14px;">
+          앱을 켜두지 않아도 폰으로 알림이 옵니다.<br>
+          하루 요약, 목표가 도달, 운동 기록이 들어왔을 때 알려줘요.<br>
+          <span style="color:var(--text-tertiary);">아이폰은 <b>홈 화면에 추가한 앱</b>에서만 받을 수 있어요.</span>
+        </div>
+
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 13px; background:var(--bg-primary); border:0.5px solid var(--border-tertiary); border-radius:11px; margin-bottom:14px;">
+          <div>
+            <div style="font-size:13px; font-weight:700;">알림 받기</div>
+            <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">현재: ${stat}</div>
+          </div>
+          <button onclick="${on ? 'disablePush().then(()=>openPushSettings())' : 'enablePush().then(()=>openPushSettings())'}" style="padding:9px 16px; border:none; border-radius:999px; font-size:12px; font-weight:800; cursor:pointer; font-family:inherit; background:${on ? 'var(--text-danger)' : 'var(--accent-tab, #6B5B96)'}; color:#fff;">${on ? '끄기' : '켜기'}</button>
+        </div>
+
+        <div class="field">
+          <div class="field-label">알림 서버 주소</div>
+          <input type="text" id="push-server" placeholder="https://내워커주소" value="${escapeAttr(pushServerUrl())}" />
+        </div>
+
+        <div class="field">
+          <div class="field-label">알림 공개키 (VAPID Public Key)</div>
+          <input type="text" id="push-pubkey" placeholder="BEl62iUYgUiv..." value="${escapeAttr(pushPublicKey())}" />
+          <div style="font-size:10px; color:var(--text-tertiary); margin-top:5px; line-height:1.7;">
+            공개키는 공개돼도 되는 값이에요. <b>비밀키(Private Key)는 여기 넣지 말고</b> 서버에만 두세요.
+          </div>
+        </div>
+
+        <button onclick="savePushSettings()" style="width:100%; margin-top:6px; padding:12px; border:none; background:var(--accent-tab, #6B5B96); color:#fff; border-radius:11px; font-size:13px; font-weight:800; cursor:pointer; font-family:inherit;">저장</button>
+        <button onclick="sendTestPush()" style="width:100%; margin-top:7px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">🔔 테스트 알림 보내기</button>
+      </div>
+    </div>`;
+  modal.classList.add('show');
+}
+
+function savePushSettings() {
+  const server = (document.getElementById('push-server')?.value || '').trim();
+  const pub = (document.getElementById('push-pubkey')?.value || '').trim();
+  settings.pushServer = server;
+  settings.pushPublicKey = pub;
+  try {
+    localStorage.setItem('push_server', server);
+    localStorage.setItem('push_public_key', pub);
+  } catch (e) {}
+  saveData();
+  showToast('저장했어요');
+  openPushSettings();
+}
+
 function openSettingsModal() {
   modal.innerHTML = `
     <div class="modal">
@@ -25024,6 +25271,18 @@ function openSettingsModal() {
         <h2>설정</h2>
         <div></div>
       </div>
+
+      <!-- 🔔 알림 -->
+      <button onclick="closeModal(); setTimeout(()=>openPushSettings(),100);" style="width:100%; padding:14px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); border-radius:var(--radius-md); cursor:pointer; font-family:inherit; text-align:left; margin-bottom:10px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-size:20px;">🔔</span>
+          <div style="flex:1;">
+            <div style="font-size:13px; font-weight:600;">알림</div>
+            <div style="font-size:11px; color:var(--text-tertiary); margin-top:1px;">${pushStatusText()}</div>
+          </div>
+          <i class="ti ti-chevron-right" style="color:var(--text-tertiary);"></i>
+        </div>
+      </button>
 
       <!-- 👤 계정 -->
       <button onclick="closeModal(); setTimeout(()=>openAccountModal(),100);" style="width:100%; padding:14px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); border-radius:var(--radius-md); cursor:pointer; font-family:inherit; text-align:left; margin-bottom:10px;">
