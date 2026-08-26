@@ -328,11 +328,32 @@ async function handleSend(request, env) {
 
 // 단축어가 보낸 Firestore 본문을 그대로 받아 Firestore 에 넣고, 곧바로 알림을 보낸다.
 // 본문 형식은 앱이 만들어 준 것 그대로다 — 단축어는 주소만 바꾸면 된다.
+// 앞뒤에 뭐가 붙어 있어도 JSON 부분만 뽑아낸다. 못 뽑으면 null.
+function looseJson(raw) {
+  const text = String(raw || '').replace(/^﻿/, '');
+  try { return JSON.parse(text); } catch (e) {}
+  // multipart 껍데기 안에 든 경우 — 첫 { 부터 마지막 } 까지
+  const a = text.indexOf('{'), b = text.lastIndexOf('}');
+  if (a >= 0 && b > a) {
+    try { return JSON.parse(text.slice(a, b + 1)); } catch (e) {}
+  }
+  return null;
+}
+
+// JSON 안에서 그 부분만 다시 꺼낸다 (저장할 때는 껍데기를 빼고 보내야 한다)
+function jsonSlice(raw) {
+  const text = String(raw || '').replace(/^﻿/, '');
+  const a = text.indexOf('{'), b = text.lastIndexOf('}');
+  return (a >= 0 && b > a) ? text.slice(a, b + 1) : text;
+}
+
 async function handleRelayWorkout(request, env, url) {
   const raw = await request.text();
 
-  let parsed;
-  try { parsed = JSON.parse(raw); } catch (e) { return json({ error: '본문이 JSON 이 아닙니다' }, 400); }
+  // 단축어는 본문을 '파일'로 보낸다. 그러면 앞뒤에 multipart 껍데기나 BOM 이 붙어 와서
+  // 그냥 JSON.parse 하면 깨진다. Firestore 는 알아서 받아주지만 여기서는 직접 벗겨야 한다.
+  // 그리고 못 읽더라도 저장은 그대로 진행한다 — 읽기 실패로 기록까지 끊기면 안 된다.
+  const parsed = looseJson(raw);
 
   // 누구의 수신함에 넣을지는 앱이 주소에 넣어 보낸다 (?uid=...).
   //   전에는 Secrets 의 MY_UID 로 정했는데, 그 값이 실제 로그인 UID 와 다르면
@@ -356,13 +377,14 @@ async function handleRelayWorkout(request, env, url) {
 
   // 서버를 거쳐 왔다는 표시를 남긴다.
   // 앱이 이걸 보고 '단축어가 아직 옛 주소로 보내는지'를 알 수 있다.
-  let outBody = raw;
-  try {
-    const withVia = JSON.parse(raw);
-    withVia.fields = withVia.fields || {};
-    withVia.fields.via = { stringValue: 'relay' };
-    outBody = JSON.stringify(withVia);
-  } catch (e) { /* 못 고치면 원본 그대로 보낸다 */ }
+  let outBody = jsonSlice(raw);
+  if (parsed) {
+    try {
+      parsed.fields = parsed.fields || {};
+      parsed.fields.via = { stringValue: 'relay' };
+      outBody = JSON.stringify(parsed);
+    } catch (e) { /* 못 고치면 벗긴 원본 그대로 보낸다 */ }
+  }
 
   const res = await fetch(endpoint, {
     method: 'POST',
@@ -373,14 +395,15 @@ async function handleRelayWorkout(request, env, url) {
   if (!res.ok) {
     const detail = await res.text();
     const why = res.status === 403 || /PERMISSION_DENIED/i.test(detail)
-      ? '열쇠나 계정이 맞지 않아 저장이 거부됐어요. 앱에서 워치 연동 설정을 다시 열어 주소와 본문을 새로 복사해주세요'
+      ? '저장이 거부됐어요. ① 사진이 너무 크거나(단축어에 이미지 크기 조절 800 을 넣어주세요) ② 열쇠·계정이 안 맞는 경우입니다. 앱의 워치 연동 설정에서 주소와 본문을 새로 복사해보세요'
       : 'Firestore 저장 실패';
     return json({ error: why, status: res.status, detail: detail.slice(0, 300) }, 502);
   }
 
   // 사진은 앱이 읽어야 종목·시간을 안다. 하지만 단축어가 값으로 보낸 경우엔
   // 여기서 바로 알려줄 수 있다 — '캡처가 들어왔어요' 로는 뭐가 왔는지 모른다.
-  const f = parsed?.fields || {};
+  // 본문을 못 읽었어도 저장은 이미 끝났다. 알림 문구만 뭉뚱그린다.
+  const f = (parsed && parsed.fields) || {};
   const str = (k) => f?.[k]?.stringValue || '';
   const num = (k) => Number(f?.[k]?.integerValue ?? f?.[k]?.doubleValue ?? 0) || 0;
 

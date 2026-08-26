@@ -28408,6 +28408,46 @@ function pushStatusText() {
   return settings.pushEnabled ? '켜짐' : '꺼짐';
 }
 
+// 서버가 내 기기를 알고 있는지 직접 물어본다.
+// '알림 켜기'를 눌러도 서버에 저장이 안 됐으면 아무리 보내도 안 온다 — 그걸 눈으로 보여준다.
+async function refreshPushServerState() {
+  const el = document.getElementById('push-server-state');
+  if (!el) return;
+  const url = pushServerUrl();
+  if (!url) {
+    el.style.background = 'var(--bg-danger)';
+    el.style.color = 'var(--text-danger)';
+    el.innerHTML = '<b>알림 서버 주소가 없어요.</b><br>아래 칸에 주소를 넣고 저장해주세요.';
+    return;
+  }
+  try {
+    const res = await fetch(url.replace(/\/+$/, '') + '/push/status', {
+      headers: await pushAuthHeaders(),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      el.style.background = 'var(--bg-danger)';
+      el.style.color = 'var(--text-danger)';
+      el.innerHTML = '<b>서버가 거절했어요.</b><br>' + escapeHTML(String(d.error || res.status).slice(0, 100));
+      return;
+    }
+    const n = Number(d.devices) || 0;
+    if (n > 0) {
+      el.style.background = 'var(--bg-success)';
+      el.style.color = 'var(--text-success)';
+      el.innerHTML = `<b>서버가 이 계정 기기 ${n}대를 알고 있어요.</b><br>아래 버튼으로 진짜 오는지 확인해보세요.`;
+    } else {
+      el.style.background = 'var(--bg-danger)';
+      el.style.color = 'var(--text-danger)';
+      el.innerHTML = '<b>서버에 등록된 기기가 없어요.</b><br>아래 <b>알림 받기</b>를 껐다가 다시 켜주세요. 그래야 서버가 이 폰을 압니다.';
+    }
+  } catch (e) {
+    el.style.background = 'var(--bg-danger)';
+    el.style.color = 'var(--text-danger)';
+    el.innerHTML = '<b>서버에 못 닿았어요.</b><br>' + escapeHTML(String(e && e.message || e).slice(0, 80));
+  }
+}
+
 function openPushSettings() {
   const on = !!settings.pushEnabled;
   const stat = pushStatusText();
@@ -28426,6 +28466,14 @@ function openPushSettings() {
           하루 요약, 목표가 도달, 운동 기록이 들어왔을 때 알려줘요.<br>
           <span style="color:var(--text-tertiary);">아이폰은 <b>홈 화면에 추가한 앱</b>에서만 받을 수 있어요.</span>
         </div>
+
+        <div id="push-server-state" style="padding:11px 12px; border-radius:10px; font-size:11.5px; line-height:1.8; margin-bottom:12px; background:var(--bg-secondary); color:var(--text-tertiary);">
+          서버에 등록된 기기를 확인하는 중…
+        </div>
+
+        <button onclick="testRelayPush()" style="width:100%; margin-bottom:14px; padding:12px; border:none; background:var(--accent-tab, #6B5B96); color:#fff; border-radius:10px; font-size:12.5px; font-weight:800; cursor:pointer; font-family:inherit;">
+          🔔 서버에서 알림 보내보기
+        </button>
 
         <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 13px; background:var(--bg-primary); border:0.5px solid var(--border-tertiary); border-radius:11px; margin-bottom:14px;">
           <div>
@@ -28454,6 +28502,7 @@ function openPushSettings() {
       </div>
     </div>`;
   modal.classList.add('show');
+  setTimeout(() => { try { refreshPushServerState(); } catch (e) {} }, 60);
 }
 
 function savePushSettings() {
