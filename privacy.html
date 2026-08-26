@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MyPlanner 개인정보처리방침</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    max-width: 720px; margin: 0 auto; padding: 32px 20px 64px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+    line-height: 1.85; color: #1a1a1a; background: #fff;
+    word-break: keep-all;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { color: #e8e8e8; background: #141414; }
+    .box { background: #1f1f1f !important; }
+    h2 { border-color: #333 !important; }
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .updated { font-size: 13px; color: #888; margin-bottom: 28px; }
+  h2 { font-size: 16px; margin: 30px 0 8px; padding-top: 18px; border-top: 1px solid #eee; }
+  p { font-size: 14.5px; margin: 8px 0; }
+  b { font-weight: 700; }
+  .box { background: #f5f5f5; border-radius: 10px; padding: 14px 16px; font-size: 13.5px; }
+</style>
+</head>
+<body>
+
+<h1>MyPlanner 개인정보처리방침</h1>
+<div class="updated">마지막 수정 2026-08-26</div>
+
+<p>MyPlanner는 가계부·자산·할일·운동 기록을 한곳에서 관리하는 개인용 앱입니다. 이 문서는 앱이 어떤 정보를 다루고, 어디로 보내고, 어떻게 지우는지를 설명합니다.</p>
+
+<h2>무엇을 모으나요</h2>
+<p><b>계정</b> — 이메일 주소, 비밀번호</p>
+<p><b>내가 적은 것</b> — 가계부(날짜·금액·카테고리·메모), 자산(종목·수량·평단), 할일, 운동 기록, 목표, 관심종목</p>
+<p><b>운동 사진</b> — 워치 캡처를 올린 경우에 한해 그 이미지</p>
+<p><b>API 키</b> — 직접 넣은 Gemini·YouTube 키</p>
+<p>위치, 연락처, 주소록, 통화 기록은 받지 않습니다.</p>
+
+<h2>어디에 저장되나요</h2>
+<p>Google Firebase(Firestore)에 계정별로 저장됩니다. 서버 위치는 Firebase 프로젝트 설정을 따릅니다.</p>
+<p>같은 내용이 기기 안(localStorage)에도 남습니다. 인터넷이 끊겨도 쓰기 위해서입니다.</p>
+<p>PIN 잠금 번호는 <b>기기 안에만</b> 있고 서버로 가지 않습니다.</p>
+
+<h2>외부로 나가는 것</h2>
+<p><b>Google Gemini (AI 분석)</b> — AI 카드를 부를 때 그 분석에 필요한 수치가 Google로 전송됩니다. 가계부 분석이면 지출 내역이, 종목 분석이면 보유 종목과 시세가 갑니다. 운동 사진을 읽을 때는 <b>사진 자체</b>가 전송됩니다.</p>
+<p>이 전송은 <b>내 AI 키를 넣었거나, AI 서버 주소를 직접 지정한 경우에만</b> 일어납니다. 둘 다 하지 않으면 AI 기능이 꺼져 있어 아무 데이터도 나가지 않습니다. AI 서버를 지정한 경우, 요청은 그 서버를 거쳐 Gemini로 전달됩니다.</p>
+<p><b>시세·뉴스 중계 서버</b> — 종목명과 티커가 중계 서버(Cloudflare Worker)를 거쳐 Yahoo Finance, 네이버, 구글 뉴스로 전달됩니다. 가계부나 자산 금액은 보내지 않습니다. 중계 서버 주소는 앱의 <b>설정 → 서버 설정</b>에서 각자 바꿀 수 있습니다.</p>
+<p><b>allorigins.win</b> — 일부 뉴스는 이 외부 중계를 씁니다. 요청한 주소가 그 업체에 노출됩니다.</p>
+<p><b>알림 서버</b> — 알림을 켜면 브라우저 구독 정보와 <b>요약 문구</b>가 알림 서버에 저장됩니다. 정해진 시각에 보내기 위해서입니다.</p>
+<p>데이터를 파는 일은 없습니다.</p>
+
+<h2>얼마나 갖고 있나요</h2>
+<p>계정을 지울 때까지 보관합니다.</p>
+<p>자동으로 들어온 운동·지출 기록은 앱이 처리한 뒤 바로 지워집니다. 알림 구독 정보는 알림을 끄면 지워집니다.</p>
+
+<h2>지우려면</h2>
+<div class="box">
+  앱에서 <b>설정 → 계정 → 계정 삭제</b>를 누르면 직접 지울 수 있습니다.<br><br>
+  서버의 기록·사진·저장된 키, 그리고 로그인 계정까지 모두 지워집니다.
+  <b>되돌릴 수 없습니다.</b> 지우기 전에 백업 파일을 받아두세요.
+</div>
+
+<h2>내 권리</h2>
+<p>저장된 내 데이터는 앱의 <b>설정 → 데이터 백업</b>에서 언제든 JSON 파일로 내려받을 수 있습니다. 수정과 삭제도 앱 안에서 직접 할 수 있습니다.</p>
+
+<h2>아이들</h2>
+<p>만 14세 미만을 대상으로 하지 않습니다.</p>
+
+<h2>바뀌면</h2>
+<p>내용이 바뀌면 이 문서의 '마지막 수정' 날짜를 갱신합니다.</p>
+
+</body>
+</html>

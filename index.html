@@ -20,7 +20,8 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
   import {
     getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword,
-    signOut, onAuthStateChanged, sendPasswordResetEmail
+    signOut, onAuthStateChanged, sendPasswordResetEmail,
+    deleteUser, reauthenticateWithCredential, EmailAuthProvider
   } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
   import {
     getFirestore, doc, setDoc, getDoc, deleteDoc, collection, getDocs, enableIndexedDbPersistence
@@ -57,6 +58,7 @@ const firebaseConfig = {
   window._fb = {
     auth, db, signInWithEmailAndPassword, createUserWithEmailAndPassword,
     signOut, onAuthStateChanged, sendPasswordResetEmail,
+    deleteUser, reauthenticateWithCredential, EmailAuthProvider,
     doc, setDoc, getDoc, deleteDoc, collection, getDocs
   };
 
@@ -1403,6 +1405,80 @@ let settings = {
   defaultFxDiscount: 0,          // 🔧 기본 환전 우대율 % — 종목별 fxDiscount 미설정 시 적용 (미국 주식 수익률 정확도)
 };
 
+// ===== 🌐 데이터 중계 서버 =====
+// 시세·뉴스는 브라우저에서 바로 못 부른다(CORS). 그래서 Cloudflare Worker 를 거친다.
+// 기본값은 만든 사람 주소지만, 각자 Worker 를 띄우면 설정에서 바꿀 수 있다.
+// 안 바꾸면 모든 요청이 기본 주소 한 곳으로 몰린다 — 그래서 설정 화면에 그 사실을 적어둔다.
+const DEFAULT_DATA_PROXY = 'https://life-planner.qorwl503.workers.dev';
+
+function dataProxy() {
+  const custom = (settings.dataProxy || localStorage.getItem('data_proxy') || '').trim();
+  return (custom || DEFAULT_DATA_PROXY).replace(/\/+$/, '');
+}
+
+// 지금 내 주소를 쓰고 있나 (설정 화면에서 안내를 띄울 때 쓴다)
+function usingDefaultProxy() {
+  return dataProxy() === DEFAULT_DATA_PROXY.replace(/\/+$/, '');
+}
+
+// 알림·AI 를 맡는 서버. 앱을 받자마자 쓸 수 있게 기본 주소를 여기 박아둔다.
+// ⚠️ 배포 전에 자기 Worker 주소로 바꿔야 한다. 비워두면 알림과 공용 AI 가 꺼진다.
+const DEFAULT_APP_SERVER = '';
+
+function appServerUrl() {
+  const custom = (settings.pushServer || localStorage.getItem('push_server') || '').trim();
+  return (custom || DEFAULT_APP_SERVER).replace(/\/+$/, '');
+}
+
+// ===== ✨ AI 부르는 곳 =====
+// 두 가지 길이 있다.
+//   1) 내 키를 넣었으면 → 구글로 바로.
+//   2) AI 서버를 따로 지정했으면 → 그 서버를 거쳐서. (지금은 기본 꺼짐)
+//
+// ⚠️ 2번은 일부러 꺼둔 상태다.
+//    공용 키를 열면 남이 쓴 AI 요금과 한도가 전부 서버 주인에게 붙고,
+//    남의 가계부·자산·사진이 그 서버를 지나간다. 유료 구조를 갖추기 전에는 켜지 않는다.
+//    켜려면 (a) 아래 DEFAULT_AI_SERVER 를 채우고 (b) Worker 에 GEMINI_KEY 를 넣으면 된다.
+//    그때는 Worker 쪽 인증도 앱 열쇠가 아니라 로그인 토큰 검증으로 바꿔야 한다.
+const DEFAULT_AI_SERVER = '';
+
+function hasOwnAIKey() {
+  return !!window.GEMINI_API_KEY;
+}
+
+// AI 중계 서버 주소. 알림 서버와 일부러 분리했다 —
+// 알림을 켰다고 해서 내 데이터가 남의 AI 서버로 흘러가면 안 되니까.
+function aiServerUrl() {
+  const custom = (settings.aiServer || localStorage.getItem('ai_server') || '').trim();
+  return (custom || DEFAULT_AI_SERVER).replace(/\/+$/, '');
+}
+
+// 중계 AI 를 쓸 수 있는 상태인가 (주소를 직접 넣은 사람만 해당)
+function sharedAIReady() {
+  return !!aiServerUrl() && !!(settings.uploadKey || '');
+}
+
+// AI 기능을 쓸 수 있나 — 화면마다 하던 `!window.GEMINI_API_KEY` 검사를 이걸로 바꾼다
+function hasAI() {
+  return hasOwnAIKey() || sharedAIReady();
+}
+
+// 모델 하나에 대한 호출 주소와 헤더
+function aiRequest(model) {
+  if (hasOwnAIKey()) {
+    return {
+      url: `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${window.GEMINI_API_KEY}`,
+      headers: { 'Content-Type': 'application/json' },
+      shared: false,
+    };
+  }
+  return {
+    url: `${aiServerUrl()}/ai/${encodeURIComponent(model)}`,
+    headers: { 'Content-Type': 'application/json', 'X-App-Key': settings.uploadKey || '' },
+    shared: true,
+  };
+}
+
 // 🔧 종목의 환전 우대율 — 종목별 설정이 있으면 우선, 없으면 전역 기본값.
 //    (안 넣은 미국 종목에 1.75% 스프레드가 다 붙어 수익률이 낮게 나오던 문제 완화)
 function fxDiscountOf(asset) {
@@ -2449,7 +2525,7 @@ function renderCalendar() {
   header.innerHTML = `
     <h1>캘린더</h1>
     <div class="header-actions">
-      <button onclick="openSettingsModal()" aria-label="설정" style="position:relative;"><i class="ti ti-settings"></i>${!window.GEMINI_API_KEY ? '<span style="position:absolute; top:6px; right:6px; width:6px; height:6px; border-radius:50%; background:#9B3A33;"></span>' : ''}</button>
+      <button onclick="openSettingsModal()" aria-label="설정" style="position:relative;"><i class="ti ti-settings"></i>${!hasAI() ? '<span style="position:absolute; top:6px; right:6px; width:6px; height:6px; border-radius:50%; background:#9B3A33;"></span>' : ''}</button>
       <button onclick="openAddModal()" aria-label="추가"><i class="ti ti-plus"></i></button>
     </div>
   `;
@@ -6702,7 +6778,7 @@ function pickWorkoutPhoto(dateK) {
       // 📸 같은 사진에서 운동 기록도 함께 읽는다 (나이키·런데이·수영앱 결과 화면)
       //    사진만 남기고 숫자를 또 손으로 넣게 하면 두 번 일하는 셈이라 한 번에 처리한다.
       let read = null;
-      if (window.GEMINI_API_KEY) {
+      if (hasAI()) {
         showToast('사진에서 운동 기록 읽는 중...');
         const items = await readWorkoutFromImage(f).catch(() => []);
         // 그 날짜 것을 우선 쓰고, 없으면 첫 항목 (사용자가 고른 날짜가 기준)
@@ -6719,7 +6795,7 @@ function pickWorkoutPhoto(dateK) {
         showToast('📷 사진 + ' + (bits.join(' · ') || '기록') + ' 저장됨');
       } else {
         saveData();
-        showToast(window.GEMINI_API_KEY ? '📷 사진 저장됨 (기록은 못 읽었어요)' : '📷 사진 저장됨');
+        showToast(hasAI() ? '📷 사진 저장됨 (기록은 못 읽었어요)' : '📷 사진 저장됨');
       }
 
       closeModal();
@@ -6890,7 +6966,7 @@ function sniffImageMime(b64, fallback) {
 
 // direct = { base64, mimeType } 를 주면 파일 없이도 판독한다 (수신함으로 들어온 사진용)
 async function readWorkoutFromImage(file, direct) {
-  if (!window.GEMINI_API_KEY) return [];
+  if (!hasAI()) return [];
   let b64, mime;
   if (direct && direct.base64) {
     // 단축어의 Base64 인코딩은 76자마다 줄바꿈을 넣는다. 그대로 보내면 판독기가 디코딩에 실패한다.
@@ -6966,9 +7042,9 @@ JSON 형식:
       try {
         const ctrl = new AbortController();
         const to = setTimeout(() => ctrl.abort(), 45000);
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${window.GEMINI_API_KEY}`, {
+        const res = await fetch(aiRequest(model).url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: aiRequest(model).headers,
           body: JSON.stringify({
             contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: b64 } }] }],
             generationConfig: cfg,
@@ -7031,7 +7107,7 @@ JSON 형식:
 async function processWorkoutCapture(input) {
   const files = Array.isArray(input) ? input : Array.from(input?.files || []);
   if (files.length === 0) return;
-  if (!window.GEMINI_API_KEY) { showToast('AI 키 먼저 설정해주세요'); openAIKeyModal(); return; }
+  if (!hasAI()) { showToast('AI 키 먼저 설정해주세요'); openAIKeyModal(); return; }
 
   showToast('운동 기록 읽는 중...');
   delete window._workoutOcrRaw;
@@ -7112,7 +7188,7 @@ async function applyWorkoutCapture() {
 // 📸 인바디 용지·앱 화면을 찍으면 수치를 읽어 그대로 기록한다.
 // 체지방률·골격근량·체중은 매번 손으로 옮겨 적기 번거롭고 오타가 나기 쉽다.
 async function readInbodyFromImage(file) {
-  if (!window.GEMINI_API_KEY) return null;
+  if (!hasAI()) return null;
   const shrunk = await shrinkImageForOcr(file).catch(() => null);
   let b64, mime;
   if (shrunk) { b64 = shrunk.base64; mime = shrunk.mimeType; }
@@ -7163,9 +7239,9 @@ JSON 형식:
       try {
         const ctrl = new AbortController();
         const to = setTimeout(() => ctrl.abort(), 45000);
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${window.GEMINI_API_KEY}`, {
+        const res = await fetch(aiRequest(model).url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: aiRequest(model).headers,
           body: JSON.stringify({
             contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: b64 } }] }],
             generationConfig: cfg,
@@ -7229,7 +7305,7 @@ JSON 형식:
 
 // 인바디 사진 넣기 — 읽은 값을 입력칸에 채워주고, 사용자가 확인 후 저장
 async function pickInbodyPhoto() {
-  if (!window.GEMINI_API_KEY) { showToast('AI 키 먼저 설정해주세요'); openAIKeyModal(); return; }
+  if (!hasAI()) { showToast('AI 키 먼저 설정해주세요'); openAIKeyModal(); return; }
   const inp = document.createElement('input');
   inp.type = 'file';
   inp.accept = 'image/jpeg,image/png,image/heic,image/webp';
@@ -9819,7 +9895,7 @@ async function loadAIBudgetCoach(spent, projected, byCategory, lastMonth, forceR
   if (!container) return;
 
   // 키 없으면 안내
-  if (!window.GEMINI_API_KEY) {
+  if (!hasAI()) {
     container.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
       <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 가계부 코치</div>
       <div class="ai-text" style="margin-bottom:10px;">
@@ -10823,7 +10899,7 @@ async function runAIStockAnalysis() {
   const sel = window._selectedStockSuggest;
   const stockName = (sel && sel.name === raw && sel.ticker) ? `${sel.name} (${sel.ticker})` : raw;
 
-  if (!window.GEMINI_API_KEY) {
+  if (!hasAI()) {
     showToast('AI 키 먼저 설정해주세요');
     closeModal();
     setTimeout(() => openAIKeyModal(), 200);
@@ -13196,7 +13272,7 @@ function calcCancel() {
 async function processTradeCapture(input) {
   const files = Array.isArray(input) ? input : Array.from(input?.files || []);
   if (files.length === 0) return;
-  if (!window.GEMINI_API_KEY) { showToast('AI 키 먼저 설정해주세요'); return; }
+  if (!hasAI()) { showToast('AI 키 먼저 설정해주세요'); return; }
 
   showToast('체결내역 분석 중...');
   const allTrades = [];
@@ -13241,8 +13317,8 @@ async function processTradeCapture(input) {
       let data = null;
       for (const model of ocrModels) {
         try {
-          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${window.GEMINI_API_KEY}`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+          const res = await fetch(aiRequest(model).url, {
+            method: 'POST', headers: aiRequest(model).headers, body: JSON.stringify(body),
           });
           if (res.status === 429 || res.status === 503) { lastErr = `${res.status}: AI 한도/혼잡`; continue; }
           const d = await res.json();
@@ -14105,7 +14181,7 @@ function showCardOcrDebug() {
 // 보정 배너에서 호출 — 증권사 잔고 캡처 파일 선택창을 연다.
 // 캡처를 올리면 기존 OCR 검토 흐름으로 이어지고, 자동매수 자산은 '보정'이 기본 선택됨.
 function openAssetCaptureForCorrection() {
-  if (!window.GEMINI_API_KEY) {
+  if (!hasAI()) {
     showToast('AI 키를 먼저 설정해주세요 (설정 → AI 키)');
     return;
   }
@@ -14152,7 +14228,7 @@ function _doAssetCapturePick() {
 
 // 📋 클립보드 이미지를 증권사 자산 OCR로 (저장 없이 복붙)
 async function pasteImageForAssetOCR() {
-  if (!window.GEMINI_API_KEY) { showToast('AI 키 먼저 설정해주세요'); return; }
+  if (!hasAI()) { showToast('AI 키 먼저 설정해주세요'); return; }
   if (!navigator.clipboard || !navigator.clipboard.read) {
     showToast('이 브라우저는 붙여넣기 미지원 — 캡처 입력을 쓰세요');
     return;
@@ -14180,7 +14256,7 @@ async function processAssetCapture(input) {
   const files = Array.isArray(input) ? input : Array.from(input?.files || []);
   if (files.length === 0) return;
 
-  if (!window.GEMINI_API_KEY) {
+  if (!hasAI()) {
     showToast('AI 키 먼저 설정해주세요');
     return;
   }
@@ -14417,10 +14493,10 @@ async function processAssetCapture(input) {
     let data = null, lastErr = '';
     for (const model of ocrModels) {
       try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${window.GEMINI_API_KEY}`;
+        const url = aiRequest(model).url;
         const res = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: aiRequest(model).headers,
           body: JSON.stringify(body),
         });
         if (res.status === 429) { lastErr = '429: AI 한도초과'; console.warn(`⚠️ OCR ${model} 429 → 다음 모델`); continue; }
@@ -14736,7 +14812,7 @@ async function processAssetCapture(input) {
 async function processAutobuyCapture(input) {
   const files = Array.from(input.files || []);
   if (files.length === 0) return;
-  if (!window.GEMINI_API_KEY) {
+  if (!hasAI()) {
     showToast('AI 키를 먼저 설정해주세요 (설정 → AI 키)');
     return;
   }
@@ -14820,10 +14896,10 @@ async function processAutobuyCapture(input) {
         const maxRetry = 4; // 🔧 429(한도) 시 최대 4번 재시도
         while (true) {
           try {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${window.GEMINI_API_KEY}`;
+            const url = aiRequest(model).url;
             const res = await fetch(url, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: aiRequest(model).headers,
               body: JSON.stringify(reqBody),
             });
             if (res.status === 429) {
@@ -15263,7 +15339,7 @@ function saveAutobuyReview() {
 async function processFixedCapture(input) {
   const files = Array.from(input.files || []);
   if (files.length === 0) return;
-  if (!window.GEMINI_API_KEY) {
+  if (!hasAI()) {
     showToast('AI 키를 먼저 설정해주세요 (설정 → AI 키)');
     return;
   }
@@ -15314,9 +15390,9 @@ async function processFixedCapture(input) {
       let data = null;
       for (const model of fxModels) {
         try {
-          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${window.GEMINI_API_KEY}`, {
+          const res = await fetch(aiRequest(model).url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: aiRequest(model).headers,
             body: reqBody,
           });
           if (res.status === 429 || res.status === 503 || res.status === 404) continue; // 다음 모델로
@@ -16400,7 +16476,7 @@ function applyClipboardExpense() {
 
 // 📋 클립보드의 이미지를 바로 OCR (저장 없이 복붙). 모달이 열린 상태에서 호출.
 async function pasteImageForOCR() {
-  if (!window.GEMINI_API_KEY) { showToast('AI 키 먼저 설정해주세요'); openAIKeyModal(); return; }
+  if (!hasAI()) { showToast('AI 키 먼저 설정해주세요'); openAIKeyModal(); return; }
   if (!navigator.clipboard || !navigator.clipboard.read) {
     showToast('이 브라우저는 붙여넣기 미지원 — Ctrl+V로 시도하거나 캡처 입력을 쓰세요');
     return;
@@ -16428,7 +16504,7 @@ async function processCardCapture(input) {
   const files = Array.isArray(input) ? input : Array.from(input?.files || []);
   if (files.length === 0) return;
 
-  if (!window.GEMINI_API_KEY) {
+  if (!hasAI()) {
     showToast('AI 키 먼저 설정해주세요');
     openAIKeyModal();
     return;
@@ -16535,9 +16611,9 @@ async function processCardCapture(input) {
           // 타임아웃이 없으면 실패 시 화면이 '분석 중...' 인 채로 멈춘다
           const _ctrl = new AbortController();
           const _to = setTimeout(() => _ctrl.abort(), 45000);
-          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${window.GEMINI_API_KEY}`, {
+          const res = await fetch(aiRequest(model).url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: aiRequest(model).headers,
             body: JSON.stringify({ ...body, generationConfig: cfg }),
             signal: _ctrl.signal,
           }).finally(() => clearTimeout(_to));
@@ -19232,9 +19308,8 @@ async function askGemini(prompt, options = {}) {
     return { text: aiCache[cKey].text, cached: true };
   }
 
-  const apiKey = window.GEMINI_API_KEY;
-  if (!apiKey) {
-    return { error: 'AI 키가 설정되지 않았어요. 우측 상단 톱니바퀴에서 키를 입력하세요.', needsKey: true };
+  if (!hasAI()) {
+    return { error: 'AI를 쓸 수 없어요. 설정에서 서버 주소나 AI 키를 확인해주세요.', needsKey: true };
   }
 
   const models = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
@@ -19243,7 +19318,7 @@ async function askGemini(prompt, options = {}) {
 
   try {
     for (const model of models) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const url = aiRequest(model).url;
 
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
@@ -19263,7 +19338,7 @@ async function askGemini(prompt, options = {}) {
 
           const res = await fetch(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: aiRequest(model).headers,
             body: JSON.stringify(reqBody),
             signal: controller.signal,
           });
@@ -19507,7 +19582,7 @@ async function loadAIBriefing(forceRefresh, retryCount = 0) {
   if (!container) return;
 
   // 키 없으면 입력 안내
-  if (!window.GEMINI_API_KEY) {
+  if (!hasAI()) {
     container.innerHTML = `<div style="padding:14px;">
       <div style="font-size:12px; opacity:0.9; line-height:1.6; margin-bottom:12px;">
         AI 시장 브리핑을 사용하려면 본인 Gemini API 키를 입력해주세요.<br>
@@ -19945,7 +20020,7 @@ async function loadStockNewsSummary(forceRefresh = false) {
     renderStockNewsSummaryCard(container, aiCache[cacheKey].text);
     return;
   }
-  if (!window.GEMINI_API_KEY) {
+  if (!hasAI()) {
     container.innerHTML = `<div style="padding:14px; background:var(--bg-secondary); border-radius:var(--radius-md); font-size:11px; color:var(--text-tertiary); line-height:1.6;">📊 종목별 AI 뉴스 요약을 쓰려면 Gemini API 키가 필요해요. (AI 시장 브리핑과 동일)</div>`;
     return;
   }
@@ -20148,7 +20223,7 @@ async function fetchStockFundamentals(symbol) {
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 8000);
-    const res = await fetch(`https://life-planner.qorwl503.workers.dev/fundamentals?symbol=${encodeURIComponent(sym)}`, { signal: ctrl.signal });
+    const res = await fetch(`${dataProxy()}/fundamentals?symbol=${encodeURIComponent(sym)}`, { signal: ctrl.signal });
     clearTimeout(t);
     if (res.ok) {
       const data = await res.json();
@@ -20166,7 +20241,7 @@ async function fetchStockFundamentals(symbol) {
   const yahooUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(sym)}?modules=${modules}`;
   // fetchYahooPrice와 동일한 프록시 체계 재사용 (Worker 1순위 → 공용 프록시)
   const proxies = [
-    { url: `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(yahooUrl)}`, parse: async r => { const w = await r.json(); return JSON.parse(w.contents); } },
+    { url: `${dataProxy()}/?url=${encodeURIComponent(yahooUrl)}`, parse: async r => { const w = await r.json(); return JSON.parse(w.contents); } },
     { url: `https://api.allorigins.win/get?url=${encodeURIComponent(yahooUrl)}`, parse: async r => { const w = await r.json(); return JSON.parse(w.contents); } },
     { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`, parse: async r => await r.json() },
   ];
@@ -20438,7 +20513,7 @@ async function getMacroData(forceRefresh = false) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 20000);
     try {
-      const res = await fetch(`https://life-planner.qorwl503.workers.dev/macro${bust}`, { signal: ctrl.signal, cache: 'no-store' });
+      const res = await fetch(`${dataProxy()}/macro${bust}`, { signal: ctrl.signal, cache: 'no-store' });
       clearTimeout(t);
       if (!res.ok) throw new Error('FRED 데이터 로드 실패 (' + res.status + ')');
       const data = await res.json();
@@ -20637,7 +20712,7 @@ function renderPortfolioVsMacro(a) {
 
 async function loadMacroAIComment(d, a) {
   const box = document.getElementById('macro-ai-comment');
-  if (!box || !window.GEMINI_API_KEY) return;
+  if (!box || !hasAI()) return;
   const pf = classifyPortfolioForMacro();
   const cacheKey = 'macro-comment-' + a.key + '-' + new Date().toDateString();
   box.innerHTML = `<div style="padding:12px; background:var(--bg-secondary); border-radius:12px; font-size:11px; color:var(--text-tertiary); display:flex; align-items:center; gap:8px;"><div class="spinner" style="width:14px;height:14px;"></div>AI가 국면을 해석하는 중...</div>`;
@@ -20697,7 +20772,7 @@ async function fetchYahooPrice(ticker) {
   // CORS 프록시 후보들 (본인 Cloudflare Worker 1순위)
   const proxies = [
     {
-      url: `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(yahooUrl)}`,
+      url: `${dataProxy()}/?url=${encodeURIComponent(yahooUrl)}`,
       parse: async (res) => {
         const w = await res.json();
         return JSON.parse(w.contents);
@@ -20795,7 +20870,7 @@ async function fetchYahooHistorical(ticker) {
   // 자동매수 재계산은 오래된 회차도 필요하므로 최근 5년치 일별 종가를 사용
   const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=5y`;
   const proxies = [
-    { url: `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(yahooUrl)}`, parse: async (r) => JSON.parse((await r.json()).contents) },
+    { url: `${dataProxy()}/?url=${encodeURIComponent(yahooUrl)}`, parse: async (r) => JSON.parse((await r.json()).contents) },
     { url: `https://api.allorigins.win/get?url=${encodeURIComponent(yahooUrl)}`, parse: async (r) => JSON.parse((await r.json()).contents) },
     { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`, parse: async (r) => r.json() },
   ];
@@ -21219,7 +21294,7 @@ async function fetchMarketIndices() {
 async function fetchNaverDomesticStock(code) {
   const target = `https://m.stock.naver.com/api/stock/${code}/basic`;
   const proxies = [
-    url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
+    url => `${dataProxy()}/?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
   ];
@@ -21266,7 +21341,7 @@ async function fetchNaverIndex(code) {
     : `https://m.stock.naver.com/api/index/${code}/basic`;
 
   const proxies = [
-    url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
+    url => `${dataProxy()}/?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
   ];
@@ -21327,7 +21402,7 @@ async function fetchNaverIndex(code) {
 // 네이버 환율 (USD/KRW) - 네이버 모바일/PC 페이지가 실제 사용하는 엔드포인트 사용
 async function fetchNaverExchange() {
   const proxies = [
-    url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
+    url => `${dataProxy()}/?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
   ];
@@ -21447,7 +21522,7 @@ async function fetchNaverExchange() {
 // 화면에 보이는 가격·등락률을 그대로 사용 (계산 안 함)
 async function fetchNaverGoldDomestic() {
   const proxies = [
-    url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
+    url => `${dataProxy()}/?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
   ];
@@ -22484,7 +22559,7 @@ function ipoHtmlToText(html) {
 }
 
 async function fetchIpoScheduleAuto() {
-  if (!window.GEMINI_API_KEY) { showToast('AI 키 먼저 설정해주세요'); return; }
+  if (!hasAI()) { showToast('AI 키 먼저 설정해주세요'); return; }
   showToast('공모주 일정 불러오는 중...');
 
   const targets = settings.ipoSourceUrl ? [settings.ipoSourceUrl, ...IPO_SOURCES] : IPO_SOURCES;
@@ -22495,8 +22570,8 @@ async function fetchIpoScheduleAuto() {
   const proxies = [
     // 사용자가 지정한 전용 프록시(원문 바이트 그대로 주는 Worker)가 있으면 1순위
     ...(settings.ipoRawProxy ? [{ raw: true, mk: (u) => `${settings.ipoRawProxy}${settings.ipoRawProxy.includes('?') ? '&' : '?'}url=${encodeURIComponent(u)}` }] : []),
-    { raw: true,  mk: (u) => `https://life-planner.qorwl503.workers.dev/raw?url=${encodeURIComponent(u)}` },
-    { raw: false, mk: (u) => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(u)}` },
+    { raw: true,  mk: (u) => `${dataProxy()}/raw?url=${encodeURIComponent(u)}` },
+    { raw: false, mk: (u) => `${dataProxy()}/?url=${encodeURIComponent(u)}` },
     { raw: true,  mk: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}` },
     { raw: true,  mk: (u) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}` },
   ];
@@ -22572,8 +22647,8 @@ ${snippet}`;
   for (const cfg of [{ ...baseCfg, responseMimeType: 'application/json' }, baseCfg]) {
     for (const model of models) {
       try {
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${window.GEMINI_API_KEY}`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+        const res = await fetch(aiRequest(model).url, {
+          method: 'POST', headers: aiRequest(model).headers,
           body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: cfg }),
         });
         if (res.status === 429 || res.status === 503 || res.status === 404) { lastErr = `HTTP ${res.status}`; continue; }
@@ -22632,7 +22707,7 @@ ${snippet}`;
 async function processIpoCapture(input) {
   const files = Array.isArray(input) ? input : Array.from(input?.files || []);
   if (files.length === 0) return;
-  if (!window.GEMINI_API_KEY) { showToast('AI 키 먼저 설정해주세요'); return; }
+  if (!hasAI()) { showToast('AI 키 먼저 설정해주세요'); return; }
 
   showToast('공모주 일정 분석 중...');
   const found = [];
@@ -22683,8 +22758,8 @@ async function processIpoCapture(input) {
       let data = null;
       for (const model of models) {
         try {
-          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${window.GEMINI_API_KEY}`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+          const res = await fetch(aiRequest(model).url, {
+            method: 'POST', headers: aiRequest(model).headers, body: JSON.stringify(body),
           });
           if (res.status === 429 || res.status === 503 || res.status === 404) { lastErr = `HTTP ${res.status}`; continue; }
           const d = await res.json();
@@ -23292,7 +23367,7 @@ async function fetchNaverStockNews(query, ticker) {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
-    const res = await fetch(`https://life-planner.qorwl503.workers.dev/news?q=${encodeURIComponent(query)}&sort=sim`, { signal: controller.signal });
+    const res = await fetch(`${dataProxy()}/news?q=${encodeURIComponent(query)}&sort=sim`, { signal: controller.signal });
     clearTimeout(timeoutId);
     if (!res.ok) return (_cached ? _cached.data : []);
     const data = await res.json();
@@ -23340,7 +23415,7 @@ async function fetchNaverStockNews(query, ticker) {
 async function fetchNaverPrice(code) {
   // Worker 프록시 통해 네이버 통합 정보 호출
   const proxies = [
-    u => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(u)}`,
+    u => `${dataProxy()}/?url=${encodeURIComponent(u)}`,
     u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,
   ];
   const target = `https://m.stock.naver.com/api/stock/${code}/integration`;
@@ -23683,7 +23758,7 @@ async function fetchStockNews(stockName) {
   feeds.push(`https://api.stock.naver.com/news/search?query=${encodeURIComponent(stockName)}`); // 폴백(형식 다를 수 있음)
 
   const wrap = [
-    url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
+    url => `${dataProxy()}/?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
     url => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
@@ -23760,7 +23835,7 @@ async function fetchFundFacts(ticker) {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
-    const res = await fetch(`https://life-planner.qorwl503.workers.dev/fund?ticker=${encodeURIComponent(tClean)}`, { signal: controller.signal });
+    const res = await fetch(`${dataProxy()}/fund?ticker=${encodeURIComponent(tClean)}`, { signal: controller.signal });
     clearTimeout(timeoutId);
     if (res.ok) {
       const f = await res.json();
@@ -23786,7 +23861,7 @@ async function fetchFundFacts(ticker) {
   const apiUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(t)}?modules=${modules}`;
 
   const proxies = [
-    { url: `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(apiUrl)}`, parse: async (res) => JSON.parse((await res.json()).contents) },
+    { url: `${dataProxy()}/?url=${encodeURIComponent(apiUrl)}`, parse: async (res) => JSON.parse((await res.json()).contents) },
     { url: `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`, parse: async (res) => JSON.parse((await res.json()).contents) },
     { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(apiUrl)}`, parse: async (res) => res.json() },
     { url: `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(apiUrl)}`, parse: async (res) => res.json() },
@@ -23869,7 +23944,7 @@ async function fetchNewsRSS() {
 
   // 여러 프록시 서버 시도 (본인 Cloudflare Worker 1순위 - 안정적)
   const proxies = [
-    url => `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(url)}`,
+    url => `${dataProxy()}/?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
     url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     url => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`,
@@ -24058,8 +24133,8 @@ async function fetchCnnFearGreed() {
   const target = 'https://production.dataviz.cnn.io/index/fearandgreed/graphdata';
   const proxies = [
     // 1순위: Worker 전용 경로 (시세 /?url= 와 분리돼 충돌 없음). Worker에 /fear-greed 라우트 추가 필요.
-    { url: `https://life-planner.qorwl503.workers.dev/fear-greed`, parse: async (r) => r.json() },
-    { url: `https://life-planner.qorwl503.workers.dev/?url=${encodeURIComponent(target)}`, parse: async (r) => { const w = await r.json(); return w.contents ? JSON.parse(w.contents) : w; } },
+    { url: `${dataProxy()}/fear-greed`, parse: async (r) => r.json() },
+    { url: `${dataProxy()}/?url=${encodeURIComponent(target)}`, parse: async (r) => { const w = await r.json(); return w.contents ? JSON.parse(w.contents) : w; } },
     { url: `https://api.allorigins.win/get?url=${encodeURIComponent(target)}`, parse: async (r) => JSON.parse((await r.json()).contents) },
     { url: `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(target)}`, parse: async (r) => r.json() },
   ];
@@ -24775,7 +24850,7 @@ async function loadAIAssetCoach(total, byType, expected1Y, expected3Y, expected1
   const container = document.getElementById('ai-asset-coach-card');
   if (!container) return;
 
-  if (!window.GEMINI_API_KEY) {
+  if (!hasAI()) {
     container.innerHTML = `<div class="ai-card" style="margin-bottom:14px;">
       <div class="ai-badge"><i class="ti ti-sparkles" style="font-size:11px;"></i> AI 자산 코치</div>
       <div class="ai-text" style="margin-bottom:10px;">
@@ -25005,9 +25080,20 @@ function openAIKeyModal() {
           <span style="font-size:11px; font-weight:600;">Gemini AI 설정</span>
         </div>
         <div style="font-size:12px; line-height:1.6; opacity:0.9;">
-          AI 시장 브리핑, 자산 분석, 뉴스 요약 기능을 사용하려면 본인의 Gemini API 키가 필요해요. 키는 본인 기기에만 저장되고 안전해요.
+          AI 시장 브리핑, 자산 분석, 뉴스 요약 기능을 사용하려면 본인의 Gemini API 키가 필요해요.
+          키는 본인 기기에만 저장되고, 다른 곳으로 보내지 않아요.
         </div>
       </div>
+
+      ${!currentKey ? `
+        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="display:block; text-align:center; padding:13px; background:var(--accent-tab, #6B5B96); color:#fff; border-radius:11px; font-size:13px; font-weight:800; text-decoration:none; margin-bottom:8px;">
+          무료 키 받으러 가기 →
+        </a>
+        <div style="font-size:11px; color:var(--text-tertiary); text-align:center; margin-bottom:14px; line-height:1.7;">
+          구글 계정으로 로그인 → <b>Create API key</b> → 복사<br>
+          받은 키를 아래 칸에 붙여넣으면 끝이에요.
+        </div>
+      ` : ''}
 
       ${currentKey ? `
         <div style="padding:10px 12px; background:var(--bg-success); border-radius:var(--radius-md); margin-bottom:14px; font-size:11px; color:var(--text-success);">
@@ -25679,9 +25765,320 @@ function openAccountModal() {
       <button onclick="logout()" style="width:100%; padding:14px; border:none; border-radius:var(--radius-md); background:var(--bg-danger); color:var(--text-danger); font-size:13px; font-weight:500; cursor:pointer; font-family:inherit;">
         <i class="ti ti-logout" style="font-size:14px; vertical-align:-2px;"></i> 로그아웃
       </button>
+
+      <button onclick="openPrivacyPolicy()" style="width:100%; margin-top:10px; padding:12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); background:var(--bg-primary); color:var(--text-secondary); font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">
+        <i class="ti ti-shield-lock" style="font-size:13px; vertical-align:-2px;"></i> 개인정보처리방침
+      </button>
+
+      ${currentUser ? `
+      <button onclick="openDeleteAccount()" style="width:100%; margin-top:10px; padding:12px; border:none; background:transparent; color:var(--text-tertiary); font-size:12px; cursor:pointer; font-family:inherit; text-decoration:underline;">
+        계정 삭제
+      </button>` : ''}
     </div>
   `;
   modal.classList.add('show');
+}
+
+
+// ===== 🗑️ 계정 삭제 =====
+// 되돌릴 수 없는 일이라, 지우기 전에 백업을 먼저 받게 한다.
+// 지울 곳: Firestore 하위 컬렉션 → 본문서 → uploadKeys → 푸시 구독 → 이 기기 저장분 → 로그인 계정
+
+// 계정에 딸린 Firestore 하위 컬렉션들 (사진·수신함·AI 키)
+const USER_SUBCOLLECTIONS = ['workoutPhotos', 'workoutInbox', 'expenseInbox', 'config'];
+
+function openDeleteAccount() {
+  const email = currentUser?.email || '';
+  const backedUp = !!localStorage.getItem('last_backup_time');
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="openAccountModal()">뒤로</button>
+        <h2 style="font-size:15px;">계정 삭제</h2>
+        <span></span>
+      </div>
+      <div style="padding:0 16px 20px;">
+
+        <div style="padding:13px 14px; background:var(--bg-danger); border-radius:var(--radius-md); margin-bottom:14px; font-size:12px; color:var(--text-danger); line-height:1.8;">
+          <b style="font-weight:700;">지우면 되돌릴 수 없어요.</b><br>
+          가계부·자산·할일·운동 기록과 저장된 사진이 서버에서 모두 사라집니다.
+        </div>
+
+        <div style="font-size:12px; font-weight:800; margin-bottom:7px;">지워지는 것</div>
+        <div style="padding:12px 13px; background:var(--bg-secondary); border-radius:11px; font-size:11.5px; color:var(--text-secondary); line-height:1.9; margin-bottom:14px;">
+          · 가계부 · 자산 · 할일 · 운동 기록<br>
+          · 운동 사진, 자동으로 들어온 기록<br>
+          · 저장해둔 AI 키<br>
+          · 워치 연동 열쇠, 알림 구독<br>
+          · 로그인 계정 (${escapeHTML(email)})
+        </div>
+
+        <div style="font-size:12px; font-weight:800; margin-bottom:7px;">1. 먼저 백업받기</div>
+        <button onclick="exportBackup()" style="width:100%; padding:12px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-primary); border-radius:10px; font-size:12.5px; font-weight:700; cursor:pointer; font-family:inherit; margin-bottom:6px;">
+          <i class="ti ti-download" style="font-size:13px; vertical-align:-2px;"></i> 내 데이터 파일로 저장
+        </button>
+        <div style="font-size:11px; color:${backedUp ? 'var(--text-success)' : 'var(--text-tertiary)'}; margin-bottom:14px;">
+          ${backedUp ? '✓ 백업한 적이 있어요' : '아직 한 번도 백업하지 않았어요'}
+        </div>
+
+        <div style="font-size:12px; font-weight:800; margin-bottom:7px;">2. 비밀번호 확인</div>
+        <input type="password" id="del-pw" placeholder="지금 쓰는 비밀번호" autocomplete="current-password" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:14px; background:var(--bg-primary); color:var(--text-primary); font-family:inherit; margin-bottom:12px;" />
+
+        <div style="font-size:12px; font-weight:800; margin-bottom:7px;">3. <b style="font-family:monospace;">삭제</b> 라고 입력</div>
+        <input type="text" id="del-confirm" placeholder="삭제" autocomplete="off" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:14px; background:var(--bg-primary); color:var(--text-primary); font-family:inherit; margin-bottom:16px;" />
+
+        <button onclick="runDeleteAccount()" style="width:100%; padding:13px; border:none; background:var(--bg-danger); color:var(--text-danger); border-radius:11px; font-size:13px; font-weight:800; cursor:pointer; font-family:inherit;">
+          계정 영구 삭제
+        </button>
+        <button onclick="openAccountModal()" style="width:100%; margin-top:7px; padding:11px; border:none; background:transparent; color:var(--text-tertiary); font-size:12px; cursor:pointer; font-family:inherit;">
+          그만두기
+        </button>
+      </div>
+    </div>`;
+  modal.classList.add('show');
+}
+
+// 하위 컬렉션 하나를 통째로 지운다 (문서를 하나씩 지워야 한다 — Firestore 는 폴더 삭제가 없다)
+async function deleteSubcollection(uid, name) {
+  const { db, collection, getDocs, deleteDoc, doc } = window._fb;
+  let removed = 0;
+  try {
+    const snap = await getDocs(collection(db, 'users', uid, name));
+    for (const d of snap.docs) {
+      await deleteDoc(doc(db, 'users', uid, name, d.id));
+      removed++;
+    }
+  } catch (e) {
+    console.warn(`${name} 삭제 실패:`, e);
+  }
+  return removed;
+}
+
+async function runDeleteAccount() {
+  const pw = (document.getElementById('del-pw')?.value || '').trim();
+  const confirmText = (document.getElementById('del-confirm')?.value || '').trim();
+
+  if (confirmText !== '삭제') { showToast('삭제 라고 정확히 입력해주세요'); return; }
+  if (!pw) { showToast('비밀번호를 입력해주세요'); return; }
+  if (!currentUser || !window._fb) { showToast('로그인 상태가 아니에요'); return; }
+
+  const {
+    auth, db, doc, deleteDoc, deleteUser,
+    reauthenticateWithCredential, EmailAuthProvider,
+  } = window._fb;
+  const uid = currentUser.uid;
+  const email = currentUser.email;
+
+  showToast('확인 중…');
+
+  // 1) 본인 확인 — 오래 로그인해 있었으면 Firebase 가 재인증을 요구한다
+  try {
+    const cred = EmailAuthProvider.credential(email, pw);
+    await reauthenticateWithCredential(auth.currentUser, cred);
+  } catch (e) {
+    const code = String(e?.code || '');
+    if (code.includes('wrong-password') || code.includes('invalid-credential')) {
+      showToast('비밀번호가 맞지 않아요');
+    } else if (code.includes('too-many-requests')) {
+      showToast('시도가 많았어요. 잠시 후 다시 해주세요');
+    } else {
+      showToast('확인에 실패했어요: ' + code);
+    }
+    return;
+  }
+
+  // 2) 알림 구독 해제 (계정이 사라진 뒤엔 손댈 수 없다)
+  try { await disablePush(); } catch (e) {}
+
+  // 3) 워치 연동 열쇠 (uploadKeys 는 계정 밖에 있는 최상위 문서라 따로 지운다)
+  const upKey = settings.uploadKey || '';
+  if (upKey) {
+    try { await deleteDoc(doc(db, 'uploadKeys', upKey)); } catch (e) {}
+  }
+
+  // 4) 하위 컬렉션 → 본문서 순서로. 반대로 하면 하위가 고아로 남는다.
+  showToast('데이터 지우는 중…');
+  for (const name of USER_SUBCOLLECTIONS) {
+    await deleteSubcollection(uid, name);
+  }
+  try {
+    await deleteDoc(doc(db, 'users', uid));
+  } catch (e) {
+    console.warn('본문서 삭제 실패:', e);
+    showToast('서버 데이터를 못 지웠어요. 다시 시도해주세요');
+    return;
+  }
+
+  // 5) 로그인 계정
+  try {
+    await deleteUser(auth.currentUser);
+  } catch (e) {
+    showToast('데이터는 지웠지만 계정이 남았어요: ' + String(e?.code || ''));
+    return;
+  }
+
+  // 6) 이 기기에 남은 것 — 서버를 지웠으니 여기도 지워야 앱을 다시 열 때 되살아나지 않는다
+  try {
+    localStorage.clear();
+  } catch (e) {}
+
+  alert('계정과 데이터를 모두 삭제했어요.');
+  location.reload();
+}
+
+
+// ===== 🛡️ 개인정보처리방침 =====
+// privacy.html 과 같은 내용이다. 고칠 때 두 곳을 같이 고쳐야 한다.
+const PRIVACY_UPDATED = '2026-08-26';
+
+const PRIVACY_SECTIONS = [
+  {
+    h: '무엇을 모으나요',
+    b: `<b>계정</b> — 이메일 주소, 비밀번호<br>
+        <b>내가 적은 것</b> — 가계부(날짜·금액·카테고리·메모), 자산(종목·수량·평단), 할일, 운동 기록, 목표, 관심종목<br>
+        <b>운동 사진</b> — 워치 캡처를 올린 경우에 한해 그 이미지<br>
+        <b>API 키</b> — 직접 넣은 Gemini·YouTube 키<br><br>
+        위치, 연락처, 주소록, 통화 기록은 받지 않습니다.`
+  },
+  {
+    h: '어디에 저장되나요',
+    b: `Google Firebase(Firestore)에 계정별로 저장됩니다. 서버 위치는 Firebase 프로젝트 설정을 따릅니다.<br><br>
+        같은 내용이 기기 안(localStorage)에도 남습니다. 인터넷이 끊겨도 쓰기 위해서입니다.<br><br>
+        PIN 잠금 번호는 <b>기기 안에만</b> 있고 서버로 가지 않습니다.`
+  },
+  {
+    h: '외부로 나가는 것',
+    b: `<b>Google Gemini (AI 분석)</b> — AI 카드를 부를 때 그 분석에 필요한 수치가 Google 로 전송됩니다. 가계부 분석이면 지출 내역이, 종목 분석이면 보유 종목과 시세가 갑니다. 운동 사진을 읽을 때는 <b>사진 자체</b>가 전송됩니다.<br>
+        전송은 <b>내 AI 키를 넣었거나, AI 서버 주소를 직접 지정한 경우에만</b> 일어납니다. 둘 다 안 했다면 AI 기능이 꺼져 있어 아무것도 나가지 않습니다.<br><br>
+        <b>시세·뉴스 중계 서버</b> — 종목명·티커가 중계 서버를 거쳐 Yahoo Finance, 네이버, 구글 뉴스로 전달됩니다. 가계부나 자산 금액은 보내지 않습니다.<br><br>
+        <b>allorigins.win</b> — 일부 뉴스는 이 외부 중계를 씁니다. 요청한 주소가 그 업체에 노출됩니다.<br><br>
+        <b>알림 서버</b> — 알림을 켜면 브라우저 구독 정보와 <b>요약 문구</b>가 알림 서버에 저장됩니다. 정해진 시각에 보내기 위해서입니다.<br><br>
+        데이터를 파는 일은 없습니다.`
+  },
+  {
+    h: '얼마나 갖고 있나요',
+    b: `계정을 지울 때까지 보관합니다.<br><br>
+        자동으로 들어온 운동·지출 기록은 앱이 처리한 뒤 바로 지워집니다.<br>
+        알림 구독 정보는 알림을 끄면 지워집니다.`
+  },
+  {
+    h: '지우려면',
+    b: `<b>설정 → 계정 → 계정 삭제</b> 에서 직접 지울 수 있습니다.<br><br>
+        누르면 서버의 기록·사진·저장된 키, 그리고 로그인 계정까지 모두 지워집니다. <b>되돌릴 수 없습니다.</b> 지우기 전에 백업 파일을 받아두세요.`
+  },
+  {
+    h: '아이들',
+    b: `만 14세 미만을 대상으로 하지 않습니다.`
+  },
+];
+
+function openPrivacyPolicy() {
+  const body = PRIVACY_SECTIONS.map(s => `
+    <div style="margin-bottom:16px;">
+      <div style="font-size:12.5px; font-weight:800; margin-bottom:6px;">${s.h}</div>
+      <div style="font-size:11.5px; color:var(--text-secondary); line-height:1.9;">${s.b}</div>
+    </div>`).join('');
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="openAccountModal()">뒤로</button>
+        <h2 style="font-size:15px;">개인정보처리방침</h2>
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+      </div>
+      <div style="padding:0 16px 22px;">
+        <div style="font-size:11px; color:var(--text-tertiary); margin-bottom:16px;">
+          마지막 수정 ${PRIVACY_UPDATED}
+        </div>
+        ${body}
+        <div style="padding:11px 12px; background:var(--bg-secondary); border-radius:10px; font-size:11px; color:var(--text-tertiary); line-height:1.8;">
+          궁금한 점은 앱을 받은 곳에 문의해주세요.
+        </div>
+      </div>
+    </div>`;
+  modal.classList.add('show');
+}
+
+
+// ===== 🌐 서버 설정 =====
+// 남이 이 앱을 쓰면 시세·뉴스 요청이 전부 기본 서버 한 곳으로 몰린다.
+// 각자 Worker 를 띄우면 여기서 자기 주소로 바꿀 수 있다.
+function openServerSettings() {
+  const cur = (settings.dataProxy || localStorage.getItem('data_proxy') || '').trim();
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal(); setTimeout(()=>openSettingsModal(),100);">뒤로</button>
+        <h2 style="font-size:15px;">🌐 서버 설정</h2>
+        <span></span>
+      </div>
+      <div style="padding:0 16px 20px;">
+
+        <div style="padding:12px 13px; background:var(--bg-secondary); border-radius:10px; font-size:11.5px; color:var(--text-secondary); line-height:1.9; margin-bottom:14px;">
+          시세와 뉴스는 브라우저에서 바로 못 가져와서 중계 서버를 거칩니다.<br>
+          <span style="color:var(--text-tertiary);">가계부·자산 금액은 이 서버로 가지 않습니다. 종목명과 뉴스 검색어만 지나갑니다.</span>
+        </div>
+
+        ${usingDefaultProxy() ? `
+        <div style="padding:12px 13px; background:var(--bg-info); border-radius:10px; font-size:11.5px; color:var(--text-info); line-height:1.8; margin-bottom:14px;">
+          <b style="font-weight:700;">지금은 기본 서버를 쓰고 있어요.</b><br>
+          만든 사람이 띄워둔 서버라 언제든 멈출 수 있습니다. 오래 쓰실 거면 직접 띄우시는 걸 권합니다.
+        </div>` : ''}
+
+        <div class="field">
+          <div class="field-label">중계 서버 주소</div>
+          <input type="text" id="proxy-url" placeholder="${escapeAttr(DEFAULT_DATA_PROXY)}" value="${escapeAttr(cur)}" autocomplete="off" spellcheck="false" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:12.5px; background:var(--bg-primary); color:var(--text-primary); font-family:monospace;" />
+          <div style="font-size:10.5px; color:var(--text-tertiary); margin-top:5px;">비워두면 기본 서버를 씁니다.</div>
+        </div>
+
+        <div class="field" style="margin-top:12px;">
+          <div class="field-label">알림 서버 주소</div>
+          <input type="text" id="push-url" placeholder="비워두면 알림 기능이 꺼집니다" value="${escapeAttr(pushServerUrl())}" autocomplete="off" spellcheck="false" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:12.5px; background:var(--bg-primary); color:var(--text-primary); font-family:monospace;" />
+        </div>
+
+        <button onclick="saveServerSettings()" style="width:100%; margin-top:14px; padding:12px; border:none; background:var(--accent-tab, #6B5B96); color:#fff; border-radius:11px; font-size:13px; font-weight:800; cursor:pointer; font-family:inherit;">저장</button>
+        <button onclick="resetServerSettings()" style="width:100%; margin-top:7px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-tertiary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">기본값으로</button>
+      </div>
+    </div>`;
+  modal.classList.add('show');
+}
+
+// 주소가 http(s) 로 시작하는지만 본다 — 오타를 저장해두면 시세가 통째로 안 뜬다
+function validServerUrl(v) {
+  if (!v) return true;   // 비움 = 기본값
+  try {
+    const u = new URL(v);
+    return u.protocol === 'https:' || u.protocol === 'http:';
+  } catch (e) { return false; }
+}
+
+function saveServerSettings() {
+  const proxy = (document.getElementById('proxy-url')?.value || '').trim();
+  const push = (document.getElementById('push-url')?.value || '').trim();
+
+  if (!validServerUrl(proxy)) { showToast('중계 서버 주소가 이상해요 (https:// 로 시작)'); return; }
+  if (!validServerUrl(push)) { showToast('알림 서버 주소가 이상해요 (https:// 로 시작)'); return; }
+
+  settings.dataProxy = proxy;
+  settings.pushServer = push;
+  try {
+    if (proxy) localStorage.setItem('data_proxy', proxy); else localStorage.removeItem('data_proxy');
+    if (push) localStorage.setItem('push_server', push); else localStorage.removeItem('push_server');
+  } catch (e) {}
+  saveData();
+  showToast('저장했어요');
+  openServerSettings();
+}
+
+function resetServerSettings() {
+  settings.dataProxy = '';
+  try { localStorage.removeItem('data_proxy'); } catch (e) {}
+  saveData();
+  showToast('기본 서버로 되돌렸어요');
+  openServerSettings();
 }
 
 function openDataCheck() {
@@ -25795,17 +26192,25 @@ async function registerPushWorker() {
   }
 }
 
+// 알림 서버에 "나"를 증명하는 방법.
+// 예전엔 열쇠 하나를 모두가 나눠 썼는데, 그러면 남의 요약이 내 폰으로 올 수 있다.
+// 이제는 로그인 토큰을 보내고 서버가 구글에 물어 확인한다.
+async function pushAuthHeaders() {
+  const u = window._fb && window._fb.auth && window._fb.auth.currentUser;
+  if (!u) throw new Error('알림을 쓰려면 먼저 로그인해주세요');
+  const token = await u.getIdToken();
+  return { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token };
+}
+
 // 구독 정보를 서버에 등록한다. 서버가 이걸 알아야 알림을 보낼 수 있다.
 async function sendSubscriptionToServer(sub) {
   const url = pushServerUrl();
-  const key = settings.uploadKey || '';
   if (!url) throw new Error('알림 서버 주소를 먼저 넣어주세요');
-  if (!key) throw new Error('전송 열쇠가 없어요 (워치 연동 설정을 한 번 열어주세요)');
 
   const res = await fetch(url.replace(/\/+$/, '') + '/push/subscribe', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ key, sub: sub.toJSON ? sub.toJSON() : sub }),
+    headers: await pushAuthHeaders(),
+    body: JSON.stringify({ sub: sub.toJSON ? sub.toJSON() : sub }),
   });
   if (!res.ok) {
     // 서버가 알려준 이유를 그대로 보여준다 (숫자만 보면 원인을 알 수 없다)
@@ -25891,13 +26296,12 @@ async function refreshPushSubscription() {
 
 async function sendTestPush() {
   const url = pushServerUrl();
-  const key = settings.uploadKey || '';
-  if (!url || !key) { showToast('서버 주소와 열쇠가 필요해요'); return; }
+  if (!url) { showToast('알림 서버 주소가 필요해요'); return; }
   try {
     const res = await fetch(url.replace(/\/+$/, '') + '/push/test', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key }),
+      headers: await pushAuthHeaders(),
+      body: '{}',
     });
     const txt = await res.text();
     if (!res.ok) { showToast('테스트 실패: ' + txt.slice(0, 80)); return; }
@@ -26081,16 +26485,14 @@ function buildMorningSummary() {
 // 서버에 '언제, 무슨 내용으로 보낼지'를 넣어둔다. 앱을 열 때마다 갱신된다.
 async function pushSummaryToServer() {
   const url = pushServerUrl();
-  const key = settings.uploadKey || '';
-  if (!url || !key || !settings.pushEnabled) return false;
+  if (!url || !settings.pushEnabled) return false;
   if (settings.summaryTime === 'off') return false;
 
   try {
     const res = await fetch(url.replace(/\/+$/, '') + '/push/plan', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await pushAuthHeaders(),
       body: JSON.stringify({
-        key,
         at: settings.summaryTime || '08:00',   // 한국 시간 기준 HH:MM
         title: '📋 오늘 정리',
         body: buildMorningSummary(),
@@ -26164,13 +26566,12 @@ async function stopSummary() {
   settings.summaryTime = 'off';
   saveData();
   const url = pushServerUrl();
-  const key = settings.uploadKey || '';
-  if (url && key) {
+  if (url) {
     try {
       await fetch(url.replace(/\/+$/, '') + '/push/plan', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key, at: 'off' }),
+        headers: await pushAuthHeaders(),
+        body: JSON.stringify({ at: 'off' }),
       });
     } catch (e) {}
   }
@@ -26217,10 +26618,10 @@ function openSettingsModal() {
         <div style="display:flex; align-items:center; gap:10px;">
           <span style="font-size:20px;">✨</span>
           <div style="flex:1;">
-            <div style="font-size:13px; font-weight:600;">AI 설정 (Gemini API)</div>
-            <div style="font-size:11px; color:var(--text-tertiary); margin-top:1px;">${window.GEMINI_API_KEY ? '✓ 설정됨' : '키 입력 필요'}</div>
+            <div style="font-size:13px; font-weight:600;">AI 설정</div>
+            <div style="font-size:11px; color:var(--text-tertiary); margin-top:1px;">${hasOwnAIKey() ? '✓ 내 키 사용 중' : sharedAIReady() ? '✓ 지정한 AI 서버 사용 중' : '키 입력 필요'}</div>
           </div>
-          ${!window.GEMINI_API_KEY ? `<span style="width:7px; height:7px; border-radius:50%; background:#9B3A33; margin-right:6px;"></span>` : ''}
+          ${!hasAI() ? `<span style="width:7px; height:7px; border-radius:50%; background:#9B3A33; margin-right:6px;"></span>` : ''}
           <i class="ti ti-chevron-right" style="color:var(--text-tertiary);"></i>
         </div>
       </button>
@@ -26234,6 +26635,18 @@ function openSettingsModal() {
             <div style="font-size:11px; color:var(--text-tertiary); margin-top:1px;">${hasAppLock() ? '설정됨 · 눌러서 해제' : '4자리 PIN으로 앱 잠그기'}</div>
           </div>
           <i class="ti ti-${hasAppLock() ? 'lock' : 'lock-open'}" style="color:var(--text-tertiary);"></i>
+        </div>
+      </button>
+
+      <!-- 🌐 서버 -->
+      <button onclick="closeModal(); setTimeout(()=>openServerSettings(),100);" style="width:100%; padding:14px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); border-radius:var(--radius-md); cursor:pointer; font-family:inherit; text-align:left; margin-bottom:10px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-size:20px;">🌐</span>
+          <div style="flex:1;">
+            <div style="font-size:13px; font-weight:600;">서버 설정</div>
+            <div style="font-size:11px; color:var(--text-tertiary); margin-top:1px;">${usingDefaultProxy() ? '기본 중계 서버 사용 중' : '내 서버 사용 중'}</div>
+          </div>
+          <i class="ti ti-chevron-right" style="color:var(--text-tertiary);"></i>
         </div>
       </button>
 
