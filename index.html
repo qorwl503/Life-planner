@@ -7919,14 +7919,53 @@ function watchUploadRecipe(key) {
   //   앱이 꺼져 있으면 들어온 줄도 모른다.
   //   서버를 거치면 저장과 동시에 '⌚ 운동 기록 도착' 알림이 온다. 본문 형식은 똑같다.
   const server = pushServerUrl();
+  // 열쇠를 주소에 같이 싣는다.
+  //   본문 앞부분에도 열쇠가 있지만, 본문은 변수를 사이에 끼고 세 조각으로 붙이는 구조라
+  //   하나만 옛것이어도 저장이 거부된다. 주소 하나만 다시 복사하면 되게 한다.
   const url = server
-    ? `${server.replace(/\/+$/, '')}/relay/workout?uid=${encodeURIComponent(uid)}`
+    ? `${server.replace(/\/+$/, '')}/relay/workout?uid=${encodeURIComponent(uid)}&key=${encodeURIComponent(key)}`
     : `https://firestore.googleapis.com/v1/projects/${proj}/databases/(default)/documents/users/${uid}/workoutInbox?key=${apiKey}`;
   // 사진(base64)이 들어갈 자리를 표시해 둔다. 단축어에서 이 자리에 변수를 끼운다.
   const bodyHead = `{"fields":{"key":{"stringValue":"${key}"},"photoMime":{"stringValue":"image/jpeg"},"photo":{"stringValue":"`;
   const bodyMid = `"},"photo2":{"stringValue":"`;
   const bodyTail = `"}}}`;
   return { url, bodyHead, bodyMid, bodyTail, viaServer: !!server };
+}
+
+// 단축어가 하는 것과 똑같은 요청을 앱이 직접 보내본다.
+// 단축어를 만지지 않고도 '열쇠·계정·규칙' 중 무엇이 막는지 바로 알 수 있다.
+async function testWatchUpload() {
+  const key = settings.uploadKey || '';
+  if (!key) { showToast('먼저 연동 설정을 한 번 열어주세요'); return; }
+  const r = watchUploadRecipe(key);
+
+  // 1×1 짜리 아주 작은 JPEG (규칙의 '사진은 문자열' 조건만 만족하면 된다)
+  const tiny = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AKAAA//Z';
+  const body = r.bodyHead + tiny + r.bodyMid + tiny + r.bodyTail;
+
+  showToast('점검 중…');
+  try {
+    const res = await fetch(r.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+    const text = await res.text();
+    let d = {};
+    try { d = JSON.parse(text); } catch (e) {}
+
+    if (res.ok) {
+      showToast('✅ 통과 — 열쇠·계정 모두 정상이에요');
+      // 시험용 문서는 남기지 않는다
+      try { await drainWorkoutInbox(true); } catch (e) {}
+      return;
+    }
+    const msg = String(d.error || text || res.status);
+    const detail = String(d.detail || '').slice(0, 160);
+    alert('❌ 거부됐어요\n\n' + msg + (detail ? '\n\n서버가 받은 이유:\n' + detail : ''));
+  } catch (e) {
+    alert('서버에 못 닿았어요\n\n' + String(e && e.message || e));
+  }
 }
 
 async function openWatchPhotoSetup(regenerate = false) {
@@ -7971,6 +8010,13 @@ async function openWatchPhotoSetup(regenerate = false) {
           <span style="opacity:0.85;">설정 → 알림 에서 서버 주소를 넣으면, 도착하는 순간 알림이 오게 바뀝니다.</span>
         </div>`}
 
+        <button onclick="testWatchUpload()" style="width:100%; margin-bottom:14px; padding:12px; border:none; background:var(--accent-tab, #6B5B96); color:#fff; border-radius:10px; font-size:12.5px; font-weight:800; cursor:pointer; font-family:inherit;">
+          🧪 연동 점검 — 단축어 없이 지금 보내보기
+        </button>
+        <div style="font-size:10.5px; color:var(--text-tertiary); text-align:center; margin-bottom:14px; line-height:1.6;">
+          통과하면 열쇠·계정은 정상입니다. 남은 건 단축어 설정뿐이에요.
+        </div>
+
         <div style="font-size:12px; font-weight:800; margin:0 0 6px;">단축어 만들기</div>
         <div style="font-size:11px; color:var(--text-secondary); line-height:1.9;">
           단축어 앱 → 자동화 → <b>Apple Watch 운동</b> → 종료될 때 → <b>즉시 실행</b><br>
@@ -8001,6 +8047,12 @@ async function openWatchPhotoSetup(regenerate = false) {
         <div style="font-size:11.5px; font-weight:700; margin:14px 0 4px;">⑧의 주소</div>
         ${box(r.url.replace(currentUser.uid, currentUser.uid.slice(0,4) + '●●●●●●●●'))}
         ${copyBtn('📋 주소 복사', r.url)}
+
+        ${r.viaServer ? `
+        <div style="margin-top:14px; padding:11px 12px; background:var(--bg-success); border-radius:10px; font-size:11.5px; color:var(--text-success); line-height:1.8;">
+          <b>주소만 다시 넣으면 됩니다.</b><br>
+          열쇠가 주소에 같이 들어 있어서, 아래 본문은 <b>이미 넣어둔 것 그대로 두셔도</b> 돼요.
+        </div>` : ''}
 
         <div style="font-size:11.5px; font-weight:700; margin:16px 0 4px;">⑦의 텍스트 — 순서대로 넣으세요</div>
         <div style="font-size:11px; color:var(--text-secondary); line-height:1.9; margin-bottom:6px;">
