@@ -7435,6 +7435,16 @@ function logSyncEvent(kind, text, detail) {
   try { saveData(); } catch (e) {}
 }
 
+// 비우고 나면 버튼에 붙은 (2) 같은 개수도 같이 사라져야 한다.
+// 탭 하나만 다시 그리면 다른 탭 배지가 남으므로 화면 전체를 다시 그린다.
+function clearSyncLog() {
+  settings.syncLog = [];
+  saveData();
+  closeModal();
+  showToast('기록 비움');
+  try { render(); } catch (e) { console.warn('다시 그리기 실패:', e); }
+}
+
 function openSyncLog() {
   const list = settings.syncLog || [];
   const rows = list.length === 0
@@ -7474,7 +7484,7 @@ function openSyncLog() {
         ${settings.lastInboxCheck ? `마지막 확인 ${new Date(settings.lastInboxCheck).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : '아직 직접 확인해본 적 없어요'}
       </div>
       <div style="max-height:60vh; overflow-y:auto;">${rows}</div>
-      ${list.length ? `<button onclick="settings.syncLog=[]; saveData(); closeModal(); showToast('기록 비움'); if (currentTab === 'workout') renderWorkout(); if (currentTab === 'money') renderMoney();" style="width:100%; margin-top:10px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-tertiary); border-radius:10px; font-size:12px; cursor:pointer; font-family:inherit;">기록 비우기</button>` : ''}
+      ${list.length ? `<button onclick="clearSyncLog()" style="width:100%; margin-top:10px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-tertiary); border-radius:10px; font-size:12px; cursor:pointer; font-family:inherit;">기록 비우기</button>` : ''}
     </div>`;
   modal.classList.add('show');
 }
@@ -7546,9 +7556,13 @@ function openInboxReport() {
       ? '설정 → 계정 에서 로그인해주세요.'
       : '잠시 후 다시 눌러보세요. 계속 이러면 아래 오류 문구를 알려주세요.';
     tone = 'danger';
+  } else if (d.applied > 0 && d.viaDirect > 0 && server) {
+    verdict = d.applied + '건 들어왔지만 알림은 못 받아요';
+    advice = '단축어가 알림 서버를 안 거치고 Firestore 로 바로 보내고 있어요. 단축어 마지막 동작의 주소를 서버 주소로 바꾸면 앱이 꺼져 있어도 알림이 옵니다.';
+    tone = 'danger';
   } else if (d.applied > 0) {
     verdict = d.applied + '건 들어왔어요';
-    advice = '운동 탭 달력에서 확인해보세요.';
+    advice = server ? '알림 서버를 거쳐 왔어요. 앱이 꺼져 있어도 알림이 옵니다.' : '운동 탭 달력에서 확인해보세요.';
     tone = 'success';
   } else if (d.found > 0) {
     verdict = d.found + '건을 가져왔지만 하나도 안 들어갔어요';
@@ -7584,7 +7598,8 @@ function openInboxReport() {
           서버에 쌓여 있던 것 · ${d.found || 0}건<br>
           기록으로 넣은 것 · ${d.applied || 0}건<br>
           ${d.error ? `오류 · ${escapeHTML(String(d.error).slice(0, 120))}<br>` : ''}
-          보내는 곳 · ${server ? '내 알림 서버' : 'Firestore 직행 (알림 없음)'}
+          앱 설정 · ${server ? '내 알림 서버' : 'Firestore 직행 (알림 없음)'}<br>
+          실제로 온 길 · ${(d.viaRelay || 0) > 0 ? `서버 경유 ${d.viaRelay}건` : ''}${(d.viaRelay || 0) > 0 && (d.viaDirect || 0) > 0 ? ' / ' : ''}${(d.viaDirect || 0) > 0 ? `직행 ${d.viaDirect}건 ⚠️` : ''}${!(d.viaRelay || d.viaDirect) ? '-' : ''}
         </div>
 
         <button onclick="openSyncLog()" style="width:100%; padding:12px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:12.5px; font-weight:700; cursor:pointer; font-family:inherit;">📜 들어온 기록 보기</button>
@@ -7629,7 +7644,10 @@ async function drainWorkoutInbox(silent = true) {
   }
 
   let applied = 0;
+  const appliedItems = [];        // 알림을 건별로 띄우려고 모아둔다
+  let viaRelay = 0, viaDirect = 0; // 단축어가 서버를 거쳤는지 세어 둔다
   for (const it of picked) {
+    if (String(it.via || '') === 'relay') viaRelay++; else viaDirect++;
     // 날짜가 없거나 이상하면 오늘로
     let dateK = todayKey();
     const raw = String(it.date || '');
@@ -7676,6 +7694,7 @@ async function drainWorkoutInbox(silent = true) {
         if (addWorkoutSession(d, r)) {
           applied++;
           logSyncEvent('workout', d + ' ' + formatWorkoutNote(r.sport, r.dist, r.unit) + ' ' + r.minutes + '분', '워치 캡처 사진에서 읽음');
+          appliedItems.push({ sport: r.sport, minutes: r.minutes, kcal: r.kcal, dist: r.dist, unit: r.unit, date: d });
           try { await putWorkoutPhoto(d, 'data:' + realMime + ';base64,' + firstShot); } catch (e) {}
         }
       }
@@ -7702,6 +7721,7 @@ async function drainWorkoutInbox(silent = true) {
         logSyncEvent('workout',
           dateK + ' ' + formatWorkoutNote(sport, dist, unit) + (mins > 0 ? ' ' + mins + '분' : '') + (kcal > 0 ? ' ' + kcal + 'kcal' : ''),
           '워치 자동화가 보낸 값');
+        appliedItems.push({ sport, minutes: mins, kcal, dist, unit, date: dateK });
       } else {
         // 들어가지 않은 이유도 남긴다 (같은 값이 이미 있었거나 값이 비었거나)
         logSyncEvent('workout', dateK + ' ' + sport + ' 건너뜀', '같은 기록이 이미 있어요');
@@ -7719,6 +7739,8 @@ async function drainWorkoutInbox(silent = true) {
   }
 
   info.applied = applied;
+  info.viaRelay = viaRelay;
+  info.viaDirect = viaDirect;
   info.step = applied > 0 ? '반영 완료' : '가져왔지만 반영 0건';
 
   const added = (settings.syncLog || []).length - logBefore;
@@ -7727,24 +7749,42 @@ async function drainWorkoutInbox(silent = true) {
   }
 
   if (applied > 0) {
-    const days = [...new Set(picked.map(x => {
-      const r = String(x.date || '');
-      return /^\d{4}-\d{2}-\d{2}$/.test(r) ? r : todayKey();
-    }))].sort();
-    logSyncEvent('workout', `수신함에서 ${applied}건 반영`,
-      '앱이 꺼져 있는 동안 쌓인 기록 · 날짜: ' + days.join(', '));
-    // 🔔 조용히 들어오면 들어온 줄 모른다 → 배너·시스템 알림으로 알려준다
+    // 한 줄로 뭐가 들어왔는지 바로 보이게 한다.
+    // '1건 반영' 만 있으면 무엇이 들어왔는지 확인할 방법이 없다.
+    const one = (x) => formatWorkoutNote(x.sport, x.dist, x.unit)
+      + (Number(x.minutes) > 0 ? ' ' + x.minutes + '분' : '')
+      + (Number(x.kcal) > 0 ? ' ' + x.kcal + 'kcal' : '');
+    const what = appliedItems.map(one).join(' · ') || '내용 없음';
+    const days = [...new Set(appliedItems.map(x => x.date))].sort();
+
+    logSyncEvent('workout', `⌚ ${what}`,
+      `앱이 꺼져 있는 동안 들어온 ${applied}건${days.length ? ' · ' + days.join(', ') : ''}`
+      + (viaDirect > 0 && pushServerUrl() ? ' · ⚠️ 단축어가 옛 주소로 보내는 중' : ''));
+
+    // 🔔 종목이 여러 개면 각각 알린다 — 합쳐 놓으면 뭐가 뭔지 모른다
     try {
-      const dayK = todayKey();
-      const today = workoutLog[dayK];
-      const summary = today ? workoutSessions(today).map(x => formatWorkoutNote(x.sport, x.dist, x.unit)).join(' · ') : '';
-      recordAlertHits([{
+      const hits = appliedItems.map(x => ({
         kind: 'workout',
-        name: `운동 ${applied}건 기록됨`,
-        msg: summary ? `${summary}${Number(today.minutes) > 0 ? ` · ${today.minutes}분` : ''}` : '워치에서 보낸 기록이 들어왔어요',
+        name: formatWorkoutNote(x.sport, x.dist, x.unit),
+        msg: [
+          Number(x.minutes) > 0 ? x.minutes + '분' : '',
+          Number(x.kcal) > 0 ? x.kcal + 'kcal' : '',
+          x.date !== todayKey() ? x.date : '',
+        ].filter(Boolean).join(' · ') || '기록됨',
         at: Date.now(),
-      }], `💪 운동 ${applied}건이 들어왔어요`);
+      }));
+      if (hits.length) {
+        recordAlertHits(hits, hits.length === 1
+          ? `💪 ${hits[0].name} 들어왔어요`
+          : `💪 운동 ${hits.length}건이 들어왔어요`);
+      }
     } catch (e) { console.warn('운동 알림 실패:', e); }
+
+    // 단축어가 서버를 안 거치면 앱을 열어야만 알 수 있다 — 그 사실을 알려준다
+    if (viaDirect > 0 && pushServerUrl()) {
+      logSyncEvent('workout', '⚠️ 알림 서버를 안 거치고 들어왔어요',
+        '단축어 마지막 동작의 주소를 서버 주소로 바꾸면, 앱이 꺼져 있어도 도착 즉시 알림이 옵니다');
+    }
     saveData();
     showToast(`⌚ 워치 운동 ${applied}건 들어왔어요`);
     if (currentTab === 'workout') renderWorkout();

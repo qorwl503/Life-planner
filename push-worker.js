@@ -359,10 +359,20 @@ async function handleRelayWorkout(request, env) {
     + '/databases/(default)/documents/users/' + encodeURIComponent(env.MY_UID) + '/workoutInbox'
     + '?key=' + env.FIREBASE_API_KEY;
 
+  // 서버를 거쳐 왔다는 표시를 남긴다.
+  // 앱이 이걸 보고 '단축어가 아직 옛 주소로 보내는지'를 알 수 있다.
+  let outBody = raw;
+  try {
+    const withVia = JSON.parse(raw);
+    withVia.fields = withVia.fields || {};
+    withVia.fields.via = { stringValue: 'relay' };
+    outBody = JSON.stringify(withVia);
+  } catch (e) { /* 못 고치면 원본 그대로 보낸다 */ }
+
   const res = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: raw,
+    body: outBody,
   });
 
   if (!res.ok) {
