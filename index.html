@@ -28426,9 +28426,11 @@ async function refreshPushServerState() {
     });
     const d = await res.json().catch(() => ({}));
     if (!res.ok) {
-      el.style.background = 'var(--bg-danger)';
-      el.style.color = 'var(--text-danger)';
-      el.innerHTML = '<b>서버가 거절했어요.</b><br>' + escapeHTML(String(d.error || res.status).slice(0, 100));
+      // 이 확인은 로그인 토큰을 쓰는데, 그게 막혀도 알림 자체는 열쇠 방식으로 잘 간다.
+      // 그러니 겁주지 말고 '확인만 못 했다'고 말한다.
+      el.style.background = 'var(--bg-secondary)';
+      el.style.color = 'var(--text-tertiary)';
+      el.innerHTML = '<b>등록 상태는 확인 못 했어요.</b><br>알림이 안 되는 건 아닙니다 — 아래 버튼으로 직접 보내보세요.';
       return;
     }
     const n = Number(d.devices) || 0;
