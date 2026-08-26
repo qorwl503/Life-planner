@@ -7908,6 +7908,30 @@ async function ensureUploadKey(force = false) {
   return key;
 }
 
+// 앱에는 열쇠가 있는데 Firestore 의 등록부(uploadKeys)에 그 열쇠가 없는 경우가 있다.
+// 처음 발급할 때 저장이 조용히 실패했거나, 등록부만 지워진 경우다.
+// 그러면 단축어가 보낸 것이 규칙에 걸려 전부 거부된다 — '열쇠가 등록돼 있지 않아요'.
+// 이 함수는 지금 쓰는 열쇠를 그대로 다시 등록한다. 주소·본문을 다시 복사할 필요가 없다.
+async function repairUploadKey() {
+  if (!photosReady()) { showToast('먼저 로그인해주세요'); return; }
+  const key = settings.uploadKey || '';
+  if (!key) { showToast('열쇠가 없어요. 아래 <열쇠 새로 만들기>를 눌러주세요'); return; }
+
+  const { doc, setDoc, db } = window._fb;
+  showToast('등록하는 중…');
+  try {
+    await setDoc(doc(db, 'uploadKeys', key), { uid: currentUser.uid, at: Date.now() });
+  } catch (e) {
+    // 규칙은 create 만 허용한다 — 이미 있는데 내 것이 아니면 여기서 막힌다
+    const code = String(e && (e.code || e.message) || e);
+    alert('열쇠 등록에 실패했어요\n\n' + code
+      + '\n\n이미 다른 계정으로 등록된 열쇠일 수 있어요. 아래 <열쇠 새로 만들기>를 눌러주세요.');
+    return;
+  }
+  showToast('✅ 열쇠를 다시 등록했어요');
+  openWatchPhotoSetup();
+}
+
 // 단축어에 붙여넣을 주소와 본문을 만든다
 function watchUploadRecipe(key) {
   const proj = window._fbProjectId || '';
@@ -8010,11 +8034,13 @@ async function openWatchPhotoSetup(regenerate = false) {
           <span style="opacity:0.85;">설정 → 알림 에서 서버 주소를 넣으면, 도착하는 순간 알림이 오게 바뀝니다.</span>
         </div>`}
 
-        <button onclick="testWatchUpload()" style="width:100%; margin-bottom:14px; padding:12px; border:none; background:var(--accent-tab, #6B5B96); color:#fff; border-radius:10px; font-size:12.5px; font-weight:800; cursor:pointer; font-family:inherit;">
-          🧪 연동 점검 — 단축어 없이 지금 보내보기
-        </button>
-        <div style="font-size:10.5px; color:var(--text-tertiary); text-align:center; margin-bottom:14px; line-height:1.6;">
-          통과하면 열쇠·계정은 정상입니다. 남은 건 단축어 설정뿐이에요.
+        <div style="display:flex; gap:6px; margin-bottom:8px;">
+          <button onclick="testWatchUpload()" style="flex:1; padding:12px; border:none; background:var(--accent-tab, #6B5B96); color:#fff; border-radius:10px; font-size:12.5px; font-weight:800; cursor:pointer; font-family:inherit;">🧪 연동 점검</button>
+          <button onclick="repairUploadKey()" style="flex:1; padding:12px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:12.5px; font-weight:800; cursor:pointer; font-family:inherit;">🔑 열쇠 다시 등록</button>
+        </div>
+        <div style="font-size:10.5px; color:var(--text-tertiary); text-align:center; margin-bottom:14px; line-height:1.7;">
+          <b>열쇠가 등록돼 있지 않아요</b> 가 뜨면 → <b>🔑 열쇠 다시 등록</b><br>
+          그다음 <b>🧪 연동 점검</b> 으로 확인하세요. 통과하면 남은 건 단축어뿐입니다.
         </div>
 
         <div style="font-size:12px; font-weight:800; margin:0 0 6px;">단축어 만들기</div>
