@@ -26215,15 +26215,17 @@ async function pushAuthHeaders() {
     throw new Error('앱이 아직 준비 중이에요. 잠시 후 다시 눌러주세요');
   }
   const u = await waitForAuthUser();
-  if (!u) throw new Error('알림을 쓰려면 먼저 로그인해주세요 (설정 → 계정)');
+  // 토큰을 못 얻어도 헤더는 돌려준다. 서버가 옛 방식(본문의 key)으로 받아줄 수 있기 때문이다.
+  if (!u) return { 'Content-Type': 'application/json' };
 
   let token;
   try {
     token = await u.getIdToken();
   } catch (e) {
     // 토큰이 만료됐는데 갱신도 실패한 경우 — 한 번 더, 이번엔 강제로
-    token = await u.getIdToken(true);
+    try { token = await u.getIdToken(true); } catch (e2) { token = ''; }
   }
+  if (!token) return { 'Content-Type': 'application/json' };
   return { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token };
 }
 
@@ -26235,7 +26237,7 @@ async function sendSubscriptionToServer(sub) {
   const res = await fetch(url.replace(/\/+$/, '') + '/push/subscribe', {
     method: 'POST',
     headers: await pushAuthHeaders(),
-    body: JSON.stringify({ sub: sub.toJSON ? sub.toJSON() : sub }),
+    body: JSON.stringify({ key: settings.uploadKey || '', sub: sub.toJSON ? sub.toJSON() : sub }),
   });
   if (!res.ok) {
     // 서버가 알려준 이유를 그대로 보여준다 (숫자만 보면 원인을 알 수 없다)
@@ -26326,7 +26328,7 @@ async function sendTestPush() {
     const res = await fetch(url.replace(/\/+$/, '') + '/push/test', {
       method: 'POST',
       headers: await pushAuthHeaders(),
-      body: '{}',
+      body: JSON.stringify({ key: settings.uploadKey || '' }),
     });
     const txt = await res.text();
     if (!res.ok) { showToast('테스트 실패: ' + txt.slice(0, 80)); return; }
@@ -26518,6 +26520,7 @@ async function pushSummaryToServer() {
       method: 'POST',
       headers: await pushAuthHeaders(),
       body: JSON.stringify({
+        key: settings.uploadKey || '',
         at: settings.summaryTime || '08:00',   // 한국 시간 기준 HH:MM
         title: '📋 오늘 정리',
         body: buildMorningSummary(),
@@ -26596,7 +26599,7 @@ async function stopSummary() {
       await fetch(url.replace(/\/+$/, '') + '/push/plan', {
         method: 'POST',
         headers: await pushAuthHeaders(),
-        body: JSON.stringify({ at: 'off' }),
+        body: JSON.stringify({ key: settings.uploadKey || '', at: 'off' }),
       });
     } catch (e) {}
   }
