@@ -52,7 +52,7 @@ export default {
       if (url.pathname === '/push/test' && request.method === 'POST') return await handleTest(request, env);
       if (url.pathname === '/push/send' && request.method === 'POST') return await handleSend(request, env);
       if (url.pathname === '/push/plan' && request.method === 'POST') return await handlePlan(request, env);
-      if (url.pathname === '/relay/workout' && request.method === 'POST') return await handleRelayWorkout(request, env);
+      if (url.pathname === '/relay/workout' && request.method === 'POST') return await handleRelayWorkout(request, env, url);
       if (url.pathname === '/relay/ping' && request.method === 'POST') return await handleRelayPing(request, env);
       if (url.pathname.startsWith('/ai/') && request.method === 'POST') return await handleAI(request, env, url);
       if (url.pathname === '/push/status') return await handleStatus(request, env);
@@ -328,23 +328,30 @@ async function handleSend(request, env) {
 
 // 단축어가 보낸 Firestore 본문을 그대로 받아 Firestore 에 넣고, 곧바로 알림을 보낸다.
 // 본문 형식은 앱이 만들어 준 것 그대로다 — 단축어는 주소만 바꾸면 된다.
-async function handleRelayWorkout(request, env) {
+async function handleRelayWorkout(request, env, url) {
   const raw = await request.text();
 
   let parsed;
   try { parsed = JSON.parse(raw); } catch (e) { return json({ error: '본문이 JSON 이 아닙니다' }, 400); }
+
+  // 누구의 수신함에 넣을지는 앱이 주소에 넣어 보낸다 (?uid=...).
+  //   전에는 Secrets 의 MY_UID 로 정했는데, 그 값이 실제 로그인 UID 와 다르면
+  //   엉뚱한 곳에 저장돼 앱이 영영 못 봤다. 앱은 자기 UID 를 아니까 앱이 알려주는 게 맞다.
+  //   UID 는 비밀이 아니다 — 예전 Firestore 직행 주소에도 그대로 들어 있었다.
+  const uid = (url && url.searchParams.get('uid')) || env.MY_UID || '';
+  if (!uid) return json({ error: '누구의 기록인지 알 수 없어요 (주소에 uid 가 없습니다)' }, 400);
 
   // 여기서 INBOX_TOKEN 과 대조하지 않는다.
   //   그 값은 Worker 에 따로 적어둔 것이라, 앱에서 열쇠를 새로 만들면 어긋난다.
   //   어긋나면 전부 거부돼서 '아무것도 안 들어오는' 상태가 된다.
   // 대신 Firestore 규칙이 본문의 key 를 uploadKeys 로 검사한다.
   //   틀린 열쇠면 아래 저장이 거부되므로, 인증은 그쪽 한 곳에서만 하면 된다.
-  if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_API_KEY || !env.MY_UID) {
-    throw new Error('FIREBASE_PROJECT_ID / FIREBASE_API_KEY / MY_UID 를 Secrets 에 넣어주세요');
+  if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_API_KEY) {
+    throw new Error('FIREBASE_PROJECT_ID / FIREBASE_API_KEY 를 Secrets 에 넣어주세요');
   }
 
   const endpoint = 'https://firestore.googleapis.com/v1/projects/' + env.FIREBASE_PROJECT_ID
-    + '/databases/(default)/documents/users/' + encodeURIComponent(env.MY_UID) + '/workoutInbox'
+    + '/databases/(default)/documents/users/' + encodeURIComponent(uid) + '/workoutInbox'
     + '?key=' + env.FIREBASE_API_KEY;
 
   // 서버를 거쳐 왔다는 표시를 남긴다.
@@ -366,7 +373,7 @@ async function handleRelayWorkout(request, env) {
   if (!res.ok) {
     const detail = await res.text();
     const why = res.status === 403 || /PERMISSION_DENIED/i.test(detail)
-      ? '열쇠가 맞지 않아 저장이 거부됐어요. 앱에서 워치 연동 설정을 다시 열어 본문을 새로 복사해주세요'
+      ? '열쇠나 계정이 맞지 않아 저장이 거부됐어요. 앱에서 워치 연동 설정을 다시 열어 주소와 본문을 새로 복사해주세요'
       : 'Firestore 저장 실패';
     return json({ error: why, status: res.status, detail: detail.slice(0, 300) }, 502);
   }
@@ -403,7 +410,9 @@ async function handleRelayWorkout(request, env) {
     body,
     tag: 'workout-arrived-' + Date.now(),   // 매번 다른 태그 — 이전 알림을 덮지 않게
   };
-  const pushed = await sendToOwner(env, payload);
+  // 저장한 그 사람에게 보낸다. 없으면 예전처럼 주인을 찾아본다.
+  let pushed = await sendToUser(env, uid, payload);
+  if (!pushed.sent) pushed = await sendToOwner(env, payload);
 
   // 알림이 갔는지까지 알려준다. ok 만 돌려주면 '저장은 됐는데 알림이 안 온다'를 못 가린다.
   return json({ ok: true, shots, push: pushed });

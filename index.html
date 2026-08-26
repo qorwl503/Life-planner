@@ -7934,7 +7934,7 @@ function watchUploadRecipe(key) {
   //   서버를 거치면 저장과 동시에 '⌚ 운동 기록 도착' 알림이 온다. 본문 형식은 똑같다.
   const server = pushServerUrl();
   const url = server
-    ? `${server.replace(/\/+$/, '')}/relay/workout`
+    ? `${server.replace(/\/+$/, '')}/relay/workout?uid=${encodeURIComponent(uid)}`
     : `https://firestore.googleapis.com/v1/projects/${proj}/databases/(default)/documents/users/${uid}/workoutInbox?key=${apiKey}`;
   // 사진(base64)이 들어갈 자리를 표시해 둔다. 단축어에서 이 자리에 변수를 끼운다.
   const bodyHead = `{"fields":{"key":{"stringValue":"${key}"},"photoMime":{"stringValue":"image/jpeg"},"photo":{"stringValue":"`;
