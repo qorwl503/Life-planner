@@ -7917,9 +7917,11 @@ function catSpentThisMonth() {
   for (const e of (budget?.expenses || [])) {
     if (!String(e.dateKey || '').startsWith(prefix)) continue;
     const c = e.cat || '기타';
-    // 같은 카테고리로 되받은 입금(더치페이 정산 등)은 그 카테고리에서 빼준다
-    out[c] = Math.max(0, (out[c] || 0) + livingAmount(e));
+    // 같은 카테고리로 들어온 입금은 그 카테고리에서 빼준다
+    out[c] = (out[c] || 0) + livingAmount(e);
   }
+  // 입금이 지출보다 앞선 날짜에 있을 수 있어, 다 더한 뒤에 0에서 막는다
+  for (const c of Object.keys(out)) out[c] = Math.max(0, out[c]);
   return out;
 }
 
@@ -8067,10 +8069,11 @@ function fillCatBudgetFromHistory() {
     const idx = months.findIndex(m => k.startsWith(m));
     if (idx < 0) continue;
     const c = e.cat || '기타';
-    sum[c] = Math.max(0, (sum[c] || 0) + livingAmount(e));
+    sum[c] = (sum[c] || 0) + livingAmount(e);
     seen[c] = seen[c] || new Set();
     seen[c].add(months[idx]);
   }
+  for (const c of Object.keys(sum)) sum[c] = Math.max(0, sum[c]);
   let filled = 0;
   document.querySelectorAll('[data-cat]').forEach(el => {
     const c = el.dataset.cat;
@@ -8087,7 +8090,7 @@ function fillCatBudgetFromHistory() {
 
 // 앱 전체가 쓰는 '변동지출' 기준을 한 군데로 모은다.
 //   · 투자 카테고리는 소비가 아니다 (주식·예적금 등)
-//   · 더치페이처럼 되받은 입금은 빼야 실제로 쓴 돈이 된다
+//   · 가계부에 찍은 입금은 전부 빼야 실제로 나간 돈이 된다
 const LIVING_EXCLUDE_CATS = ['투자', '주식', '국내주식', '미국주식', 'ETF', '국내ETF', '해외ETF', '펀드', '채권', '금', '달러', '예적금', '청약', '현금', '부동산'];
 
 function isInvestCat(cat) {
@@ -8099,20 +8102,16 @@ function countsAsLiving(e) {
   return !isInvestCat(e && e.cat);
 }
 
-// 입금 중 '이미 쓴 돈이 되돌아온 것'만 생활비에서 뺀다.
-// 급여·용돈·송금받음 같은 건 지출을 되돌린 게 아니므로 빼면 안 된다.
-const REFUND_INCOME_CATS = ['더치페이', '회비정산', '빌려준돈', '환급', '환불'];
-
-function isRefundIncome(e) {
-  return !!(e && e.type === 'income' && REFUND_INCOME_CATS.includes(e.cat || ''));
+// 가계부에 찍은 입금은 종류를 가리지 않고 전부 뺀다.
+// (더치페이든 송금받음이든 '들어온 돈'이므로, 쓴 돈에서 그만큼 빠져야 실제로 나간 금액이 된다)
+function isDepositEntry(e) {
+  return !!(e && e.type === 'income');
 }
 
-// 그 항목이 생활비에 더해질 금액
-//   지출 → 그대로, 되받은 입금 → 음수, 그 외 입금 → 0 (생활비와 무관)
+// 그 항목이 생활비에 더해질 금액 — 지출은 양수, 입금은 음수
 function livingAmount(e) {
   const amt = Number(e && e.amt) || 0;
-  if (e && e.type === 'income') return isRefundIncome(e) ? -amt : 0;
-  return amt;
+  return isDepositEntry(e) ? -amt : amt;
 }
 
 // ===== 📉 이번 달 vs 지난달 (누적 선 그래프) =====
@@ -8128,11 +8127,11 @@ function dailyCumulative(yearMonth, daysInMonth) {
     if (!k.startsWith(yearMonth)) continue;
     const day = Number(k.slice(8, 10));
     if (!(day >= 1 && day <= daysInMonth)) continue;
-    daily[day] += livingAmount(e);                 // 되받은 입금은 빼진다
+    daily[day] += livingAmount(e);                 // 입금은 음수로 빠진다
   }
   const cum = [];
   let acc = 0;
-  // 되받은 돈이 먼저 들어와 잠깐 음수가 되는 날이 있어도 선이 아래로 꺾이지 않게 0에서 막는다
+  // 입금이 먼저 들어와 잠깐 음수가 되는 날이 있어도 선이 아래로 꺾이지 않게 0에서 막는다
   for (let d = 1; d <= daysInMonth; d++) { acc += daily[d]; cum.push(Math.max(0, acc)); }
   return cum;
 }
@@ -8339,8 +8338,8 @@ function renderMoney() {
   // 입금과 지출 분리 (type === 'income' 이면 입금 - 받은 돈)
   const monthDeposits = viewMonthExpenses.filter(e => e.type === 'income');
   const monthSpending = viewMonthExpenses.filter(e => e.type !== 'income');
-  // 되받은 돈(더치페이·환급 등)만 생활비에서 뺀다. 급여·송금받음까지 빼면 실제보다 적게 나온다.
-  const monthDepositTotal = monthDeposits.filter(isRefundIncome).reduce((s, e) => s + Number(e.amt), 0);
+  // 들어온 돈은 종류를 가리지 않고 전부 뺀다 (더치페이·송금받음 등)
+  const monthDepositTotal = monthDeposits.reduce((s, e) => s + (Number(e.amt) || 0), 0);
 
   // 투자 카테고리 분류 (자산 종류) - 지출만 대상
   const investCategories = ['투자', '주식', '국내주식', '미국주식', 'ETF', '국내ETF', '해외ETF', '펀드', '채권', '금', '달러', '예적금', '청약', '현금', '부동산'];
@@ -8675,16 +8674,22 @@ function renderMoney() {
   // ===== 카테고리별 도넛 차트 (순수 소비 지출만 — 투자 카테고리 제외) =====
   // 🔧 금·주식·ETF·펀드·달러·예적금·청약·부동산은 '자산 이동'이지 소비가 아니므로
   //    소비 분석 도넛에서 빼낸다. (안 그러면 금 산 게 식비·카페와 섞여 비율이 왜곡됨)
-  const INVEST_CATS_EXCLUDE = ['주식','국내주식','미국주식','ETF','국내ETF','해외ETF','펀드','채권','금','달러','예적금','청약','부동산'];
-  const expensesOnly = viewMonthExpenses.filter(e => e.type !== 'income' && !INVEST_CATS_EXCLUDE.includes(e.cat));
+  // 입금도 같이 본다 — 같은 카테고리로 들어온 돈은 그 카테고리에서 빼야 실제 비율이 나온다
+  const expensesOnly = viewMonthExpenses.filter(e => !isInvestCat(e.cat));
   if (expensesOnly.length > 0) {
-    // 카테고리별 합계
+    // 카테고리별 합계 (입금은 음수로 들어가고, 받은 게 더 많으면 0에서 멈춘다)
     const catTotals = {};
     expensesOnly.forEach(e => {
-      catTotals[e.cat] = (catTotals[e.cat] || 0) + Number(e.amt);
+      const c = e.cat || '기타';
+      catTotals[c] = (catTotals[c] || 0) + livingAmount(e);
     });
-    const totalExp = Object.values(catTotals).reduce((s, v) => s + v, 0);
+    // 받은 게 쓴 것보다 많은 카테고리는 0으로 보고 목록에서 뺀다
+    Object.keys(catTotals).forEach(c => { if (catTotals[c] <= 0) delete catTotals[c]; });
+    const totalExp = Object.values(catTotals).reduce((s, v) => s + v, 0);   // 이미 입금이 빠진 금액
     const catEntries = Object.entries(catTotals).sort((a, b) => b[1] - a[1]);
+    // 아래 합계줄에 '쓴 돈 / 들어온 돈 / 최종'을 나눠 보여주려고 따로 센다
+    const grossExp = expensesOnly.filter(e => !isDepositEntry(e)).reduce((s, e) => s + (Number(e.amt) || 0), 0);
+    const grossDeposit = expensesOnly.filter(isDepositEntry).reduce((s, e) => s + (Number(e.amt) || 0), 0);
 
   if (totalExp > 0) {
     // 카테고리별 색상
@@ -8725,7 +8730,7 @@ function renderMoney() {
         <div style="display:flex; align-items:center; gap:14px;">
           <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="flex-shrink:0;">
             ${donutPaths}
-            <text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="9" fill="var(--text-tertiary)">총 지출</text>
+            <text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="9" fill="var(--text-tertiary)">실지출</text>
             <text x="${cx}" y="${cy + 8}" text-anchor="middle" font-size="11" font-weight="600" fill="var(--text-primary)">${(totalExp / 10000).toFixed(0)}만</text>
           </svg>
           <div style="flex:1; min-width:0; max-height:140px; overflow-y:auto;">
@@ -8741,12 +8746,12 @@ function renderMoney() {
           </div>
         </div>
         ${(() => {
-          const monthDeposit = viewMonthExpenses.filter(isRefundIncome).reduce((s, e) => s + Number(e.amt), 0);
-          const finalSpent = Math.max(0, totalExp - monthDeposit);
+          const monthDeposit = grossDeposit;
+          const finalSpent = Math.max(0, grossExp - monthDeposit);
           return `<div style="margin-top:12px; padding-top:10px; border-top:0.5px solid var(--border-tertiary); display:flex; justify-content:space-between; align-items:baseline;">
             <div>
               <div style="font-size:11px; color:var(--text-tertiary);">총 지출</div>
-              <div style="font-size:14px; font-weight:700;">${totalExp.toLocaleString()}원</div>
+              <div style="font-size:14px; font-weight:700;">${grossExp.toLocaleString()}원</div>
             </div>
             ${monthDeposit > 0 ? `<div style="text-align:center;">
               <div style="font-size:11px; color:var(--text-tertiary);">입금</div>
@@ -8794,7 +8799,7 @@ function renderMoney() {
       (budget.expenses || []).forEach(e => {
         const k = e.dateKey || '';
         if (!k.startsWith(ym)) return;
-        const amt = livingAmount(e);   // 입금이면 음수 → 되받은 만큼 빠진다
+        const amt = livingAmount(e);   // 입금이면 음수 → 들어온 만큼 빠진다
         if (isInvestCat(e.cat)) variableInvest += amt;   // 투자로 쓴 돈은 투자로
         else variable += amt;                            // 진짜 생활비만
       });
