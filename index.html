@@ -7915,10 +7915,10 @@ function catSpentThisMonth() {
   const prefix = `${y}-${String(m + 1).padStart(2, '0')}-`;
   const out = {};
   for (const e of (budget?.expenses || [])) {
-    if (e.type === 'income') continue;
     if (!String(e.dateKey || '').startsWith(prefix)) continue;
     const c = e.cat || '기타';
-    out[c] = (out[c] || 0) + (Number(e.amt) || 0);
+    // 같은 카테고리로 되받은 입금(더치페이 정산 등)은 그 카테고리에서 빼준다
+    out[c] = Math.max(0, (out[c] || 0) + livingAmount(e));
   }
   return out;
 }
@@ -8063,12 +8063,11 @@ function fillCatBudgetFromHistory() {
   }
   const sum = {}, seen = {};
   for (const e of (budget?.expenses || [])) {
-    if (e.type === 'income') continue;
     const k = String(e.dateKey || '');
     const idx = months.findIndex(m => k.startsWith(m));
     if (idx < 0) continue;
     const c = e.cat || '기타';
-    sum[c] = (sum[c] || 0) + (Number(e.amt) || 0);
+    sum[c] = Math.max(0, (sum[c] || 0) + livingAmount(e));
     seen[c] = seen[c] || new Set();
     seen[c].add(months[idx]);
   }
@@ -8086,6 +8085,36 @@ function fillCatBudgetFromHistory() {
 }
 
 
+// 앱 전체가 쓰는 '변동지출' 기준을 한 군데로 모은다.
+//   · 투자 카테고리는 소비가 아니다 (주식·예적금 등)
+//   · 더치페이처럼 되받은 입금은 빼야 실제로 쓴 돈이 된다
+const LIVING_EXCLUDE_CATS = ['투자', '주식', '국내주식', '미국주식', 'ETF', '국내ETF', '해외ETF', '펀드', '채권', '금', '달러', '예적금', '청약', '현금', '부동산'];
+
+function isInvestCat(cat) {
+  return LIVING_EXCLUDE_CATS.includes(cat || '');
+}
+
+// 생활비 계산에 들어가는 항목인가 (지출이든 입금이든)
+function countsAsLiving(e) {
+  return !isInvestCat(e && e.cat);
+}
+
+// 입금 중 '이미 쓴 돈이 되돌아온 것'만 생활비에서 뺀다.
+// 급여·용돈·송금받음 같은 건 지출을 되돌린 게 아니므로 빼면 안 된다.
+const REFUND_INCOME_CATS = ['더치페이', '회비정산', '빌려준돈', '환급', '환불'];
+
+function isRefundIncome(e) {
+  return !!(e && e.type === 'income' && REFUND_INCOME_CATS.includes(e.cat || ''));
+}
+
+// 그 항목이 생활비에 더해질 금액
+//   지출 → 그대로, 되받은 입금 → 음수, 그 외 입금 → 0 (생활비와 무관)
+function livingAmount(e) {
+  const amt = Number(e && e.amt) || 0;
+  if (e && e.type === 'income') return isRefundIncome(e) ? -amt : 0;
+  return amt;
+}
+
 // ===== 📉 이번 달 vs 지난달 (누적 선 그래프) =====
 // 막대는 '어느 카테고리가 큰가'를 보는 데 맞고,
 // '지난달보다 빨리 쓰고 있나'는 날짜별 누적선으로 봐야 한눈에 들어온다.
@@ -8094,16 +8123,17 @@ function fillCatBudgetFromHistory() {
 function dailyCumulative(yearMonth, daysInMonth) {
   const daily = new Array(daysInMonth + 1).fill(0);
   for (const e of (budget?.expenses || [])) {
-    if (e.type === 'income') continue;
+    if (!countsAsLiving(e)) continue;              // 투자는 소비가 아니다
     const k = String(e.dateKey || '');
     if (!k.startsWith(yearMonth)) continue;
     const day = Number(k.slice(8, 10));
     if (!(day >= 1 && day <= daysInMonth)) continue;
-    daily[day] += Number(e.amt) || 0;
+    daily[day] += livingAmount(e);                 // 되받은 입금은 빼진다
   }
   const cum = [];
   let acc = 0;
-  for (let d = 1; d <= daysInMonth; d++) { acc += daily[d]; cum.push(acc); }
+  // 되받은 돈이 먼저 들어와 잠깐 음수가 되는 날이 있어도 선이 아래로 꺾이지 않게 0에서 막는다
+  for (let d = 1; d <= daysInMonth; d++) { acc += daily[d]; cum.push(Math.max(0, acc)); }
   return cum;
 }
 
@@ -8160,11 +8190,12 @@ function renderSpendTrend() {
   return `
     <div style="margin-bottom:14px; padding:13px; background:var(--bg-secondary); border-radius:12px;">
       <div style="display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-bottom:2px;">
-        <span class="sec-title" style="margin:0;">📉 지난달과 비교</span>
+        <span class="sec-title" style="margin:0;">📉 지난달과 비교 <span style="font-size:10px; font-weight:500; color:var(--text-tertiary);">변동지출</span></span>
         <span style="font-size:11.5px; font-weight:800; color:${col};">${label}</span>
       </div>
       <div style="font-size:10.5px; color:var(--text-tertiary); margin-bottom:6px;">
         ${isCurrentMonth ? `${cutDay}일까지 누적` : '한 달 누적'} · ${curTotal.toLocaleString()}원
+        <span style="opacity:0.85;">(투자 제외 · 받은 돈 차감)</span>
       </div>
 
       <svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto; display:block;">
@@ -8308,7 +8339,8 @@ function renderMoney() {
   // 입금과 지출 분리 (type === 'income' 이면 입금 - 받은 돈)
   const monthDeposits = viewMonthExpenses.filter(e => e.type === 'income');
   const monthSpending = viewMonthExpenses.filter(e => e.type !== 'income');
-  const monthDepositTotal = monthDeposits.reduce((s, e) => s + Number(e.amt), 0);
+  // 되받은 돈(더치페이·환급 등)만 생활비에서 뺀다. 급여·송금받음까지 빼면 실제보다 적게 나온다.
+  const monthDepositTotal = monthDeposits.filter(isRefundIncome).reduce((s, e) => s + Number(e.amt), 0);
 
   // 투자 카테고리 분류 (자산 종류) - 지출만 대상
   const investCategories = ['투자', '주식', '국내주식', '미국주식', 'ETF', '국내ETF', '해외ETF', '펀드', '채권', '금', '달러', '예적금', '청약', '현금', '부동산'];
@@ -8709,7 +8741,7 @@ function renderMoney() {
           </div>
         </div>
         ${(() => {
-          const monthDeposit = viewMonthExpenses.filter(e => e.type === 'income').reduce((s, e) => s + Number(e.amt), 0);
+          const monthDeposit = viewMonthExpenses.filter(isRefundIncome).reduce((s, e) => s + Number(e.amt), 0);
           const finalSpent = Math.max(0, totalExp - monthDeposit);
           return `<div style="margin-top:12px; padding-top:10px; border-top:0.5px solid var(--border-tertiary); display:flex; justify-content:space-between; align-items:baseline;">
             <div>
@@ -8754,18 +8786,20 @@ function renderMoney() {
     if (months.length === 0) months.push({ y: budgetViewYear, m: budgetViewMonth });
 
     // 월별 변동지출 합계 (투자 카테고리는 소비에서 분리)
-    const INVEST_CATS_TREND = ['주식','국내주식','미국주식','ETF','국내ETF','해외ETF','펀드','채권','금','달러','예적금','청약','부동산'];
+    // 투자 목록은 앱 공용 기준(LIVING_EXCLUDE_CATS)을 쓴다.
+    // 예전엔 '투자'·'현금'이 빠져 있어 투자로 찍은 지출이 변동에 섞여 들어갔다.
     const monthData = months.map(({ y, m }) => {
       const ym = `${y}-${String(m+1).padStart(2,'0')}`;
       let variable = 0, variableInvest = 0;
       (budget.expenses || []).forEach(e => {
-        if (e.type === 'income') return;
         const k = e.dateKey || '';
         if (!k.startsWith(ym)) return;
-        const amt = Number(e.amt) || 0;
-        if (INVEST_CATS_TREND.includes(e.cat)) variableInvest += amt;  // 투자는 따로
-        else variable += amt;                                          // 순수 소비만
+        const amt = livingAmount(e);   // 입금이면 음수 → 되받은 만큼 빠진다
+        if (isInvestCat(e.cat)) variableInvest += amt;   // 투자로 쓴 돈은 투자로
+        else variable += amt;                            // 진짜 생활비만
       });
+      variable = Math.max(0, variable);
+      variableInvest = Math.max(0, variableInvest);
       // 고정지출 + 투자 분리 (그 달 발생분, skip 제외)
       let fixed = 0, invest = variableInvest;
       (budget.fixed || []).forEach(f => {
