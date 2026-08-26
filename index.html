@@ -2092,8 +2092,10 @@ function render() {
     try { consumeExpenseFromUrl(); } catch (e) { console.warn('URL 가계부 기록 실패:', e); }
     // 📥 워치·문자가 보내둔 기록 가져오기 (앱이 안 열려 있던 동안 쌓인 것)
     setTimeout(() => {
+      window._lastInboxCheck = Date.now();
       try { drainWorkoutInbox(true); } catch (e) { console.warn('운동 수신함 처리 실패:', e); }
       try { drainExpenseInbox(true); } catch (e) { console.warn('가계부 수신함 처리 실패:', e); }
+      try { setupInboxWatch(); } catch (e) {}
     }, 1200);
   }
   // 탭별 바탕색 전환 (CSS의 body[data-tab=...] 규칙이 받아간다)
@@ -5954,7 +5956,7 @@ function quickPickSport(key) {
 function quickLogWorkout(minutes) {
   const sport = window._quickSport;
   if (!sport) return;
-  const ok = addWorkoutSession(todayKey(), { sport, minutes, kcal: 0, dist: 0, unit: '' });
+  const ok = addWorkoutSession(todayKey(), { sport, minutes, kcal: 0, dist: 0, unit: '', manual: true });
   window._quickSport = '';
   if (!ok) { showToast('같은 기록이 이미 있어요'); renderWorkout(); return; }
   saveData();
@@ -6138,100 +6140,189 @@ function bumpWorkoutPlan(sport, delta) {
 // 앱 안에서 끝나는 것만 넣는다 — 오늘의 문구, 호흡 타이머, 명상 기록.
 // 호흡 타이머는 인터넷 없이도 돈다.
 
+// 긍정 확언 — '나는 ~다' 꼴의 1인칭 현재형.
+// 널리 쓰이는 자기확언 형식을 따랐다. 에세이 문장이 아니라 소리 내어 읽는 문장이라
+// 짧고 단정적이어야 힘이 있다.
 const MIND_QUOTES = [
-  // 시작이 안 될 때
-  '오늘 하루도 어제보다 조금만 나으면 충분합니다.',
-  '완벽하게 하려다 시작을 못 하는 것보다, 대충이라도 하는 게 낫습니다.',
-  '5분만 하고 그만둬도 됩니다. 대개는 5분에서 안 끝납니다.',
-  '준비가 끝나서 시작하는 게 아니라, 시작해야 준비가 됩니다.',
-  '제일 하기 싫은 것 하나만 먼저 해치우면 하루가 가벼워집니다.',
-  '하기 싫은 날에 하는 게 습관이고, 하고 싶은 날에 하는 건 기분입니다.',
-  '작게 시작하세요. 작은 건 안 무너집니다.',
-  '오늘의 목표는 잘하는 게 아니라 하는 겁니다.',
-  '10분이면 됩니다. 10분은 늘 있습니다.',
-  '고민할 시간에 한 번 하면 고민이 사라집니다.',
+  // ── 나 ──
+  '나는 내 삶의 주인공이다.',
+  '나는 나를 믿는다.',
+  '나는 있는 그대로 충분하다.',
+  '나는 나를 좋아한다.',
+  '나는 나에게 다정한 사람이다.',
+  '나는 내 속도로 간다.',
+  '나는 나를 남과 비교하지 않는다.',
+  '나는 내 선택을 존중한다.',
+  '나는 사랑받을 자격이 있다.',
+  '나는 존중받을 자격이 있다.',
+  '나는 쉬어도 되는 사람이다.',
+  '나는 완벽하지 않아도 괜찮다.',
+  '나는 실수해도 괜찮은 사람이다.',
+  '나는 내 감정을 존중한다.',
+  '나는 나에게 솔직하다.',
+  '나는 내 마음을 먼저 살핀다.',
+  '나는 나를 함부로 대하지 않는다.',
+  '나는 내 편이다.',
 
-  // 꾸준함
-  '작심삼일도 열 번 하면 한 달입니다.',
-  '한 번에 하나씩. 그게 제일 빠른 길입니다.',
-  '숫자가 줄지 않아도 습관은 쌓이고 있습니다.',
-  '어제 못 했다고 오늘까지 버릴 필요는 없습니다.',
-  '두 번 연속 거르지만 않으면 습관은 안 무너집니다.',
-  '오늘 못 한 건 내일 하면 됩니다. 다만 내일은 오늘로 미루지 않기.',
-  '멈추지만 않으면 느린 건 문제가 아닙니다.',
-  '기록이 쌓이면 어느 순간 그게 나를 밀어줍니다.',
-  '매일 하는 사람을 이기는 방법은 없습니다.',
-  '오늘 한 줄이 한 달 뒤엔 서른 줄입니다.',
+  // ── 능력 ──
+  '나는 내 능력을 믿는다.',
+  '나는 어떤 일이든 해낼 수 있다.',
+  '나는 문제를 해결할 힘이 있다.',
+  '나는 배우면 된다.',
+  '나는 필요한 것을 배울 수 있다.',
+  '내 안에는 무한한 가능성이 있다.',
+  '나는 생각보다 강하다.',
+  '나는 해낼 준비가 되어 있다.',
+  '나는 내 꿈을 실현할 힘이 있다.',
+  '나는 두려움보다 크다.',
+  '나는 다시 일어설 수 있다.',
+  '나는 나를 지킬 수 있다.',
+  '나는 어려움을 겪어낼 사람이다.',
 
-  // 쉼과 회복
-  '쉬는 것도 계획의 일부입니다.',
-  '잘 자는 것이 가장 좋은 회복입니다.',
-  '몸이 무거운 날은 가볍게, 대신 거르지 않기.',
-  '지금 숨 한 번 크게 쉬어보세요.',
-  '피곤한 날엔 줄이는 게 맞습니다. 없애는 게 아니라요.',
-  '쉬어야 할 때 쉬는 것도 실력입니다.',
-  '오늘 안 되는 날이면 그냥 안 되는 날입니다. 내일은 다릅니다.',
-  '몸이 보내는 신호는 대체로 맞습니다.',
-  '무리해서 하루 잘하고 사흘 앓는 것보다, 매일 조금이 낫습니다.',
-  '아무것도 안 하는 시간도 필요합니다.',
+  // ── 성장 ──
+  '나는 늘 성장하고 있다.',
+  '나는 매일 조금씩 나아지고 있다.',
+  '나는 어제보다 나은 오늘을 산다.',
+  '나는 내 목표에 한 발짝 더 가까워지고 있다.',
+  '모든 도전은 나를 더 강하게 만든다.',
+  '나는 매일 더 단단해진다.',
+  '나는 실패에서 배운다.',
+  '나의 노력은 나를 배신하지 않는다.',
+  '나는 꾸준한 사람이다.',
+  '내가 쌓아온 것들이 나를 지탱한다.',
+  '나는 멈추지 않는다.',
+  '나는 어제의 나를 넘어선다.',
+  '나는 지금도 자라는 중이다.',
+  '작은 진전도 진전이다.',
 
-  // 비교와 조급함
-  '비교할 대상은 어제의 나뿐입니다.',
-  '남의 속도는 남의 것입니다.',
-  '지금 느린 게 아니라 시작이 늦었을 뿐입니다.',
-  '결과보다 오늘 나선 것이 먼저입니다.',
-  '눈에 안 보이는 기간이 제일 중요한 기간입니다.',
-  '조급함은 대개 방향이 아니라 속도의 문제입니다.',
-  '한 달 뒤에 볼 일을 오늘 하루로 판단하지 마세요.',
-  '잘 되고 있는지 매일 확인하면 잘 되기 어렵습니다.',
+  // ── 오늘 ──
+  '나는 오늘도 눈부신 하루를 살아간다.',
+  '오늘 나는 긍정적인 에너지로 가득 차 있다.',
+  '나는 오늘 하루를 잘 보낼 것이다.',
+  '오늘은 나에게 좋은 날이다.',
+  '나는 오늘 할 수 있는 만큼만 한다.',
+  '나는 지금 이 순간에 머문다.',
+  '나는 오늘 하루에 감사한다.',
+  '나는 오늘도 나를 챙긴다.',
+  '나는 오늘 시작할 수 있다.',
+  '나는 오늘 한 가지는 해낸다.',
+  '오늘의 나는 어제의 내가 만든 것이다.',
+  '나는 오늘을 가볍게 시작한다.',
 
-  // 마음
-  '미룬 일이 무서운 게 아니라, 미룬 채로 쳐다보는 시간이 무섭습니다.',
-  '기분이 안 날 때 하는 5분이 컨디션 좋은 날 1시간보다 셉니다.',
-  '생각이 많은 날은 몸을 움직이면 정리됩니다.',
-  '걱정의 대부분은 일어나지 않고, 일어난 건 대개 견딜 만합니다.',
-  '오늘 잘한 것 하나만 떠올려보세요. 분명 있습니다.',
-  '자책은 아무것도 고치지 못합니다. 다음 한 번이 고칩니다.',
-  '완벽한 하루는 없습니다. 괜찮은 하루면 충분합니다.',
-  '스스로에게 하는 말이 제일 오래 남습니다.',
-  '지금 마음이 어떤지 한 번 들여다보세요.',
-  '불안할 땐 할 수 있는 것 하나만 정해서 하면 됩니다.',
+  // ── 마음 ──
+  '나는 평온하다.',
+  '나는 편안하게 숨 쉰다.',
+  '나는 불안에 휘둘리지 않는다.',
+  '나는 지금 안전하다.',
+  '나는 걱정을 내려놓는다.',
+  '나는 마음이 단단한 사람이다.',
+  '나는 내 생각을 선택할 수 있다.',
+  '나는 스스로를 다그치지 않는다.',
+  '나는 나를 용서한다.',
+  '나는 지나간 일에 매이지 않는다.',
+  '나는 지금 이대로 괜찮다.',
+  '나는 조급해하지 않는다.',
+  '나는 나에게 시간을 준다.',
 
-  // 돈
-  '작은 지출이 아니라 반복되는 지출이 큽니다.',
-  '안 쓴 돈이 제일 확실한 수익입니다.',
-  '남은 돈을 저축하는 게 아니라, 저축하고 남은 돈을 쓰는 겁니다.',
-  '사고 싶은 게 있으면 하루만 미뤄보세요. 절반은 사라집니다.',
-  '가계부는 아끼려고 쓰는 게 아니라 알려고 쓰는 겁니다.',
-  '싼 걸 여러 번 사는 게 제일 비쌉니다.',
-  '이번 달을 못 지켰다고 다음 달까지 포기할 이유는 없습니다.',
+  // ── 관계 ──
+  '나는 좋은 사람들을 끌어당긴다.',
+  '나는 사랑을 주고받을 줄 안다.',
+  '나는 거절해도 되는 사람이다.',
+  '나는 모두를 만족시킬 필요가 없다.',
+  '나는 내 경계를 지킨다.',
+  '나는 남의 평가로 정해지지 않는다.',
+  '나는 도움을 청해도 되는 사람이다.',
 
-  // 운동
-  '운동은 기분이 좋아서 하는 게 아니라, 하면 기분이 좋아집니다.',
-  '나간 순간 이미 절반은 한 겁니다.',
-  '오늘의 20분이 10년 뒤의 무릎을 지킵니다.',
-  '가장 좋은 운동은 내가 계속 할 수 있는 운동입니다.',
-  '체중계 숫자보다 어제보다 가벼운 몸이 정확합니다.',
-  '땀은 배신하지 않지만, 잠도 배신하지 않습니다.',
-  '한 세트만 더. 그 한 세트가 쌓입니다.',
+  // ── 몸 ──
+  '나는 내 몸을 아낀다.',
+  '나는 건강해지고 있다.',
+  '나는 오늘 몸을 움직인다.',
+  '나는 잘 자고 잘 회복한다.',
+  '나는 내 몸의 신호를 듣는다.',
+  '나는 나를 위해 운동한다.',
+  '나는 오늘도 나를 위해 한 걸음 뗀다.',
+  '내 몸은 나를 위해 애쓰고 있다.',
 
-  // 일과 목표
-  '큰 목표는 오늘 할 일 한 줄로 쪼개야 굴러갑니다.',
-  '할 일 목록이 길면 오늘 세 개만 고르세요.',
-  '끝낸 일에 줄을 긋는 것도 일의 일부입니다.',
-  '중요한 일은 대개 급하지 않아서 미뤄집니다.',
-  '한꺼번에 다 하려다 아무것도 못 하는 날이 제일 아깝습니다.',
-  '적어두면 잊어도 됩니다. 그래서 적는 겁니다.',
-  '마감이 없으면 일은 안 끝납니다. 스스로 정하세요.',
-  '오늘 세 개면 한 주에 스물한 개입니다.',
+  // ── 일과 돈 ──
+  '나는 내 일을 잘 해낸다.',
+  '나는 집중할 수 있다.',
+  '나는 시작하는 사람이다.',
+  '나는 미루지 않고 하나씩 해낸다.',
+  '나는 필요한 만큼 벌고 지혜롭게 쓴다.',
+  '나는 돈을 잘 다루는 사람이다.',
+  '나는 내 미래를 준비하고 있다.',
+  '세상은 내게 기회를 준다.',
+  '내 앞의 길은 나를 좋은 곳으로 이끈다.',
+
+  // ── 힘이 필요할 때 ──
+  '지금의 고통은 지나간다.',
+  '이 또한 지나간다.',
+  '나는 지금 오르막을 오르는 중이다.',
+  '아무도 몰라줘도 내 노력은 남는다.',
+  '나는 버티는 힘이 있다.',
+  '나쁜 하루였지 나쁜 인생이 아니다.',
+  '나는 다시 시작할 수 있다.',
+  '어둠이 짙을수록 새벽은 가깝다.',
+  '나는 여기까지 온 사람이다.',
+  '나는 오늘도 무너지지 않았다.',
+  '나는 천천히 나아가는 중이다.',
+  '나는 포기하지 않는다.',
+  '나는 견딜 만큼 강하다.',
+
+  // ── 책에서 ──
+  '당신은 당신이 생각하는 것보다 더 강하다.\n— 『곰돌이 푸』',
+  '가장 중요한 것은 눈에 보이지 않아.\n— 생텍쥐페리 『어린 왕자』',
+  '길들인다는 건 관계를 맺는다는 뜻이야.\n— 생텍쥐페리 『어린 왕자』',
+  '삶이 있는 한 희망은 있다.\n— 톨스토이',
+  '오늘 할 수 있는 일을 내일로 미루지 마라.\n— 벤저민 프랭클린',
+  '행복은 습관이다. 그것을 몸에 지녀라.\n— 허버드',
+  '실패는 넘어지는 것이 아니라 넘어진 자리에 머무는 것이다.\n— 소크라테스',
+  '나는 내 운명의 주인이요, 내 영혼의 선장이다.\n— 윌리엄 어니스트 헨리 「인빅터스」',
+  '삶이 우리를 속일지라도 슬퍼하거나 노하지 말라.\n— 푸시킨',
+  '천 번을 흔들려야 어른이 된다.\n— 김난도 『아프니까 청춘이다』',
+  '멈추지 않는 한, 얼마나 천천히 가는지는 중요하지 않다.\n— 공자',
+  '위대한 일은 갑자기 이루어지지 않는다.\n— 에픽테토스',
+  '인생은 가까이서 보면 비극, 멀리서 보면 희극이다.\n— 찰리 채플린',
+  '내일은 새로운 날이다.\n— 마거릿 미첼 『바람과 함께 사라지다』',
+  '어둠을 저주하기보다 촛불 하나를 켜는 것이 낫다.\n— 속담',
+  '태도가 작은 차이를 만들지만, 그 차이가 큰 결과를 만든다.\n— 윈스턴 처칠',
+  '희망은 좋은 것이고, 좋은 것은 결코 사라지지 않는다.\n— 영화 「쇼생크 탈출」',
+  '지금 이 순간이 당신의 인생이다.\n— 오마르 하이얌',
+  '비교는 기쁨을 훔쳐가는 도둑이다.\n— 시어도어 루스벨트',
+  '자신을 사랑하는 것이 평생 로맨스의 시작이다.\n— 오스카 와일드',
+  '용기란 두려움이 없는 것이 아니라, 두려움보다 중요한 것이 있다고 판단하는 것이다.\n— 앰브로즈 레드문',
+  '괜찮아, 잘하고 있어. 그러니 조금만 더.\n— 정호승',
+  '흔들리지 않고 피는 꽃이 어디 있으랴.\n— 도종환 「흔들리며 피는 꽃」',
+  '내려갈 때 보았네, 올라갈 때 보지 못한 그 꽃.\n— 고은 「그 꽃」',
+  '지금 알고 있는 걸 그때도 알았더라면.\n— 류시화',
+  '살아 있는 한 우리는 계속 배운다.\n— 헬렌 켈러',
+  '세상은 고통으로 가득하지만 그것을 이겨내는 일로도 가득하다.\n— 헬렌 켈러',
+  '나는 천천히 가는 사람이지만 뒤로 가지는 않는다.\n— 에이브러햄 링컨',
+  '해보기 전까지는 늘 불가능해 보인다.\n— 넬슨 만델라',
+  '중요한 것은 꺾이지 않는 마음.',
 ];
 
-// 날짜로 고르므로 하루 종일 같은 문구가 나오고, 다음 날 바뀐다
+// 아무거나 하나. 운동 탭을 열 때마다 새로 뽑되, 화면을 다시 그릴 때마다
+// 휙휙 바뀌면 정신없으니 한 번 뽑은 건 들고 있는다. 🔄 를 누르면 새로 뽑는다.
 function mindQuoteOfDay(dateK) {
-  const k = String(dateK || todayKey());
-  let sum = 0;
-  for (let i = 0; i < k.length; i++) sum = (sum * 31 + k.charCodeAt(i)) % 100000;
-  return MIND_QUOTES[sum % MIND_QUOTES.length];
+  if (!window._mindQuote) window._mindQuote = pickMindQuote();
+  return window._mindQuote;
+}
+
+function pickMindQuote() {
+  const list = MIND_QUOTES;
+  if (!list || list.length === 0) return '';
+  let next = list[Math.floor(Math.random() * list.length)];
+  // 방금 본 것과 같으면 한 번 더 뽑는다 (연달아 같은 게 나오면 안 바뀐 줄 안다)
+  if (list.length > 1 && next === window._mindQuote) {
+    next = list[Math.floor(Math.random() * list.length)];
+  }
+  return next;
+}
+
+function shuffleMindQuote() {
+  window._mindQuote = pickMindQuote();
+  if (currentTab === 'workout') renderWorkout();
 }
 
 // ── 호흡 ──
@@ -6349,7 +6440,7 @@ function finishBreath() {
     showToast('1분이 안 돼서 기록은 안 남겼어요');
     return;
   }
-  const ok = addWorkoutSession(todayKey(), { sport: '명상', minutes, kcal: 0, dist: 0, unit: '' });
+  const ok = addWorkoutSession(todayKey(), { sport: '명상', minutes, kcal: 0, dist: 0, unit: '', manual: true });
   if (ok) saveData();
   closeModal();
   showToast(ok ? `🧘 명상 ${minutes}분 기록됨` : '같은 기록이 이미 있어요');
@@ -6370,12 +6461,22 @@ function renderMindCard() {
     <div style="margin-bottom:14px; padding:13px 14px; background:var(--bg-secondary); border-radius:12px;">
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
         <span style="font-size:12.5px; font-weight:800;">🧘 마인드</span>
-        ${mins > 0 ? `<span style="font-size:11px; color:var(--text-success); font-weight:700;">오늘 ${mins}분</span>` : ''}
+        <span style="display:flex; align-items:center; gap:8px;">
+          ${mins > 0 ? `<span style="font-size:11px; color:var(--text-success); font-weight:700;">오늘 ${mins}분</span>` : ''}
+          <button onclick="shuffleMindQuote()" title="다른 문구 보기" style="border:none; background:transparent; color:var(--text-tertiary); font-size:13px; cursor:pointer; font-family:inherit; padding:0;">🔄</button>
+        </span>
       </div>
 
-      <div style="padding:11px 12px; background:var(--bg-primary); border-radius:10px; font-size:12.5px; line-height:1.75; color:var(--text-secondary); margin-bottom:10px;">
-        ${escapeHTML(mindQuoteOfDay(todayKey()))}
-      </div>
+      ${(() => {
+        // 출처가 있으면 줄을 나눠 작게 붙인다 (문장과 출처를 줄바꿈으로 이어 둔 꼴)
+        const raw = mindQuoteOfDay(todayKey());
+        const [body, src] = String(raw).split('\n');
+        return `
+        <div style="padding:11px 12px; background:var(--bg-primary); border-radius:10px; font-size:12.5px; line-height:1.75; color:var(--text-secondary); margin-bottom:10px;">
+          ${escapeHTML(body)}
+          ${src ? `<div style="font-size:11px; color:var(--text-tertiary); margin-top:5px;">${escapeHTML(src)}</div>` : ''}
+        </div>`;
+      })()}
 
       <div style="display:flex; gap:6px;">
         <button onclick="openBreathModal()" style="flex:1; padding:10px; border:none; background:var(--accent-tab, #3D8168); color:#fff; border-radius:9px; font-size:12px; font-weight:800; cursor:pointer; font-family:inherit;">🫁 호흡하기</button>
@@ -6444,34 +6545,29 @@ function renderConditionCard() {
   const c = conditionOf(k);
   const avg = avgSleep7();
 
-  const pick = (field, arr, label) => `
-    <div style="margin-bottom:9px;">
-      <div style="font-size:10.5px; color:var(--text-tertiary); margin-bottom:4px;">${label}</div>
-      <div style="display:flex; gap:5px;">
-        ${arr.map((emo, i) => {
-          const val = i + 1;
-          const on = Number(c[field]) === val;
-          return `<button onclick="setCondition('${k}', '${field}', ${val})" style="flex:1; padding:7px 0; border:0.5px solid ${on ? 'var(--accent-tab, #3D8168)' : 'var(--border-tertiary)'}; background:${on ? 'var(--accent-tab, #3D8168)' : 'var(--bg-primary)'}; border-radius:9px; font-size:16px; cursor:pointer; font-family:inherit;">${emo}</button>`;
-        }).join('')}
-      </div>
-    </div>`;
+  // 한 줄에 다 넣는다 — 하루 한 번 톡 누르는 것이라 크게 차지할 이유가 없다
+  const pick = (field, arr) => arr.map((emo, i) => {
+    const val = i + 1;
+    const on = Number(c[field]) === val;
+    return `<button onclick="setCondition('${k}', '${field}', ${val})" style="width:26px; height:26px; padding:0; border:0.5px solid ${on ? 'var(--accent-tab, #3D8168)' : 'transparent'}; background:${on ? 'var(--accent-tab, #3D8168)' : 'var(--bg-primary)'}; border-radius:7px; font-size:13px; line-height:1; cursor:pointer; font-family:inherit;">${emo}</button>`;
+  }).join('');
 
   return `
-    <div style="margin-bottom:14px; padding:13px 14px; background:var(--bg-secondary); border-radius:12px;">
-      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
-        <span style="font-size:12.5px; font-weight:800;">😴 오늘 컨디션</span>
-        ${avg != null ? `<span style="font-size:10.5px; color:var(--text-tertiary);">최근 평균 ${avg}시간</span>` : ''}
-      </div>
+    <div style="margin-bottom:14px; padding:10px 12px; background:var(--bg-secondary); border-radius:11px;">
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+        <span style="font-size:11.5px; font-weight:800;">😴 컨디션</span>
 
-      <div style="display:flex; align-items:center; gap:8px; margin-bottom:11px;">
-        <span style="font-size:10.5px; color:var(--text-tertiary); flex:1;">어젯밤 잠</span>
-        <button onclick="bumpSleep('${k}', -0.5)" style="width:30px; height:30px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); border-radius:8px; font-size:15px; cursor:pointer; font-family:inherit; color:var(--text-secondary);">−</button>
-        <span style="min-width:52px; text-align:center; font-size:14px; font-weight:800;">${Number(c.sleep) > 0 ? `${c.sleep}시간` : '–'}</span>
-        <button onclick="bumpSleep('${k}', 0.5)" style="width:30px; height:30px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); border-radius:8px; font-size:15px; cursor:pointer; font-family:inherit; color:var(--text-secondary);">+</button>
-      </div>
+        <span style="display:flex; align-items:center; gap:3px;">
+          <button onclick="bumpSleep('${k}', -0.5)" style="width:24px; height:24px; padding:0; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); border-radius:6px; font-size:13px; line-height:1; cursor:pointer; font-family:inherit; color:var(--text-secondary);">−</button>
+          <span style="min-width:44px; text-align:center; font-size:12px; font-weight:800;">${Number(c.sleep) > 0 ? `${c.sleep}시간` : '잠 –'}</span>
+          <button onclick="bumpSleep('${k}', 0.5)" style="width:24px; height:24px; padding:0; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); border-radius:6px; font-size:13px; line-height:1; cursor:pointer; font-family:inherit; color:var(--text-secondary);">+</button>
+        </span>
 
-      ${pick('mood', COND_MOODS, '기분')}
-      ${pick('fatigue', COND_FATIGUE, '몸 상태 (가벼움 → 무거움)')}
+        <span style="display:flex; gap:3px;">${pick('mood', COND_MOODS)}</span>
+        <span style="display:flex; gap:3px;">${pick('fatigue', COND_FATIGUE)}</span>
+
+        ${avg != null ? `<span style="font-size:10px; color:var(--text-tertiary); margin-left:auto;">평균 ${avg}h</span>` : ''}
+      </div>
     </div>`;
 }
 
@@ -7113,7 +7209,7 @@ function openWorkoutModal(dateKeyStr) {
       <div class="field">
         <div class="field-label">📷 사진</div>
         <button onclick="pickWorkoutPhoto('${key}')" style="width:100%; padding:11px; border:1.5px dashed var(--text-info); background:rgba(69,110,158,0.05); color:var(--text-info); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">
-          ${window._woPhotos && window._woPhotos[key] ? '사진 바꾸기' : '사진 추가하기'}
+          ${woPhotoList(key).length > 0 ? `사진 더 넣기 (${woPhotoList(key).length}장)` : '사진 추가하기'}
         </button>
         <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px;">달력에 사진으로 남아요.</div>
       </div>
@@ -7270,6 +7366,12 @@ function openSyncLog() {
       <div style="padding:10px 12px; background:var(--bg-info); border-radius:10px; margin-bottom:10px; font-size:11px; color:var(--text-info); line-height:1.6;">
         워치·단축어·문자로 <b>자동으로 들어온</b> 것만 모아 보여줘요. 무엇이 어떤 값으로 들어왔는지 확인할 수 있어요.
       </div>
+      <button onclick="checkInboxNow()" style="width:100%; margin-bottom:10px; padding:11px; border:none; background:var(--accent-tab, #3D8168); color:#fff; border-radius:10px; font-size:12.5px; font-weight:800; cursor:pointer; font-family:inherit;">
+        🔄 지금 확인하기
+      </button>
+      <div style="font-size:10.5px; color:var(--text-tertiary); text-align:center; margin-bottom:10px;">
+        ${settings.lastInboxCheck ? `마지막 확인 ${new Date(settings.lastInboxCheck).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : '아직 직접 확인해본 적 없어요'}
+      </div>
       <div style="max-height:60vh; overflow-y:auto;">${rows}</div>
       ${list.length ? `<button onclick="settings.syncLog=[]; saveData(); closeModal(); showToast('기록 비움');" style="width:100%; margin-top:10px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-tertiary); border-radius:10px; font-size:12px; cursor:pointer; font-family:inherit;">기록 비우기</button>` : ''}
     </div>`;
@@ -7291,6 +7393,46 @@ async function waitForCloudLoad(maxMs = 15000) {
     await new Promise(r => setTimeout(r, 200));
   }
   return !window._cloudLoadPending;
+}
+
+// 앱을 '껐다 켜도' iOS 는 화면만 다시 띄우는 경우가 많다 (앱이 메모리에 남아 있음).
+// 그러면 시작할 때 한 번 도는 수신함 확인이 다시는 안 돌아서, 워치 기록이 영영 안 들어온다.
+// → 화면이 다시 보일 때마다 확인한다. 너무 자주 돌지 않게 30초 간격은 둔다.
+function setupInboxWatch() {
+  if (window._inboxWatchOn) return;
+  window._inboxWatchOn = true;
+
+  const recheck = (why) => {
+    if (document.visibilityState !== 'visible') return;
+    const now = Date.now();
+    if (now - (window._lastInboxCheck || 0) < 30 * 1000) return;
+    window._lastInboxCheck = now;
+    try { drainWorkoutInbox(true); } catch (e) { console.warn('수신함 확인 실패(' + why + '):', e); }
+    try { drainExpenseInbox(true); } catch (e) {}
+  };
+
+  document.addEventListener('visibilitychange', () => recheck('visibilitychange'));
+  window.addEventListener('focus', () => recheck('focus'));
+  // 뒤로가기 캐시에서 돌아온 경우
+  window.addEventListener('pageshow', () => recheck('pageshow'));
+}
+
+// 사용자가 직접 '지금 확인'을 누를 때 — 결과를 꼭 말해준다
+async function checkInboxNow() {
+  window._lastInboxCheck = Date.now();
+  showToast('확인 중…');
+  let n = 0;
+  try {
+    n = await drainWorkoutInbox(false);
+    await drainExpenseInbox(false);
+  } catch (e) {
+    showToast('확인 실패: ' + String(e && e.message || e).slice(0, 60));
+    return;
+  }
+  settings.lastInboxCheck = Date.now();
+  saveData();
+  if (currentTab === 'workout') renderWorkout();
+  openSyncLog();
 }
 
 async function drainWorkoutInbox(silent = true) {
@@ -7379,9 +7521,21 @@ async function drainWorkoutInbox(silent = true) {
 
     if (minutes > 0 || kcal > 0 || dist > 0) {
       // 하루 여러 건도 각각 남는다
-      if (addWorkoutSession(dateK, {
-        sport, minutes: (minutes > 600 ? Math.round(minutes / 60) : minutes), kcal, dist, unit,
-      })) applied++;
+      const mins = (minutes > 600 ? Math.round(minutes / 60) : minutes);
+      if (addWorkoutSession(dateK, { sport, minutes: mins, kcal, dist, unit })) {
+        applied++;
+        // 무엇이 어느 날짜로 들어갔는지 남긴다.
+        // 이게 없으면 '수신함에서 N건'만 뜨고 뭐가 들어왔는지 확인할 방법이 없었다.
+        logSyncEvent('workout',
+          dateK + ' ' + formatWorkoutNote(sport, dist, unit) + (mins > 0 ? ' ' + mins + '분' : '') + (kcal > 0 ? ' ' + kcal + 'kcal' : ''),
+          '워치 자동화가 보낸 값');
+      } else {
+        // 들어가지 않은 이유도 남긴다 (같은 값이 이미 있었거나 값이 비었거나)
+        logSyncEvent('workout', dateK + ' ' + sport + ' 건너뜀', '같은 기록이 이미 있어요');
+      }
+    } else {
+      logSyncEvent('workout', dateK + ' 값이 비어 있어 못 넣음',
+        `보낸 값: 종목 ${it.sport || '없음'} · 시간 ${it.minutes || 0} · 칼로리 ${it.kcal || 0} · 거리 ${it.dist || 0}`);
     }
 
     // 반영했든 값이 비었든 수신함에서는 지운다 (계속 쌓이지 않게)
@@ -7397,7 +7551,12 @@ async function drainWorkoutInbox(silent = true) {
   }
 
   if (applied > 0) {
-    logSyncEvent('workout', `수신함에서 ${applied}건`, '앱이 꺼져 있는 동안 쌓인 기록');
+    const days = [...new Set(picked.map(x => {
+      const r = String(x.date || '');
+      return /^\d{4}-\d{2}-\d{2}$/.test(r) ? r : todayKey();
+    }))].sort();
+    logSyncEvent('workout', `수신함에서 ${applied}건 반영`,
+      '앱이 꺼져 있는 동안 쌓인 기록 · 날짜: ' + days.join(', '));
     // 🔔 조용히 들어오면 들어온 줄 모른다 → 배너·시스템 알림으로 알려준다
     try {
       const dayK = todayKey();
@@ -7521,12 +7680,20 @@ function watchUploadRecipe(key) {
   const proj = window._fbProjectId || '';
   const apiKey = window._fbApiKey || '';
   const uid = currentUser ? currentUser.uid : '';
-  const url = `https://firestore.googleapis.com/v1/projects/${proj}/databases/(default)/documents/users/${uid}/workoutInbox?key=${apiKey}`;
+
+  // 알림 서버가 있으면 그쪽으로 보낸다.
+  //   Firestore 로 바로 쏘면 저장은 되지만 아무도 알림을 못 보낸다 —
+  //   앱이 꺼져 있으면 들어온 줄도 모른다.
+  //   서버를 거치면 저장과 동시에 '⌚ 운동 기록 도착' 알림이 온다. 본문 형식은 똑같다.
+  const server = pushServerUrl();
+  const url = server
+    ? `${server.replace(/\/+$/, '')}/relay/workout`
+    : `https://firestore.googleapis.com/v1/projects/${proj}/databases/(default)/documents/users/${uid}/workoutInbox?key=${apiKey}`;
   // 사진(base64)이 들어갈 자리를 표시해 둔다. 단축어에서 이 자리에 변수를 끼운다.
   const bodyHead = `{"fields":{"key":{"stringValue":"${key}"},"photoMime":{"stringValue":"image/jpeg"},"photo":{"stringValue":"`;
   const bodyMid = `"},"photo2":{"stringValue":"`;
   const bodyTail = `"}}}`;
-  return { url, bodyHead, bodyMid, bodyTail };
+  return { url, bodyHead, bodyMid, bodyTail, viaServer: !!server };
 }
 
 async function openWatchPhotoSetup(regenerate = false) {
@@ -7553,11 +7720,23 @@ async function openWatchPhotoSetup(regenerate = false) {
       </div>
       <div style="padding:0 16px 20px;">
 
-        <div style="padding:11px 12px; background:var(--bg-secondary); border-radius:10px; font-size:11.5px; color:var(--text-secondary); line-height:1.8; margin-bottom:14px;">
+        <div style="padding:11px 12px; background:var(--bg-secondary); border-radius:10px; font-size:11.5px; color:var(--text-secondary); line-height:1.8; margin-bottom:10px;">
           운동 끝나고 워치에서 <b>크라운 + 옆버튼</b>을 눌러 화면을 캡처하면,
           단축어가 그 사진을 앱으로 보내줍니다. 앱은 사진을 읽어 종목·시간·칼로리·거리를 기록해요.<br>
-          <span style="color:var(--text-tertiary);">설정은 한 번만 하면 됩니다. 서버도, 로그인도 필요 없어요.</span>
+          <span style="color:var(--text-tertiary);">설정은 한 번만 하면 됩니다.</span>
         </div>
+
+        ${r.viaServer ? `
+        <div style="padding:11px 12px; background:var(--bg-success); border-radius:10px; font-size:11.5px; color:var(--text-success); line-height:1.8; margin-bottom:14px;">
+          <b>🔔 알림 서버를 거쳐 갑니다.</b><br>
+          앱이 꺼져 있어도 <b>도착하는 순간 알림</b>이 옵니다.<br>
+          <span style="opacity:0.85;">전에 만든 단축어가 있다면 ⑦의 주소를 아래 것으로 <b>바꿔야</b> 알림이 옵니다.</span>
+        </div>` : `
+        <div style="padding:11px 12px; background:var(--bg-danger); border-radius:10px; font-size:11.5px; color:var(--text-danger); line-height:1.8; margin-bottom:14px;">
+          <b>알림 서버 주소가 없어 알림은 안 옵니다.</b><br>
+          기록은 들어오지만 <b>앱을 열어야</b> 확인됩니다.<br>
+          <span style="opacity:0.85;">설정 → 알림 에서 서버 주소를 넣으면, 도착하는 순간 알림이 오게 바뀝니다.</span>
+        </div>`}
 
         <div style="font-size:12px; font-weight:800; margin:0 0 6px;">단축어 만들기</div>
         <div style="font-size:11px; color:var(--text-secondary); line-height:1.9;">
@@ -7750,16 +7929,25 @@ function addWorkoutSession(dateK, s) {
   const prev = workoutLog[dateK] || {};
   const list = workoutSessions(prev).slice();
 
-  // 같은 종목·같은 시간·같은 칼로리가 이미 있으면 중복 (자동화가 두 번 도는 경우)
-  const dup = list.some(x => x.sport === sport && Number(x.minutes) === minutes && Number(x.kcal) === kcal);
-  if (dup) return false;
+  // 사람이 직접 넣은 건 무조건 그대로 남긴다.
+  // 아래 중복·합치기 규칙은 자동화(단축어)가 같은 캡처를 두 번 보내는 걸 막으려는 것이라,
+  // '아침에 근력 30분, 저녁에 또 근력 30분' 같은 진짜 두 번째 운동까지 막아버렸다.
+  const manual = s.manual === true;
+  const now = Date.now();
+
+  if (!manual) {
+    // 같은 종목·같은 시간·같은 칼로리가 방금(10분 내) 들어왔으면 같은 캡처가 두 번 온 것
+    const dup = list.some(x =>
+      x.sport === sport && Number(x.minutes) === minutes && Number(x.kcal) === kcal &&
+      now - (Number(x.at) || 0) < 10 * 60 * 1000);
+    if (dup) return false;
+  }
 
   // 🔧 워치 요약이 한 화면에 안 들어가면 두 장을 찍게 된다.
   //    같은 종목이 방금(10분 내) 들어왔고 값이 서로 겹치지 않으면 = 같은 운동의 다른 조각 → 합친다.
   //    값이 서로 다르게 채워져 있으면(진짜 두 번 한 운동) 합치지 않고 따로 남긴다.
-  const now = Date.now();
   const fits = (a, b) => !(a > 0 && b > 0 && a !== b);   // 둘 다 채워져 있는데 다르면 다른 운동
-  const partner = list.find(x =>
+  const partner = manual ? null : list.find(x =>
     x.sport === sport &&
     now - (Number(x.at) || 0) < 10 * 60 * 1000 &&
     fits(Number(x.minutes) || 0, minutes) &&
@@ -7816,17 +8004,61 @@ function photosReady() {
   return !!(currentUser && window._fb && window._fb.collection);
 }
 
+// 하루에 여러 장을 남길 수 있어야 한다 (아침에 러닝, 저녁에 근력).
+// Firestore 문서 한 개는 1MB 라 사진을 한 문서에 다 넣을 수 없다.
+//   → 첫 장은 예전처럼 {날짜}, 두 번째부터는 {날짜}__2, __3 … 으로 문서를 나눈다.
+//     예전에 저장한 기록도 그대로 읽힌다.
+const PHOTO_MAX_PER_DAY = 6;
+
+function photoDocId(dateK, idx) {
+  return idx <= 0 ? dateK : `${dateK}__${idx + 1}`;
+}
+
+// 화면용 캐시는 날짜 → 사진 배열
+function woPhotoList(dateK) {
+  const v = (window._woPhotos || {})[dateK];
+  if (!v) return [];
+  return Array.isArray(v) ? v.filter(Boolean) : [v];
+}
+
 async function putWorkoutPhoto(dateK, dataUrl) {
   if (!photosReady()) throw new Error('로그인이 필요해요');
-  const { setDoc } = window._fb;
-  await setDoc(photoDocRef(dateK), { dataUrl, at: Date.now() });
-  window._woPhotos[dateK] = dataUrl;
+  const { setDoc, doc, db } = window._fb;
+
+  const list = woPhotoList(dateK);
+  if (list.length >= PHOTO_MAX_PER_DAY) {
+    throw new Error(`하루 ${PHOTO_MAX_PER_DAY}장까지만 저장돼요`);
+  }
+
+  const idx = list.length;
+  await setDoc(doc(db, 'users', currentUser.uid, PHOTO_COL, photoDocId(dateK, idx)), { dataUrl, at: Date.now() });
+  window._woPhotos[dateK] = list.concat([dataUrl]);
+}
+
+// 한 장만 지운다. 남은 장들을 앞으로 당기지 않고 그 문서만 없앤다.
+async function deleteWorkoutPhotoAt(dateK, idx) {
+  if (!photosReady()) return;
+  const { deleteDoc, doc, db } = window._fb;
+  const list = woPhotoList(dateK);
+  if (idx < 0 || idx >= list.length) return;
+  try {
+    await deleteDoc(doc(db, 'users', currentUser.uid, PHOTO_COL, photoDocId(dateK, idx)));
+  } catch (e) { console.warn('사진 삭제 실패:', e); }
+  const rest = list.slice();
+  rest.splice(idx, 1);
+  if (rest.length === 0) delete window._woPhotos[dateK];
+  else window._woPhotos[dateK] = rest;
 }
 
 async function deleteWorkoutPhotoDoc(dateK) {
   if (!photosReady()) return;
-  const { deleteDoc } = window._fb;
-  try { await deleteDoc(photoDocRef(dateK)); } catch (e) { console.warn('사진 삭제 실패:', e); }
+  const { deleteDoc, doc, db } = window._fb;
+  const n = Math.max(1, woPhotoList(dateK).length);
+  for (let i = 0; i < n; i++) {
+    try {
+      await deleteDoc(doc(db, 'users', currentUser.uid, PHOTO_COL, photoDocId(dateK, i)));
+    } catch (e) { console.warn('사진 삭제 실패:', e); }
+  }
   delete window._woPhotos[dateK];
 }
 
@@ -7839,8 +8071,20 @@ async function loadMonthPhotos(year, month) {
   try {
     const { collection, getDocs, db } = window._fb;
     const snap = await getDocs(collection(db, 'users', currentUser.uid, PHOTO_COL));
+    // 문서 id 는 '2026-08-20' 또는 '2026-08-20__2' 다 → 날짜별로 모아 배열로 만든다
+    const bucket = {};
+    snap.forEach(d => {
+      if (!d.id.startsWith(prefix)) return;
+      const [dateK, seq] = d.id.split('__');
+      const url = (d.data() || {}).dataUrl;
+      if (!url) return;
+      if (!bucket[dateK]) bucket[dateK] = [];
+      bucket[dateK].push({ n: Number(seq) || 1, url });
+    });
     const map = {};
-    snap.forEach(d => { if (d.id.startsWith(prefix)) map[d.id] = (d.data() || {}).dataUrl; });
+    for (const k of Object.keys(bucket)) {
+      map[k] = bucket[k].sort((a, b) => a.n - b.n).map(x => x.url);
+    }
     window._woPhotos = map;
     window._woPhotoMonth = prefix;
     window._woPhotoLoaded = true;
@@ -7903,7 +8147,7 @@ function pickWorkoutPhoto(dateK) {
       }
 
       if (read) {
-        addWorkoutSession(dateK, { sport: read.sport, minutes: read.minutes, kcal: read.kcal, dist: read.dist, unit: read.unit });
+        addWorkoutSession(dateK, { sport: read.sport, minutes: read.minutes, kcal: read.kcal, dist: read.dist, unit: read.unit, manual: true });
         saveData();
         const bits = [];
         if (read.minutes > 0) bits.push(read.minutes + '분');
@@ -7926,6 +8170,15 @@ function pickWorkoutPhoto(dateK) {
 }
 
 // silent=true 면 묻지 않는다 (그 날 기록 전체 삭제에서 이미 한 번 물었으므로)
+// 여러 장 중 한 장만 지우기
+async function removeOneWorkoutPhoto(dateK, idx) {
+  if (!confirm('이 사진을 지울까요?')) return;
+  await deleteWorkoutPhotoAt(dateK, idx);
+  showToast('사진 지웠어요');
+  if (currentTab === 'workout') renderWorkout();
+  openWorkoutPhoto(dateK);
+}
+
 async function removeWorkoutPhoto(dateK, silent) {
   if (!silent && !confirm('이 날 사진을 삭제할까요?')) return;
   await deleteWorkoutPhotoDoc(dateK);
@@ -7938,7 +8191,7 @@ async function removeWorkoutPhoto(dateK, silent) {
 function openWorkoutDay(dayNum) {
   const dateK = woKey(dayNum);
   const log = workoutLog[dateK] || {};
-  const hasPhoto = !!(window._woPhotos && window._woPhotos[dateK]);
+  const hasPhoto = woPhotoList(dateK).length > 0;
   const hasSession = workoutSessions(log).length > 0;
   if (hasPhoto || hasSession) { openWorkoutPhoto(dateK); return; }
   toggleWorkoutDay(dayNum);
@@ -7950,7 +8203,7 @@ async function clearWorkoutDay(dateK) {
   const list = workoutSessions(log);
   const what = [];
   if (list.length > 0) what.push(`운동 ${list.length}건`);
-  if (window._woPhotos && window._woPhotos[dateK]) what.push('사진');
+  if (woPhotoList(dateK).length > 0) what.push('사진');
   if (what.length === 0) { closeModal(); return; }
   if (!confirm(`${dateK} 의 ${what.join('과 ')}을(를) 지울까요? 되돌릴 수 없어요.`)) return;
 
@@ -7975,7 +8228,7 @@ async function clearWorkoutDay(dateK) {
 }
 
 function openWorkoutPhoto(dateK) {
-  const src = window._woPhotos[dateK];
+  const photos = woPhotoList(dateK);
   const log = workoutLog[dateK] || {};
   modal.innerHTML = `
     <div class="modal">
@@ -7985,8 +8238,13 @@ function openWorkoutPhoto(dateK) {
         <h2 style="font-size:15px;">${dateK}</h2>
         <span style="width:44px;"></span>
       </div>
-      ${src
-        ? `<img src="${src}" alt="" style="width:100%; border-radius:12px; display:block;" />`
+      ${photos.length
+        ? photos.map((url, i) => `
+            <div style="position:relative; margin-bottom:8px;">
+              <img src="${url}" alt="" style="width:100%; border-radius:12px; display:block;" />
+              ${photos.length > 1 ? `<span style="position:absolute; left:8px; top:8px; font-size:10px; font-weight:800; background:rgba(0,0,0,0.55); color:#fff; padding:2px 7px; border-radius:999px;">${i + 1} / ${photos.length}</span>` : ''}
+              <button onclick="removeOneWorkoutPhoto('${dateK}', ${i})" style="position:absolute; right:8px; top:8px; border:none; background:rgba(0,0,0,0.55); color:#fff; width:26px; height:26px; border-radius:50%; font-size:14px; cursor:pointer; font-family:inherit;">×</button>
+            </div>`).join('')
         : `<div style="padding:26px 14px; text-align:center; font-size:12px; color:var(--text-tertiary); background:var(--bg-secondary); border-radius:12px;">이 날은 사진이 없어요</div>`}
       ${(() => {
         const list = workoutSessions(log);
@@ -8009,18 +8267,21 @@ function openWorkoutPhoto(dateK) {
       })()}
       <button onclick="clearWorkoutDay('${dateK}')" style="width:100%; margin-top:12px; padding:11px; border:0.5px solid var(--text-danger); background:transparent; color:var(--text-danger); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">🗑 이 날 기록 전부 지우기</button>
       <div style="display:flex; gap:6px; margin-top:6px;">
-        <button onclick="pickWorkoutPhoto('${dateK}')" style="flex:1; padding:11px; border:none; background:var(--bg-info); color:var(--text-info); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">${src ? '사진 바꾸기' : '📷 사진 추가'}</button>
-        ${src ? `<button onclick="removeWorkoutPhoto('${dateK}')" style="flex:0 0 auto; padding:11px 14px; border:0.5px solid var(--border-tertiary); background:transparent; color:var(--text-danger); border-radius:10px; font-size:12px; cursor:pointer; font-family:inherit;">삭제</button>` : ''}
+        <button onclick="pickWorkoutPhoto('${dateK}')" style="flex:1; padding:11px; border:none; background:var(--bg-info); color:var(--text-info); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">${photos.length ? '📷 사진 더 넣기' : '📷 사진 추가'}</button>
+        ${photos.length ? `<button onclick="removeWorkoutPhoto('${dateK}')" style="flex:0 0 auto; padding:11px 14px; border:0.5px solid var(--border-tertiary); background:transparent; color:var(--text-danger); border-radius:10px; font-size:12px; cursor:pointer; font-family:inherit;">${photos.length > 1 ? '전부 삭제' : '삭제'}</button>` : ''}
       </div>
     </div>`;
   modal.classList.add('show');
 }
 
-// 달력 셀 위에 깔 사진
+// 달력 셀 위에 깔 사진 — 여러 장이면 첫 장을 깔고 장수를 배지로 보여준다
 function workoutCellPhoto(dateK) {
-  const src = window._woPhotos && window._woPhotos[dateK];
-  if (!src) return '';
-  return `<img src="${src}" alt="" style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover; border-radius:inherit; z-index:0;" />`;
+  const list = woPhotoList(dateK);
+  if (list.length === 0) return '';
+  const badge = list.length > 1
+    ? `<span style="position:absolute; right:2px; bottom:2px; z-index:2; font-size:8px; font-weight:800; background:rgba(0,0,0,0.55); color:#fff; padding:0 4px; border-radius:6px;">${list.length}</span>`
+    : '';
+  return `<img src="${list[0]}" alt="" style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover; border-radius:inherit; z-index:0;" />${badge}`;
 }
 
 // 셀 아래 라벨 — 거리가 있으면 거리, 없으면 시간
@@ -8284,7 +8545,7 @@ async function applyWorkoutCapture() {
 
   for (const it of picked) {
     // 같은 날 여러 건을 넣어도 각각 남는다 (인바디·사진 등 다른 기록도 유지)
-    addWorkoutSession(it.date, { sport: it.sport, minutes: it.minutes, kcal: it.kcal, dist: it.dist, unit: it.unit });
+    addWorkoutSession(it.date, { sport: it.sport, minutes: it.minutes, kcal: it.kcal, dist: it.dist, unit: it.unit, manual: true });
     // 읽어온 사진을 그 날짜에 함께 남긴다 (달력에 사진으로 보이게)
     if (it._file && photosReady()) {
       try {
@@ -19446,6 +19707,28 @@ function netWorth() {
   return { total, debt, net: total - debt };
 }
 
+// 지난달 스냅샷과 견줘 순자산이 얼마나 움직였나.
+// 자산만 늘어도 빚이 더 늘었으면 실제로는 뒷걸음이라 이 줄이 필요하다.
+function netChangeLine() {
+  const snaps = settings.assetSnapshots || {};
+  const now = new Date();
+  const prevD = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const prevKey = `${prevD.getFullYear()}-${String(prevD.getMonth() + 1).padStart(2, '0')}`;
+  const prev = snaps[prevKey];
+  if (!prev) return '';
+
+  // 예전 스냅샷에는 net 이 없다 — 그때는 부채를 안 세던 때라 total 을 그대로 본다
+  const prevNet = (prev.net != null) ? Number(prev.net) : Number(prev.total || 0);
+  const diff = netWorth().net - prevNet;
+  if (!isFinite(diff) || Math.abs(diff) < 1000) return '';
+
+  const up = diff > 0;
+  return `
+    <div style="font-size:10.5px; color:${up ? 'var(--text-success)' : 'var(--text-danger)'}; margin-top:4px;">
+      지난달보다 ${up ? '+' : '−'}${Math.abs(Math.round(diff)).toLocaleString()}원
+    </div>`;
+}
+
 function renderNetWorthCard() {
   const { total, debt, net } = netWorth();
   const fmt = (v) => Math.round(v).toLocaleString();
@@ -19486,6 +19769,7 @@ function renderNetWorthCard() {
       <div style="font-size:10.5px; color:var(--text-tertiary);">
         자산 대비 부채 ${ratio}%${heavy ? ' · 갚을 돈이 더 많아요' : ''}
       </div>
+      ${netChangeLine()}
     </div>`;
 }
 
@@ -19678,7 +19962,7 @@ function renderAsset() {
     '기타':'#B4B4BC',      // 그레이
   };
 
-  let html = renderNetWorthCard();
+  let html = '';
 
   // 시장 지수 카드 (라이브)
   html += `<div id="market-indices" style="margin-bottom:8px;"></div>`;
@@ -19699,8 +19983,10 @@ function renderAsset() {
     </div>`;
   })();
 
-  // 자산 변화 추이 (월별 스냅샷)
+  // 자산 변화 추이 (월별 스냅샷) — 그 바로 밑에 부채·순자산을 둔다.
+  // 추이는 '얼마나 늘었나', 순자산은 '그중 진짜 내 몫은 얼마인가'라 붙어 있어야 읽힌다.
   html += renderAssetTrendCard();
+  html += renderNetWorthCard();
 
   // 자산 비중 도넛 차트
   if (total > 0) {
@@ -20188,8 +20474,12 @@ function saveAssetSnapshot(total, byType) {
   const now = new Date();
   const key = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
 
+  // 부채도 같이 남긴다 — 나중에 '그때 순자산은 얼마였나'를 볼 수 있어야 한다
+  const debtNow = (typeof debtTotal === 'function') ? debtTotal() : 0;
   const next = {
     total: Math.round(total),
+    debt: Math.round(debtNow),
+    net: Math.round(total - debtNow),
     byType: Object.fromEntries(Object.entries(byType).map(([k,v]) => [k, Math.round(v)])),
     count: (assets || []).length,
     date: now.toISOString(),
@@ -20202,7 +20492,8 @@ function saveAssetSnapshot(total, byType) {
     const sameTotal = Math.abs(Number(prev.total || 0) - next.total) < 1000;
     const sameCount = Number(prev.count || 0) === next.count;
     const sameByType = JSON.stringify(prev.byType || {}) === JSON.stringify(next.byType || {});
-    if (sameTotal && sameCount && sameByType) return;
+    const sameDebt = Math.abs(Number(prev.debt || 0) - next.debt) < 1000;
+    if (sameTotal && sameCount && sameByType && sameDebt) return;
   }
 
   settings.assetSnapshots[key] = next;
