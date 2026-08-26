@@ -5647,7 +5647,7 @@ function renderWorkout() {
       📸 운동 사진 넣기 <span style="font-weight:500; opacity:0.85;">(사진 + 기록 함께 저장)</span>
     </button>
     <button onclick="openHealthSyncGuide()" style="width:100%; margin-bottom:12px; padding:9px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:11px; font-weight:700; cursor:pointer; font-family:inherit;">
-      ⌚ 워치·건강앱 연동하기
+      ⌚ 워치 캡처 자동 저장 <span style="font-weight:500; opacity:0.85;">(찍으면 알아서 들어옴)</span>
     </button>
     <button onclick="openSyncLog()" style="width:100%; margin-bottom:12px; padding:9px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:11px; font-weight:700; cursor:pointer; font-family:inherit;">
       📜 자동으로 들어온 기록 보기${(settings.syncLog || []).length ? ` (${(settings.syncLog || []).length})` : ''}
@@ -25960,7 +25960,7 @@ const PRIVACY_SECTIONS = [
     h: '얼마나 갖고 있나요',
     b: `계정을 지울 때까지 보관합니다.<br><br>
         자동으로 들어온 운동·지출 기록은 앱이 처리한 뒤 바로 지워집니다.<br>
-        알림 구독 정보는 알림을 끄면 지워집니다.`
+        알림 구독 정보는 알림을 끌 때 서버에서 함께 지워집니다.`
   },
   {
     h: '지우려면',
@@ -26294,11 +26294,30 @@ async function enablePush() {
 async function disablePush() {
   settings.pushEnabled = false;
   saveData();
+
+  let endpoint = '';
   try {
     const reg = await navigator.serviceWorker.getRegistration(PUSH_SW_PATH);
     const sub = reg && await reg.pushManager.getSubscription();
-    if (sub) await sub.unsubscribe();
+    if (sub) {
+      endpoint = sub.endpoint || '';
+      await sub.unsubscribe();
+    }
   } catch (e) { console.warn('구독 해지 실패:', e); }
+
+  // 브라우저에서만 끊으면 서버엔 내 기기 정보가 그대로 남는다. 서버 것도 지운다.
+  // (옛 Worker 라 이 주소가 없으면 그냥 넘어간다 — 알림은 어차피 꺼진다)
+  const url = pushServerUrl();
+  if (url) {
+    try {
+      await fetch(url.replace(/\/+$/, '') + '/push/unsubscribe', {
+        method: 'POST',
+        headers: await pushAuthHeaders(),
+        body: JSON.stringify({ key: settings.uploadKey || '', endpoint }),
+      });
+    } catch (e) { console.warn('서버 구독 삭제 실패:', e); }
+  }
+
   showToast('알림을 껐어요');
 }
 
