@@ -26435,11 +26435,23 @@ function savePushSettings() {
 
 // 요약에 넣을 항목 (사용자가 켜고 끌 수 있다)
 const SUMMARY_PARTS = [
-  { key: 'todo',   label: '오늘 할일 · 일정' },
-  { key: 'workout',label: '어제 운동 · 오늘 목표' },
-  { key: 'money',  label: '어제 지출 · 예산' },
-  { key: 'asset',  label: '자산 · 환율' },
+  { key: 'todo',    label: '오늘 할일' },
+  { key: 'routine', label: '오늘 루틴 · 챌린지' },
+  { key: 'goal',    label: '이달의 목표' },
+  { key: 'workout', label: '어제 운동' },
+  { key: 'money',   label: '남은 생활비' },
+  { key: 'market',  label: '환율 · 금 시세' },
 ];
+
+// 한 줄에 이름을 다 늘어놓으면 알림이 잘린다. 앞의 몇 개만 보여주고 나머지는 숫자로.
+const SUMMARY_MAX_ITEMS = 4;
+
+function summaryItemList(names) {
+  const shown = names.slice(0, SUMMARY_MAX_ITEMS).map(n => '  · ' + n);
+  const rest = names.length - shown.length;
+  if (rest > 0) shown.push(`  · 그 외 ${rest}개`);
+  return shown;
+}
 
 function summaryOn(key) {
   const off = settings.summaryOff || {};
@@ -26461,71 +26473,180 @@ function dayBefore(dateK, n) {
 }
 
 // ── 각 줄 만들기 ── 값이 없으면 빈 문자열을 돌려주고, 그런 줄은 빼고 보낸다
-function summaryLineTodo() {
-  const tk = todayKey();
-  const list = (todos || []).filter(t => !t.done);
-  const dueToday = list.filter(t => t.date === tk).length;
-  const overdue = list.filter(t => t.date && t.date < tk).length;
-  const routines = (challenges || []).filter(c => !(c.checks || {})[tk]).length;
+// 이 달 남은 생활비 — 가계부 화면과 같은 기준으로 계산한다.
+// (화면 쪽 계산은 '보고 있는 달' 기준이라 여기서 쓸 수 없어 이번 달로 따로 낸다)
+function livingBudgetNow() {
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth();
+  const prefix = `${y}-${String(m + 1).padStart(2, '0')}`;
+  const b = budget || {};
 
-  const bits = [];
-  if (dueToday > 0) bits.push(`오늘 ${dueToday}건`);
-  if (overdue > 0) bits.push(`밀린 것 ${overdue}건`);
-  if (routines > 0) bits.push(`루틴 ${routines}개`);
-  if (bits.length === 0) return '✅ 오늘 할일 없음';
-  return '✅ ' + bits.join(' · ');
+  const occ = (f) => {
+    // 화면 계산과 같은 방식 — 주간은 4회, 격주는 2회로 본다
+    if (!f || !f.cycle || f.cycle === 'monthly') return 1;
+    if (f.cycle === 'weekly') return 4;
+    if (f.cycle === 'biweekly') return 2;
+    return 1;
+  };
+  const fixed = b.fixed || [];
+  const fixedAll = fixed.reduce((s, f) => s + (Number(f.amt) || 0) * occ(f), 0);
+  const fixedInvest = fixed.filter(f => f.cat === '투자')
+    .reduce((s, f) => s + (Number(f.amt) || 0) * occ(f), 0);
+  const fixedLiving = fixedAll - fixedInvest;
+
+  const rows = (b.expenses || []).filter(e => String(e.dateKey || '').startsWith(prefix));
+  const investSpent = rows.filter(e => e.type !== 'income' && isInvestCat(e.cat))
+    .reduce((s, e) => s + (Number(e.amt) || 0), 0) + fixedInvest;
+
+  // 생활비 = 투자 뺀 지출 − 들어온 돈 전부 (가계부와 같은 기준)
+  const spent = Math.max(0, rows.filter(countsAsLiving).reduce((s, e) => s + livingAmount(e), 0));
+
+  const income = getMonthlyIncome(y, m);
+  const total = income > 0
+    ? Math.max(0, income - fixedLiving - investSpent)
+    : Math.max(0, (Number(b.total) || 0) - fixedLiving);
+
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const daysLeft = Math.max(1, daysInMonth - now.getDate() + 1);
+
+  return {
+    total, spent,
+    left: total - spent,
+    daysLeft,
+    perDay: Math.floor(Math.max(0, total - spent) / daysLeft),
+  };
 }
 
-function summaryLineWorkout() {
+// ── 요약 한 조각씩 ──
+// 각 함수는 줄 배열을 돌려준다. 보여줄 게 없으면 빈 배열.
+
+function summaryTodoLines() {
+  const tk = todayKey();
+  const today = (todos || []).filter(t => todoOnDay(t, tk) && !todoDoneOn(t, tk));
+  // 시간 있는 것부터, 시간순
+  today.sort((a, b) => String(a.time || '~').localeCompare(String(b.time || '~')));
+
+  // 어제까지가 기한인데 아직 안 끝난 것
+  const overdue = (todos || []).filter(t =>
+    t.dateKey && t.dateKey < tk && !t.done && !todoDoneOn(t, t.dateKey)
+  ).length;
+
+  const out = [];
+  if (today.length === 0) {
+    out.push('📝 오늘 할일 없음');
+  } else {
+    out.push(`📝 오늘 할일 ${today.length}건`);
+    out.push(...summaryItemList(today.map(t => (t.time ? t.time + ' ' : '') + (t.title || '제목 없음'))));
+  }
+  if (overdue > 0) out.push(`  ⚠️ 밀린 것 ${overdue}건`);
+  return out;
+}
+
+function summaryRoutineLines() {
+  const tk = todayKey();
+  const live = (challenges || []).filter(c => c && !c.completed && !c.archived);
+  const todo = live.filter(c => !(c.checks || {})[tk]);
+  if (live.length === 0) return [];
+  if (todo.length === 0) return [`🔁 오늘 루틴 ${live.length}개 전부 완료`];
+
+  const names = todo.map(c => {
+    const target = Number(c.dailyTarget) || 0;
+    if (target > 0) {
+      const val = Number(((c.logs || {})[tk] || {}).value) || 0;
+      return `${c.title} (${val.toLocaleString()}/${target.toLocaleString()}${c.unit || ''})`;
+    }
+    return c.title;
+  });
+  return [`🔁 오늘 남은 루틴 ${todo.length}개`, ...summaryItemList(names)];
+}
+
+function summaryGoalLines() {
+  const list = getMonthlyGoals();
+  if (!list || list.length === 0) return [];
+  const left = list.filter(g => !g.done);
+  const doneCount = list.length - left.length;
+  if (left.length === 0) return [`🎯 이달 목표 ${list.length}개 전부 달성`];
+  return [`🎯 이달 목표 ${doneCount}/${list.length}`, ...summaryItemList(left.map(g => g.text))];
+}
+
+function summaryWorkoutLines() {
   const yk = yesterdayKey();
   const log = (workoutLog || {})[yk];
   const done = workoutSessions(log || {});
-  let line;
+
+  let head;
   if (done.length > 0) {
     const note = done.map(x => formatWorkoutNote(x.sport, x.dist, x.unit)).join(' · ');
-    line = `💪 어제 ${note}${Number(log.minutes) > 0 ? ` ${log.minutes}분` : ''}`;
+    head = `💪 어제 ${note}${Number(log.minutes) > 0 ? ` ${log.minutes}분` : ''}`;
   } else {
-    line = '💪 어제 운동 기록 없음';
+    head = '💪 어제 운동 안 함';
   }
-  // 이번 주 몇 번 했는지
+
   let weekCount = 0;
   for (let i = 0; i < 7; i++) {
     if ((workoutLog || {})[dayBefore(todayKey(), i)]?.done) weekCount++;
   }
-  return line + ` (이번 주 ${weekCount}일)`;
+  return [head + ` · 이번 주 ${weekCount}일`];
 }
 
-function summaryLineMoney() {
+function summaryMoneyLines() {
   const yk = yesterdayKey();
-  const list = (budget?.expenses || []).filter(e => e.dateKey === yk && e.type !== 'income');
-  const spent = list.reduce((s, e) => s + (Number(e.amt) || 0), 0);
-  if (spent <= 0) return '💰 어제 지출 없음';
-  return `💰 어제 ${spent.toLocaleString()}원 (${list.length}건)`;
+  const yRows = (budget?.expenses || []).filter(e => e.dateKey === yk && countsAsLiving(e));
+  const ySpent = Math.max(0, yRows.reduce((s, e) => s + livingAmount(e), 0));
+
+  const b = livingBudgetNow();
+  const out = [];
+
+  if (b.total > 0) {
+    if (b.left >= 0) {
+      out.push(`💰 남은 생활비 ${b.left.toLocaleString()}원 (${b.daysLeft}일 남음)`);
+      out.push(`  하루 ${b.perDay.toLocaleString()}원씩 쓸 수 있어요`);
+    } else {
+      out.push(`💰 생활비 ${Math.abs(b.left).toLocaleString()}원 초과`);
+      out.push(`  이번 달 ${b.spent.toLocaleString()} / ${b.total.toLocaleString()}원`);
+    }
+  }
+  out.push(ySpent > 0 ? `  어제 ${ySpent.toLocaleString()}원 씀` : '  어제는 안 썼어요');
+  return out;
 }
 
-function summaryLineAsset() {
+function summaryMarketLines() {
   const bits = [];
-  try {
-    const total = (assets || []).reduce((s, a) => {
-      const live = (liveAssetData || {})[a.id];
-      const v = live?.krwValue || (Number(a.qty) || 0) * (Number(a.price) || 0);
-      return s + (Number(v) || 0);
-    }, 0);
-    if (total > 0) bits.push(`총자산 ${Math.round(total / 10000).toLocaleString()}만원`);
-  } catch (e) {}
-  const fx = Number(typeof exchangeRateCache !== 'undefined' && exchangeRateCache ? exchangeRateCache.rate : 0) || 0;
-  if (fx > 0) bits.push(`$1=${Math.round(fx).toLocaleString()}원`);
-  return bits.length ? '📈 ' + bits.join(' · ') : '';
+  const mi = (typeof marketIndices !== 'undefined' && marketIndices) ? marketIndices : null;
+
+  const fx = Number(mi?.usdkrw?.price)
+    || Number(typeof exchangeRateCache !== 'undefined' && exchangeRateCache ? exchangeRateCache.rate : 0)
+    || 0;
+  if (fx > 0) bits.push(`$1 = ${Math.round(fx).toLocaleString()}원`);
+
+  const gold = Number(mi?.goldDomestic?.price) || 0;
+  if (gold > 0) bits.push(`금 ${Math.round(gold).toLocaleString()}원/g`);
+
+  return bits.length ? ['📈 ' + bits.join(' · ')] : [];
 }
 
 // 알림 본문 한 덩어리
+const SUMMARY_BUILDERS = {
+  todo: summaryTodoLines,
+  routine: summaryRoutineLines,
+  goal: summaryGoalLines,
+  workout: summaryWorkoutLines,
+  money: summaryMoneyLines,
+  market: summaryMarketLines,
+};
+
 function buildMorningSummary() {
-  const lines = [];
-  if (summaryOn('todo')) lines.push(summaryLineTodo());
-  if (summaryOn('workout')) lines.push(summaryLineWorkout());
-  if (summaryOn('money')) lines.push(summaryLineMoney());
-  if (summaryOn('asset')) { const l = summaryLineAsset(); if (l) lines.push(l); }
-  return lines.filter(Boolean).join('\n');
+  const out = [];
+  for (const part of SUMMARY_PARTS) {
+    if (!summaryOn(part.key)) continue;
+    const fn = SUMMARY_BUILDERS[part.key];
+    if (!fn) continue;
+    let lines = [];
+    // 한 덩어리가 터져도 나머지 요약은 나가야 한다
+    try { lines = fn() || []; } catch (e) { console.warn('요약 조각 실패:', part.key, e); }
+    if (lines.length > 0) out.push(...lines);
+  }
+  return out.filter(Boolean).join('\n');
 }
 
 // 서버에 '언제, 무슨 내용으로 보낼지'를 넣어둔다. 앱을 열 때마다 갱신된다.
@@ -26533,6 +26654,11 @@ async function pushSummaryToServer() {
   const url = pushServerUrl();
   if (!url || !settings.pushEnabled) return false;
   if (settings.summaryTime === 'off') return false;
+
+  // 환율·금 시세는 자산 탭을 열어야 채워진다. 요약에 넣으려면 미리 받아둬야 한다.
+  if (summaryOn('market')) {
+    try { await fetchMarketIndices(); } catch (e) { /* 없으면 그 줄만 빠진다 */ }
+  }
 
   try {
     const res = await fetch(url.replace(/\/+$/, '') + '/push/plan', {
