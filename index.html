@@ -5930,11 +5930,45 @@ const QUICK_MINUTES = [20, 30, 40, 60];
 
 function renderQuickLogCard() {
   const picked = window._quickSport || '';
+  const meta = picked ? sportMeta(picked) : null;
   const chips = QUICK_SPORTS.map(k => {
     const m = sportMeta(k);
     const on = picked === k;
     return `<button onclick="quickPickSport('${k}')" style="flex:1 1 auto; min-width:0; padding:8px 6px; border:0.5px solid ${on ? 'var(--accent-tab, #6B5B96)' : 'var(--border-tertiary)'}; background:${on ? 'var(--accent-tab, #6B5B96)' : 'var(--bg-primary)'}; color:${on ? '#fff' : 'var(--text-secondary)'}; border-radius:9px; font-size:11px; font-weight:700; cursor:pointer; font-family:inherit; white-space:nowrap;">${m.emoji} ${k}</button>`;
   }).join('');
+
+  const numField = (id, label, ph, step) => `
+    <div style="flex:1; min-width:0;">
+      <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:3px;">${label}</div>
+      <input type="number" id="${id}" placeholder="${ph}" ${step ? `step="${step}"` : ''} inputmode="decimal"
+        style="width:100%; padding:8px 9px; border:0.5px solid var(--border-tertiary); border-radius:8px; font-size:13px; background:var(--bg-primary); color:var(--text-primary); font-family:inherit;" />
+    </div>`;
+
+  // 종목마다 적을 게 다르다 — 수영은 m, 러닝은 km, 근력은 무게·횟수·세트
+  let extra = '';
+  if (picked === '근력') {
+    extra = `
+      <div style="display:flex; gap:5px; margin-top:7px;">
+        ${numField('q-kg', '무게 (kg)', '60', '2.5')}
+        ${numField('q-reps', '횟수', '10')}
+        ${numField('q-sets', '세트', '3')}
+      </div>
+      <div style="display:flex; gap:5px; margin-top:5px;">
+        <div style="flex:2; min-width:0;">
+          <div style="font-size:10px; color:var(--text-tertiary); margin-bottom:3px;">종목 (선택)</div>
+          <input type="text" id="q-ex" list="q-ex-list" placeholder="스쿼트"
+            style="width:100%; padding:8px 9px; border:0.5px solid var(--border-tertiary); border-radius:8px; font-size:13px; background:var(--bg-primary); color:var(--text-primary); font-family:inherit;" />
+          <datalist id="q-ex-list">${LIFT_PRESETS.map(x => `<option value="${escapeAttr(x)}"></option>`).join('')}</datalist>
+        </div>
+        ${numField('q-kcal', '칼로리', '0')}
+      </div>`;
+  } else if (meta) {
+    extra = `
+      <div style="display:flex; gap:5px; margin-top:7px;">
+        ${meta.unit ? numField('q-dist', `거리 (${meta.unit})`, meta.unit === 'm' ? '1200' : '5.2', meta.step || '0.1') : ''}
+        ${numField('q-kcal', '칼로리', '0')}
+      </div>`;
+  }
 
   const mins = QUICK_MINUTES.map(n =>
     `<button onclick="quickLogWorkout(${n})" style="flex:1; padding:9px 4px; border:none; background:var(--accent-tab, #6B5B96); color:#fff; border-radius:9px; font-size:12px; font-weight:800; cursor:pointer; font-family:inherit;">${n}분</button>`
@@ -5942,9 +5976,17 @@ function renderQuickLogCard() {
 
   return `
     <div style="margin-bottom:12px; padding:11px 12px; border-radius:11px; background:var(--bg-secondary); border:0.5px solid var(--border-tertiary);">
-      <div style="font-size:11px; font-weight:800; color:var(--text-secondary); margin-bottom:8px;">⚡ 빠른 기록 <span style="font-weight:500; color:var(--text-tertiary);">— 종목 누르고 시간 누르면 끝</span></div>
+      <div style="font-size:11px; font-weight:800; color:var(--text-secondary); margin-bottom:8px;">⚡ 빠른 기록 <span style="font-weight:500; color:var(--text-tertiary);">— 종목 고르고 시간 누르면 끝</span></div>
       <div style="display:flex; flex-wrap:wrap; gap:5px;">${chips}</div>
-      ${picked ? `<div style="display:flex; gap:5px; margin-top:8px;">${mins}</div>` : ''}
+      ${picked ? `
+        ${extra}
+        <div style="display:flex; gap:5px; margin-top:8px;">${mins}</div>
+        <div style="display:flex; gap:5px; margin-top:5px;">
+          ${numField('q-min', '직접 입력 (분)', '45')}
+          <button onclick="quickLogWorkout()" style="flex:0 0 auto; align-self:flex-end; padding:8px 14px; border:none; background:var(--accent-tab, #6B5B96); color:#fff; border-radius:8px; font-size:12px; font-weight:800; cursor:pointer; font-family:inherit;">기록</button>
+        </div>
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:6px; line-height:1.6;">칸은 비워도 됩니다. 적은 것만 기록에 남아요.</div>
+      ` : ''}
     </div>`;
 }
 
@@ -5953,19 +5995,50 @@ function quickPickSport(key) {
   renderWorkout();
 }
 
+// 칸에 적은 값 읽기 (없거나 0이면 0)
+function qNum(id) {
+  const v = Number(document.getElementById(id)?.value);
+  return isFinite(v) && v > 0 ? v : 0;
+}
+
+// minutes 를 안 주면 '직접 입력' 칸을 본다
 function quickLogWorkout(minutes) {
   const sport = window._quickSport;
   if (!sport) return;
-  const ok = addWorkoutSession(todayKey(), { sport, minutes, kcal: 0, dist: 0, unit: '', manual: true });
+
+  const mins = Number(minutes) > 0 ? Number(minutes) : qNum('q-min');
+  const kcal = qNum('q-kcal');
+  const meta = sportMeta(sport);
+  const dist = meta.unit ? qNum('q-dist') : 0;
+
+  // 근력은 무게·횟수·세트를 따로 남긴다 (기록에 남아야 지난번과 비교된다)
+  let liftNote = '';
+  if (sport === '근력') {
+    const kg = qNum('q-kg'), reps = qNum('q-reps'), sets = qNum('q-sets');
+    if (reps > 0 && sets > 0) {
+      const ex = (document.getElementById('q-ex')?.value || '').trim() || '근력';
+      liftsOf(todayKey()).push({ id: Date.now(), ex, kg, reps, sets });
+      liftNote = ` · ${ex} ${kg > 0 ? kg + 'kg ' : ''}${reps}×${sets}`;
+    }
+  }
+
+  if (mins <= 0 && kcal <= 0 && dist <= 0 && !liftNote) {
+    showToast('시간이나 값을 하나는 적어주세요');
+    return;
+  }
+
+  const ok = addWorkoutSession(todayKey(), {
+    sport, minutes: mins, kcal, dist, unit: meta.unit || '', manual: true,
+  });
   window._quickSport = '';
-  if (!ok) { showToast('같은 기록이 이미 있어요'); renderWorkout(); return; }
+  if (!ok && !liftNote) { showToast('기록하지 못했어요'); renderWorkout(); return; }
+
   saveData();
-  showToast(`${sportMeta(sport).emoji} ${sport} ${minutes}분 기록됨`);
+  showToast(`${meta.emoji} ${sport}${mins > 0 ? ' ' + mins + '분' : ''}${dist > 0 ? ' ' + dist + meta.unit : ''}${liftNote} 기록됨`);
   renderWorkout();
   // 지금 보고 있는 탭만 다시 그린다 (안 그러면 운동 탭이 캘린더 화면으로 덮인다)
   if (currentTab === 'calendar' && typeof renderCalendar === 'function') { try { renderCalendar(); } catch (e) {} }
 }
-
 
 // ===== 🗓️ 주간 운동 계획 =====
 // 지금 앱은 '한 것'만 남는다. 그래서 못 한 주에 뭘 못 했는지가 안 보인다.
@@ -6540,37 +6613,73 @@ function avgSleep7() {
   return n === 0 ? null : Math.round((sum / n) * 10) / 10;
 }
 
+function condLabel(field, val) {
+  const v = Number(val) || 0;
+  if (!v) return '';
+  const names = field === 'mood'
+    ? ['안 좋음', '그저 그럼', '괜찮음', '좋음']
+    : ['가벼움', '보통', '조금 무거움', '무거움'];
+  return names[v - 1] || '';
+}
+
+// 이모지를 줄줄이 늘어놓으면 뭘 고르는 칸인지 안 보인다.
+// 평소엔 지금 고른 것만 보여주고, 누르면 그때 고르는 칸이 열린다.
+function toggleCondPicker(field) {
+  window._condOpen = (window._condOpen === field) ? '' : field;
+  if (currentTab === 'workout') renderWorkout();
+}
+
 function renderConditionCard() {
   const k = todayKey();
   const c = conditionOf(k);
   const avg = avgSleep7();
+  const open = window._condOpen || '';
 
-  // 한 줄에 다 넣는다 — 하루 한 번 톡 누르는 것이라 크게 차지할 이유가 없다
-  const pick = (field, arr) => arr.map((emo, i) => {
-    const val = i + 1;
-    const on = Number(c[field]) === val;
-    return `<button onclick="setCondition('${k}', '${field}', ${val})" style="width:26px; height:26px; padding:0; border:0.5px solid ${on ? 'var(--accent-tab, #3D8168)' : 'transparent'}; background:${on ? 'var(--accent-tab, #3D8168)' : 'var(--bg-primary)'}; border-radius:7px; font-size:13px; line-height:1; cursor:pointer; font-family:inherit;">${emo}</button>`;
-  }).join('');
+  const row = (field, emoji, title, arr) => {
+    const val = Number(c[field]) || 0;
+    const picked = val ? `${arr[val - 1]} ${condLabel(field, val)}` : '고르기';
+    const isOpen = open === field;
+    return `
+      <div style="margin-top:7px;">
+        <button onclick="toggleCondPicker('${field}')" style="width:100%; display:flex; align-items:center; gap:8px; padding:8px 10px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); border-radius:9px; cursor:pointer; font-family:inherit; text-align:left;">
+          <span style="font-size:13px;">${emoji}</span>
+          <span style="flex:1; font-size:11.5px; color:var(--text-tertiary);">${title}</span>
+          <span style="font-size:12px; font-weight:${val ? '800' : '600'}; color:${val ? 'var(--text-primary)' : 'var(--text-tertiary)'};">${picked}</span>
+          <span style="font-size:10px; color:var(--text-tertiary);">${isOpen ? '▴' : '▾'}</span>
+        </button>
+        ${isOpen ? `
+          <div style="display:flex; gap:5px; margin-top:5px;">
+            ${arr.map((emo, i) => {
+              const v = i + 1;
+              const on = val === v;
+              return `<button onclick="setCondition('${k}', '${field}', ${v}); toggleCondPicker('${field}');" style="flex:1; padding:8px 0 6px; border:0.5px solid ${on ? 'var(--accent-tab, #3D8168)' : 'var(--border-tertiary)'}; background:${on ? 'var(--accent-tab, #3D8168)' : 'var(--bg-primary)'}; border-radius:9px; cursor:pointer; font-family:inherit;">
+                <div style="font-size:17px; line-height:1.1;">${emo}</div>
+                <div style="font-size:9px; margin-top:2px; color:${on ? '#fff' : 'var(--text-tertiary)'};">${condLabel(field, v)}</div>
+              </button>`;
+            }).join('')}
+          </div>` : ''}
+      </div>`;
+  };
 
   return `
-    <div style="margin-bottom:14px; padding:10px 12px; background:var(--bg-secondary); border-radius:11px;">
-      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-        <span style="font-size:11.5px; font-weight:800;">😴 컨디션</span>
-
-        <span style="display:flex; align-items:center; gap:3px;">
-          <button onclick="bumpSleep('${k}', -0.5)" style="width:24px; height:24px; padding:0; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); border-radius:6px; font-size:13px; line-height:1; cursor:pointer; font-family:inherit; color:var(--text-secondary);">−</button>
-          <span style="min-width:44px; text-align:center; font-size:12px; font-weight:800;">${Number(c.sleep) > 0 ? `${c.sleep}시간` : '잠 –'}</span>
-          <button onclick="bumpSleep('${k}', 0.5)" style="width:24px; height:24px; padding:0; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); border-radius:6px; font-size:13px; line-height:1; cursor:pointer; font-family:inherit; color:var(--text-secondary);">+</button>
-        </span>
-
-        <span style="display:flex; gap:3px;">${pick('mood', COND_MOODS)}</span>
-        <span style="display:flex; gap:3px;">${pick('fatigue', COND_FATIGUE)}</span>
-
-        ${avg != null ? `<span style="font-size:10px; color:var(--text-tertiary); margin-left:auto;">평균 ${avg}h</span>` : ''}
+    <div style="margin-bottom:14px; padding:12px 13px; background:var(--bg-secondary); border-radius:12px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:2px;">
+        <span style="font-size:12.5px; font-weight:800;">😴 오늘 컨디션</span>
+        ${avg != null ? `<span style="font-size:10px; color:var(--text-tertiary);">최근 평균 수면 ${avg}시간</span>` : ''}
       </div>
+
+      <div style="display:flex; align-items:center; gap:8px; margin-top:7px; padding:8px 10px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); border-radius:9px;">
+        <span style="font-size:13px;">🛏️</span>
+        <span style="flex:1; font-size:11.5px; color:var(--text-tertiary);">어젯밤 잔 시간</span>
+        <button onclick="bumpSleep('${k}', -0.5)" style="width:26px; height:26px; padding:0; border:0.5px solid var(--border-tertiary); background:var(--bg-secondary); border-radius:7px; font-size:14px; line-height:1; cursor:pointer; font-family:inherit; color:var(--text-secondary);">−</button>
+        <span style="min-width:52px; text-align:center; font-size:12.5px; font-weight:800;">${Number(c.sleep) > 0 ? `${c.sleep}시간` : '—'}</span>
+        <button onclick="bumpSleep('${k}', 0.5)" style="width:26px; height:26px; padding:0; border:0.5px solid var(--border-tertiary); background:var(--bg-secondary); border-radius:7px; font-size:14px; line-height:1; cursor:pointer; font-family:inherit; color:var(--text-secondary);">+</button>
+      </div>
+
+      ${row('mood', '🙂', '오늘 기분', COND_MOODS)}
+      ${row('fatigue', '💪', '몸 상태', COND_FATIGUE)}
     </div>`;
 }
-
 
 // ===== 🏋️ 근력 상세 =====
 // 근력은 '30분 했다'로는 관리가 안 된다. 무슨 종목을 몇 kg 로 몇 번 했는지가 남아야
@@ -6728,19 +6837,11 @@ function showLiftHint(ex) {
     + (best > 0 ? ` · 최고 ${best}kg` : '');
 }
 
+// 근력은 '빠른 기록'에서 넣는다. 여기는 적어둔 날만 요약해서 보여준다.
 function renderLiftCard() {
   const k = todayKey();
   const list = liftsOf(k);
-  if (list.length === 0) {
-    return `
-      <div onclick="openLiftModal('${k}')" style="margin-bottom:14px; padding:11px 12px; background:var(--bg-secondary); border-radius:11px; display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer;">
-        <div style="min-width:0;">
-          <div style="font-size:12px; font-weight:700;">🏋️ 근력 기록하기</div>
-          <div style="font-size:10.5px; color:var(--text-tertiary); margin-top:2px;">무게·횟수·세트를 남기면 지난번과 비교돼요</div>
-        </div>
-        <span style="font-size:12px; color:var(--text-tertiary);">›</span>
-      </div>`;
-  }
+  if (list.length === 0) return '';
 
   return `
     <div style="margin-bottom:14px; padding:13px 14px; background:var(--bg-secondary); border-radius:12px;">
@@ -7373,7 +7474,7 @@ function openSyncLog() {
         ${settings.lastInboxCheck ? `마지막 확인 ${new Date(settings.lastInboxCheck).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : '아직 직접 확인해본 적 없어요'}
       </div>
       <div style="max-height:60vh; overflow-y:auto;">${rows}</div>
-      ${list.length ? `<button onclick="settings.syncLog=[]; saveData(); closeModal(); showToast('기록 비움');" style="width:100%; margin-top:10px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-tertiary); border-radius:10px; font-size:12px; cursor:pointer; font-family:inherit;">기록 비우기</button>` : ''}
+      ${list.length ? `<button onclick="settings.syncLog=[]; saveData(); closeModal(); showToast('기록 비움'); if (currentTab === 'workout') renderWorkout(); if (currentTab === 'money') renderMoney();" style="width:100%; margin-top:10px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-tertiary); border-radius:10px; font-size:12px; cursor:pointer; font-family:inherit;">기록 비우기</button>` : ''}
     </div>`;
   modal.classList.add('show');
 }
@@ -7417,39 +7518,111 @@ function setupInboxWatch() {
   window.addEventListener('pageshow', () => recheck('pageshow'));
 }
 
-// 사용자가 직접 '지금 확인'을 누를 때 — 결과를 꼭 말해준다
+// 사용자가 직접 '지금 확인'을 누를 때 — 무슨 일이 있었는지 그대로 보여준다
 async function checkInboxNow() {
   window._lastInboxCheck = Date.now();
   showToast('확인 중…');
-  let n = 0;
   try {
-    n = await drainWorkoutInbox(false);
+    await drainWorkoutInbox(false);
     await drainExpenseInbox(false);
   } catch (e) {
-    showToast('확인 실패: ' + String(e && e.message || e).slice(0, 60));
-    return;
+    window._lastDrainInfo = { step: '확인 중 오류', found: 0, applied: 0, error: String(e && e.message || e) };
   }
   settings.lastInboxCheck = Date.now();
   saveData();
   if (currentTab === 'workout') renderWorkout();
-  openSyncLog();
+  openInboxReport();
+}
+
+// 진단 결과 화면 — 어디까지 갔고 왜 멈췄는지
+function openInboxReport() {
+  const d = window._lastDrainInfo || { step: '확인 안 함', found: 0, applied: 0, error: '' };
+  const server = pushServerUrl();
+
+  let verdict, advice, tone;
+  if (d.error) {
+    verdict = '확인하다 막혔어요';
+    advice = d.step === '로그인 안 됨'
+      ? '설정 → 계정 에서 로그인해주세요.'
+      : '잠시 후 다시 눌러보세요. 계속 이러면 아래 오류 문구를 알려주세요.';
+    tone = 'danger';
+  } else if (d.applied > 0) {
+    verdict = d.applied + '건 들어왔어요';
+    advice = '운동 탭 달력에서 확인해보세요.';
+    tone = 'success';
+  } else if (d.found > 0) {
+    verdict = d.found + '건을 가져왔지만 하나도 안 들어갔어요';
+    advice = '아래 기록에서 이유를 볼 수 있어요 (같은 기록이거나 값이 비었을 수 있어요).';
+    tone = 'danger';
+  } else {
+    verdict = '서버에 쌓인 게 없어요';
+    advice = server
+      ? '단축어가 아직 안 보냈다는 뜻입니다. 단축어 ⑦의 주소가 서버 주소인지 확인해주세요.'
+      : '알림 서버 주소가 없어요. 설정 → 알림 에서 넣어주세요.';
+    tone = 'warn';
+  }
+
+  const bg = tone === 'success' ? 'var(--bg-success)' : tone === 'danger' ? 'var(--bg-danger)' : 'var(--bg-secondary)';
+  const fg = tone === 'success' ? 'var(--text-success)' : tone === 'danger' ? 'var(--text-danger)' : 'var(--text-secondary)';
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+        <h2 style="font-size:15px;">🔎 확인 결과</h2>
+        <span style="width:44px;"></span>
+      </div>
+      <div style="padding:0 16px 20px;">
+        <div style="padding:13px 14px; background:${bg}; border-radius:11px; margin-bottom:12px;">
+          <div style="font-size:13px; font-weight:800; color:${fg};">${escapeHTML(verdict)}</div>
+          <div style="font-size:11.5px; color:${fg}; opacity:0.9; margin-top:5px; line-height:1.7;">${escapeHTML(advice)}</div>
+        </div>
+
+        <div style="padding:11px 12px; background:var(--bg-secondary); border-radius:10px; font-size:11px; color:var(--text-tertiary); line-height:1.9; margin-bottom:12px;">
+          단계 · ${escapeHTML(d.step || '-')}<br>
+          서버에 쌓여 있던 것 · ${d.found || 0}건<br>
+          기록으로 넣은 것 · ${d.applied || 0}건<br>
+          ${d.error ? `오류 · ${escapeHTML(String(d.error).slice(0, 120))}<br>` : ''}
+          보내는 곳 · ${server ? '내 알림 서버' : 'Firestore 직행 (알림 없음)'}
+        </div>
+
+        <button onclick="openSyncLog()" style="width:100%; padding:12px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:12.5px; font-weight:700; cursor:pointer; font-family:inherit;">📜 들어온 기록 보기</button>
+      </div>
+    </div>`;
+  modal.classList.add('show');
 }
 
 async function drainWorkoutInbox(silent = true) {
-  if (!photosReady()) return 0;   // 로그인 + Firestore 준비 상태 확인 (사진 기능과 동일 조건)
+  // 무슨 일이 있었는지 남긴다. '없어요' 한 마디로는 어디가 막혔는지 알 수 없다.
+  window._lastDrainInfo = { at: Date.now(), step: '시작', found: 0, applied: 0, error: '' };
+  const info = window._lastDrainInfo;
+
+  if (!photosReady()) {
+    info.step = '로그인 안 됨';
+    info.error = currentUser ? 'Firestore 준비 안 됨' : '로그인이 안 돼 있어요';
+    return 0;
+  }
+  info.step = '클라우드 로드 대기';
   await waitForCloudLoad();       // 로드 전에 기록하면 뒤늦게 온 클라우드 데이터가 덮어쓴다
+
+  info.step = '수신함 읽기';
   let snap;
   try {
     const { collection, getDocs, db } = window._fb;
     snap = await getDocs(collection(db, 'users', currentUser.uid, WORKOUT_INBOX));
   } catch (e) {
     console.warn('운동 수신함 읽기 실패:', e);
+    info.step = '수신함 읽기 실패';
+    info.error = String(e && (e.code || e.message) || e);
     return 0;
   }
 
   const logBefore = (settings.syncLog || []).length;
   const picked = [];
   snap.forEach(d => picked.push({ id: d.id, ...(d.data() || {}) }));
+  info.found = picked.length;
+  info.step = picked.length === 0 ? '수신함이 비어 있음' : '반영 중';
   if (picked.length === 0) {
     if (!silent) showToast('새로 들어온 운동 기록이 없어요');
     return 0;
@@ -7544,6 +7717,9 @@ async function drainWorkoutInbox(silent = true) {
       await deleteDoc(doc(db, 'users', currentUser.uid, WORKOUT_INBOX, it.id));
     } catch (e) { console.warn('수신함 정리 실패:', it.id, e); }
   }
+
+  info.applied = applied;
+  info.step = applied > 0 ? '반영 완료' : '가져왔지만 반영 0건';
 
   const added = (settings.syncLog || []).length - logBefore;
   if (added > 0) {
@@ -7730,7 +7906,7 @@ async function openWatchPhotoSetup(regenerate = false) {
         <div style="padding:11px 12px; background:var(--bg-success); border-radius:10px; font-size:11.5px; color:var(--text-success); line-height:1.8; margin-bottom:14px;">
           <b>🔔 알림 서버를 거쳐 갑니다.</b><br>
           앱이 꺼져 있어도 <b>도착하는 순간 알림</b>이 옵니다.<br>
-          <span style="opacity:0.85;">전에 만든 단축어가 있다면 ⑦의 주소를 아래 것으로 <b>바꿔야</b> 알림이 옵니다.</span>
+          <span style="opacity:0.85;">전에 만든 단축어가 있다면 마지막 동작의 주소를 아래 것으로 <b>바꿔야</b> 알림이 옵니다.</span>
         </div>` : `
         <div style="padding:11px 12px; background:var(--bg-danger); border-radius:10px; font-size:11.5px; color:var(--text-danger); line-height:1.8; margin-bottom:14px;">
           <b>알림 서버 주소가 없어 알림은 안 옵니다.</b><br>
@@ -7744,28 +7920,37 @@ async function openWatchPhotoSetup(regenerate = false) {
           동작을 <b>순서대로 추가</b>하면 됩니다. 끌어옮길 일 없어요.<br><br>
           <b>①</b> 대기 — <b>10초</b><br>
           <b>②</b> 최근 스크린샷 가져오기 — <b>2장</b><br>
-          <b>③</b> Base64 인코딩<br>
-          <b>④</b> 목록에서 항목 가져오기 — <b>첫 번째 항목</b><br>
-          <b>⑤</b> 목록에서 항목 가져오기 — <b>마지막 항목</b><br>
-          <b>⑥</b> 텍스트<br>
-          <b>⑦</b> URL의 콘텐츠 가져오기 — <b>POST</b>, 본문 <b>파일</b> → ⑥의 텍스트
+          <b>③</b> <span style="color:var(--text-danger); font-weight:700;">이미지 크기 조절 — 너비 <b>800</b></span><br>
+          <b>④</b> Base64 인코딩<br>
+          <b>⑤</b> 목록에서 항목 가져오기 — <b>첫 번째 항목</b><br>
+          <b>⑥</b> 목록에서 항목 가져오기 — <b>마지막 항목</b><br>
+          <b>⑦</b> 텍스트<br>
+          <b>⑧</b> URL의 콘텐츠 가져오기 — <b>POST</b>, 본문 <b>파일</b> → ⑦의 텍스트
+        </div>
+
+        <div style="margin-top:10px; padding:11px 12px; background:var(--bg-danger); border-radius:10px; font-size:11px; color:var(--text-danger); line-height:1.8;">
+          <b>③ 이미지 크기 조절이 핵심입니다.</b><br>
+          원본 캡처는 한 장에 1MB 가 넘습니다. 손으로 실행할 땐 넘어가지만,
+          <b>운동 종료 자동 실행은 백그라운드라</b> 큰 데이터를 보내다 중간에 끊깁니다.
+          그래서 "실행됨"이라고 뜨는데 아무것도 안 들어오는 겁니다.<br>
+          <span style="opacity:0.85;">너비 800 이면 글자는 그대로 읽히고 용량은 1/10 이 됩니다.</span>
         </div>
 
         <div style="margin-top:10px; padding:10px 11px; background:var(--bg-secondary); border-radius:10px; font-size:11px; color:var(--text-tertiary); line-height:1.8;">
-          ④⑤ 의 입력은 둘 다 <b>③ Base64 결과</b>여야 합니다.
-          한 장만 찍은 날은 ④와 ⑤가 같은 사진이 되는데, 앱이 알아서 한 번만 읽습니다.
+          ⑤⑥ 의 입력은 둘 다 <b>④ Base64 결과</b>여야 합니다.
+          한 장만 찍은 날은 ⑤와 ⑥이 같은 사진이 되는데, 앱이 알아서 한 번만 읽습니다.
         </div>
 
-        <div style="font-size:11.5px; font-weight:700; margin:14px 0 4px;">⑦의 주소</div>
+        <div style="font-size:11.5px; font-weight:700; margin:14px 0 4px;">⑧의 주소</div>
         ${box(r.url.replace(currentUser.uid, currentUser.uid.slice(0,4) + '●●●●●●●●'))}
         ${copyBtn('📋 주소 복사', r.url)}
 
-        <div style="font-size:11.5px; font-weight:700; margin:16px 0 4px;">⑥의 텍스트 — 순서대로 넣으세요</div>
+        <div style="font-size:11.5px; font-weight:700; margin:16px 0 4px;">⑦의 텍스트 — 순서대로 넣으세요</div>
         <div style="font-size:11px; color:var(--text-secondary); line-height:1.9; margin-bottom:6px;">
           <b>1</b> 아래 <b>앞부분</b> 붙여넣기<br>
-          <b>2</b> <b>④ 첫 번째 항목</b> 변수 끼우기<br>
+          <b>2</b> <b>⑤ 첫 번째 항목</b> 변수 끼우기<br>
           <b>3</b> 아래 <b>중간</b> 붙여넣기<br>
-          <b>4</b> <b>⑤ 마지막 항목</b> 변수 끼우기<br>
+          <b>4</b> <b>⑥ 마지막 항목</b> 변수 끼우기<br>
           <b>5</b> 아래 <b>뒷부분</b> 붙여넣기
         </div>
 
@@ -7818,9 +8003,20 @@ function openHealthSyncGuide() {
 
         <div style="margin-top:10px; font-size:11px; color:var(--text-tertiary); line-height:1.9;">
           · 설정은 <b>한 번만</b> 하면 됩니다<br>
-          · 앱이 열리지 않아요 — 다음에 켤 때 조용히 들어옵니다<br>
           · 런데이·나이키런·삼성헬스 화면을 캡처해도 똑같이 읽습니다
         </div>
+
+        ${pushServerUrl() ? `
+        <div style="margin-top:12px; padding:11px 12px; background:var(--bg-success); border-radius:10px; font-size:11.5px; color:var(--text-success); line-height:1.8;">
+          <b>🔔 알림 서버가 연결돼 있어요.</b><br>
+          단축어 주소를 서버 것으로 넣으면 <b>앱이 꺼져 있어도</b> 도착하는 순간 알림이 옵니다.<br>
+          <span style="opacity:0.85;">이미 만들어둔 단축어가 있다면 <b>주소를 바꿔야</b> 알림이 옵니다.</span>
+        </div>` : `
+        <div style="margin-top:12px; padding:11px 12px; background:var(--bg-danger); border-radius:10px; font-size:11.5px; color:var(--text-danger); line-height:1.8;">
+          <b>알림 서버 주소가 없습니다.</b><br>
+          지금은 기록이 들어와도 <b>앱을 열어야</b> 알 수 있어요.<br>
+          <span style="opacity:0.85;">설정 → 알림 에서 서버 주소를 넣으면 도착 알림이 켜집니다.</span>
+        </div>`}
 
         <button onclick="openWatchPhotoSetup()" style="width:100%; margin-top:14px; padding:13px; border:none; background:var(--accent-tab, #6B5B96); color:white; border-radius:11px; font-size:13px; font-weight:800; cursor:pointer; font-family:inherit;">⌚ 연동 설정하기</button>
 
