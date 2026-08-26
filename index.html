@@ -26501,10 +26501,15 @@ function livingBudgetNow() {
   // 생활비 = 투자 뺀 지출 − 들어온 돈 전부 (가계부와 같은 기준)
   const spent = Math.max(0, rows.filter(countsAsLiving).reduce((s, e) => s + livingAmount(e), 0));
 
+  // 기준은 '내가 정한 목표 생활비'가 먼저다 (가계부 화면의 비상금 카드와 같은 값).
+  // 안 정해뒀을 때만 수입에서 고정지출·투자를 빼서 어림잡는다.
+  const goalKey = `${y}-${String(m + 1).padStart(2, '0')}`;
+  const goal = Number((settings.livingGoals || {})[goalKey] || settings.defaultLivingGoal || 0);
+
   const income = getMonthlyIncome(y, m);
-  const total = income > 0
+  const total = goal > 0 ? goal : (income > 0
     ? Math.max(0, income - fixedLiving - investSpent)
-    : Math.max(0, (Number(b.total) || 0) - fixedLiving);
+    : Math.max(0, (Number(b.total) || 0) - fixedLiving));
 
   const daysInMonth = new Date(y, m + 1, 0).getDate();
   const daysLeft = Math.max(1, daysInMonth - now.getDate() + 1);
@@ -26514,6 +26519,7 @@ function livingBudgetNow() {
     left: total - spent,
     daysLeft,
     perDay: Math.floor(Math.max(0, total - spent) / daysLeft),
+    fromGoal: goal > 0,   // 목표를 정해둔 값인지, 어림잡은 값인지
   };
 }
 
@@ -26600,10 +26606,11 @@ function summaryMoneyLines() {
   if (b.total > 0) {
     if (b.left >= 0) {
       out.push(`💰 남은 생활비 ${b.left.toLocaleString()}원 (${b.daysLeft}일 남음)`);
+      out.push(`  목표 ${b.total.toLocaleString()} − 사용 ${b.spent.toLocaleString()}`);
       out.push(`  하루 ${b.perDay.toLocaleString()}원씩 쓸 수 있어요`);
     } else {
       out.push(`💰 생활비 ${Math.abs(b.left).toLocaleString()}원 초과`);
-      out.push(`  이번 달 ${b.spent.toLocaleString()} / ${b.total.toLocaleString()}원`);
+      out.push(`  목표 ${b.total.toLocaleString()} − 사용 ${b.spent.toLocaleString()}`);
     }
   }
   out.push(ySpent > 0 ? `  어제 ${ySpent.toLocaleString()}원 씀` : '  어제는 안 썼어요');
@@ -26619,8 +26626,18 @@ function summaryMarketLines() {
     || 0;
   if (fx > 0) bits.push(`$1 = ${Math.round(fx).toLocaleString()}원`);
 
-  const gold = Number(mi?.goldDomestic?.price) || 0;
-  if (gold > 0) bits.push(`금 ${Math.round(gold).toLocaleString()}원/g`);
+  // 국내 금값(원/g)이 우선. 그게 안 오면 국제 금값(달러/온스)을 환율로 환산한다.
+  //   1 트로이온스 = 31.1035g
+  let gold = Number(mi?.goldDomestic?.price) || 0;
+  let goldNote = '';
+  if (!(gold > 0)) {
+    const intl = Number(mi?.gold?.price) || 0;
+    if (intl > 0 && fx > 0) {
+      gold = (intl * fx) / 31.1035;
+      goldNote = ' (국제시세 환산)';
+    }
+  }
+  if (gold > 0) bits.push(`금 ${Math.round(gold).toLocaleString()}원/g${goldNote}`);
 
   return bits.length ? ['📈 ' + bits.join(' · ')] : [];
 }
@@ -26682,6 +26699,13 @@ async function pushSummaryToServer() {
 function openSummarySettings() {
   const time = settings.summaryTime || '08:00';
   const preview = buildMorningSummary() || '(보낼 내용이 없어요)';
+
+  // 환율·금은 자산 탭을 열어야 채워진다. 미리보기에서 빠져 보이지 않게 지금 받아온다.
+  if (summaryOn('market') && !(typeof marketIndices !== 'undefined' && marketIndices)) {
+    fetchMarketIndices()
+      .then(() => { if (modal.classList.contains('show')) openSummarySettings(); })
+      .catch(() => {});
+  }
   const rows = SUMMARY_PARTS.map(p => `
     <label style="display:flex; align-items:center; gap:10px; padding:11px 12px; background:var(--bg-primary); border:0.5px solid var(--border-tertiary); border-radius:10px; margin-bottom:6px; cursor:pointer;">
       <input type="checkbox" data-part="${p.key}" ${summaryOn(p.key) ? 'checked' : ''} style="width:18px; height:18px;" />
