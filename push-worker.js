@@ -5,6 +5,7 @@
 //   POST /push/test       테스트 알림 보내기
 //   POST /push/send       원하는 내용으로 알림 보내기 (요약 알림 등)
 //   GET  /push/status     구독이 등록돼 있는지 확인
+//   POST /relay/ping      단축어가 쓰는 길로 알림만 보내본다 (진단용)
 //   POST /ai/{모델}       ⚠️ 기본 꺼짐. GEMINI_KEY Secret 이 없으면 503.
 //                         켜기 전에 아래 'AI 중계' 주석의 1~4번을 반드시 고칠 것
 //
@@ -52,6 +53,7 @@ export default {
       if (url.pathname === '/push/send' && request.method === 'POST') return await handleSend(request, env);
       if (url.pathname === '/push/plan' && request.method === 'POST') return await handlePlan(request, env);
       if (url.pathname === '/relay/workout' && request.method === 'POST') return await handleRelayWorkout(request, env);
+      if (url.pathname === '/relay/ping' && request.method === 'POST') return await handleRelayPing(request, env);
       if (url.pathname.startsWith('/ai/') && request.method === 'POST') return await handleAI(request, env, url);
       if (url.pathname === '/push/status') return await handleStatus(request, env);
     } catch (e) {
@@ -255,22 +257,6 @@ async function requireUser(request, env, body) {
 const subsKey = (uid) => 'subs:' + uid;
 const planKey = (uid) => 'plan:' + uid;
 
-// ── 열쇠 확인 ──
-// 열쇠가 안 맞을 때 어디가 틀렸는지 알 수 있게 길이만 알려준다 (값은 절대 노출하지 않는다)
-function checkToken(body, env) {
-  const key = (body && body.key) || '';
-  if (!env.INBOX_TOKEN) throw new Error('Worker 에 INBOX_TOKEN 이 없습니다. Secrets 에 추가하고 Deploy 하세요');
-  if (!key) throw new Error('앱이 열쇠를 안 보냈습니다. 워치 연동 설정을 한 번 열어주세요');
-  if (key !== env.INBOX_TOKEN) {
-    throw new Error(
-      '열쇠가 다릅니다 — 앱 ' + key.length + '자 / Worker ' + env.INBOX_TOKEN.length + '자. ' +
-      (key.length !== env.INBOX_TOKEN.length
-        ? '길이부터 다릅니다. 따옴표나 공백이 섞이지 않았는지 보세요'
-        : '길이는 같은데 값이 다릅니다. 앱에서 다시 복사해 넣어주세요')
-    );
-  }
-}
-
 // ── 구독 등록 ──
 async function handleSubscribe(request, env) {
   const body = await request.json().catch(() => ({}));
@@ -345,12 +331,14 @@ async function handleSend(request, env) {
 async function handleRelayWorkout(request, env) {
   const raw = await request.text();
 
-  // 본문 안의 key 로 인증한다 (앱이 넣어준 전송 열쇠)
   let parsed;
   try { parsed = JSON.parse(raw); } catch (e) { return json({ error: '본문이 JSON 이 아닙니다' }, 400); }
-  const key = parsed?.fields?.key?.stringValue || '';
-  checkToken({ key }, env);
 
+  // 여기서 INBOX_TOKEN 과 대조하지 않는다.
+  //   그 값은 Worker 에 따로 적어둔 것이라, 앱에서 열쇠를 새로 만들면 어긋난다.
+  //   어긋나면 전부 거부돼서 '아무것도 안 들어오는' 상태가 된다.
+  // 대신 Firestore 규칙이 본문의 key 를 uploadKeys 로 검사한다.
+  //   틀린 열쇠면 아래 저장이 거부되므로, 인증은 그쪽 한 곳에서만 하면 된다.
   if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_API_KEY || !env.MY_UID) {
     throw new Error('FIREBASE_PROJECT_ID / FIREBASE_API_KEY / MY_UID 를 Secrets 에 넣어주세요');
   }
@@ -377,7 +365,10 @@ async function handleRelayWorkout(request, env) {
 
   if (!res.ok) {
     const detail = await res.text();
-    return json({ error: 'Firestore 저장 실패', status: res.status, detail: detail.slice(0, 300) }, 502);
+    const why = res.status === 403 || /PERMISSION_DENIED/i.test(detail)
+      ? '열쇠가 맞지 않아 저장이 거부됐어요. 앱에서 워치 연동 설정을 다시 열어 본문을 새로 복사해주세요'
+      : 'Firestore 저장 실패';
+    return json({ error: why, status: res.status, detail: detail.slice(0, 300) }, 502);
   }
 
   // 사진은 앱이 읽어야 종목·시간을 안다. 하지만 단축어가 값으로 보낸 경우엔
@@ -407,13 +398,15 @@ async function handleRelayWorkout(request, env) {
   }
 
   // 단축어는 주인 것이므로 주인에게만 보낸다 (예전엔 등록된 모든 기기로 갔다)
-  await sendToUser(env, env.MY_UID, {
+  const payload = {
     title: '⌚ 운동 기록 도착',
     body,
     tag: 'workout-arrived-' + Date.now(),   // 매번 다른 태그 — 이전 알림을 덮지 않게
-  });
+  };
+  const pushed = await sendToOwner(env, payload);
 
-  return json({ ok: true, shots });
+  // 알림이 갔는지까지 알려준다. ok 만 돌려주면 '저장은 됐는데 알림이 안 온다'를 못 가린다.
+  return json({ ok: true, shots, push: pushed });
 }
 
 
@@ -507,6 +500,41 @@ async function loadSubs(env, uid) {
 
 // ── 실제 발송 ──
 // 반드시 uid 를 받는다. 예전처럼 '모두에게' 보내면 남의 요약이 내 폰에 뜬다.
+// 단축어가 쓰는 길 그대로 알림만 보내본다 (Firestore 는 안 건드린다).
+// '저장은 되는데 알림이 안 온다'를 앱에서 한 번에 가려내기 위한 것.
+async function handleRelayPing(request, env) {
+  const pushed = await sendToOwner(env, {
+    title: '⌚ 서버 알림 시험',
+    body: '이 알림이 보이면 앱이 꺼져 있어도 알림이 옵니다.',
+    tag: 'relay-ping-' + Date.now(),
+  });
+  return json({ ok: true, push: pushed, myUid: env.MY_UID ? '설정됨' : '없음' });
+}
+
+// 주인에게 보낸다. MY_UID 로 저장된 구독이 없으면 — 흔한 경우가 Secret 의 UID 가
+// 실제 로그인 UID 와 다른 것 — 등록된 사람이 딱 한 명일 때 그 사람에게 보낸다.
+// 여러 명이면 누구인지 알 수 없으므로 보내지 않는다 (남의 폰에 뜨면 안 된다).
+async function sendToOwner(env, payload) {
+  if (env.MY_UID) {
+    const r = await sendToUser(env, env.MY_UID, payload);
+    if (r.sent > 0) return { ...r, target: 'MY_UID' };
+  }
+
+  if (!env.PUSH_KV) return { sent: 0, note: 'PUSH_KV 없음' };
+  const page = await env.PUSH_KV.list({ prefix: 'subs:' });
+  const uids = page.keys.map(k => k.name.slice('subs:'.length));
+
+  if (uids.length === 0) {
+    return { sent: 0, note: '알림을 켠 기기가 하나도 없어요. 앱에서 알림을 먼저 켜주세요' };
+  }
+  if (uids.length > 1) {
+    return { sent: 0, note: 'MY_UID 가 등록된 사람과 안 맞습니다. Secrets 의 MY_UID 를 확인해주세요' };
+  }
+
+  const r = await sendToUser(env, uids[0], payload);
+  return { ...r, target: 'only-user', note: 'MY_UID 가 안 맞아 등록된 한 명에게 보냈습니다' };
+}
+
 async function sendToUser(env, uid, payload) {
   const subs = await loadSubs(env, uid);
   if (subs.length === 0) return { sent: 0, note: '등록된 기기가 없습니다' };
