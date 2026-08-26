@@ -2009,6 +2009,9 @@ function render() {
     window._urlWorkoutDone = true;
     try { repairChallengeUnits(); } catch (e) { console.warn('챌린지 단위 보정 실패:', e); }
     try { refreshPushSubscription(); } catch (e) { console.warn('푸시 재등록 실패:', e); }
+    // 푸시를 안 켰어도 서비스워커는 등록해둔다 (앱 안 알림이 알림 센터에 남게 하려면 필요)
+    try { registerPushWorker(); } catch (e) {}
+    setTimeout(() => { try { pushSummaryToServer(); } catch (e) {} }, 4000);   // 데이터가 다 올라온 뒤 갱신
     try { consumeWorkoutFromUrl(); } catch (e) { console.warn('URL 운동 기록 실패:', e); }
     try { consumeExpenseFromUrl(); } catch (e) { console.warn('URL 가계부 기록 실패:', e); }
     // 📥 워치·문자가 보내둔 기록 가져오기 (앱이 안 열려 있던 동안 쌓인 것)
@@ -3083,6 +3086,311 @@ function quickAdd(d) {
 }
 
 // ====== 할일 ======
+
+// ===== 🕐 하루 타임라인 =====
+// 할일에 이미 time 이 있는데 목록으로만 보여줬다. 시간표로 펼치면 하루가 한눈에 들어온다.
+// 빈 칸을 눌러 그 시각에 바로 추가하고, 끌어서 여러 칸을 잡으면 그 구간으로 넣는다.
+
+const TL_START_HOUR = 5;    // 새벽 5시부터
+const TL_END_HOUR = 24;     // 자정까지
+
+function tlDate() {
+  return window._tlDate || todayKey();
+}
+
+function setTlDate(dateK) {
+  window._tlDate = dateK;
+  renderTodo();
+}
+
+function tlShiftDay(delta) {
+  setTlDate(dayBefore(tlDate(), -Number(delta || 0)));
+}
+
+// "09:30" → 570 (분)
+function tlToMinutes(hhmm) {
+  const m = String(hhmm || '').match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+function tlToHHMM(minutes) {
+  const h = Math.floor(minutes / 60), m = minutes % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+// 그 날 할일을 '시간 있는 것 / 없는 것'으로 나눈다
+function tlTodosFor(dateK) {
+  const timed = [], untimed = [];
+  for (const t of (todos || [])) {
+    if (!todoOnDay(t, dateK)) continue;
+    const mins = tlToMinutes(t.time);
+    if (mins == null) untimed.push(t);
+    else timed.push({ t, mins, endMins: tlToMinutes(t.endTime) });
+  }
+  timed.sort((a, b) => a.mins - b.mins);
+  return { timed, untimed };
+}
+
+function renderTimeline() {
+  const dateK = tlDate();
+  const { timed, untimed } = tlTodosFor(dateK);
+  const isToday = dateK === todayKey();
+
+  const d = new Date(...dateK.split('-').map((v, i) => i === 1 ? Number(v) - 1 : Number(v)));
+  const dow = ['일', '월', '화', '수', '목', '금', '토'][d.getDay()];
+
+  // 지금 시각 (오늘일 때만 선으로 표시)
+  const now = new Date();
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+
+  let rows = '';
+  for (let h = TL_START_HOUR; h < TL_END_HOUR; h++) {
+    const startM = h * 60;
+    const endM = startM + 60;
+    // 이 시간대에 걸치는 할일 (끝 시간이 있으면 구간으로 본다)
+    const here = timed.filter(x => {
+      const e = (x.endMins != null && x.endMins > x.mins) ? x.endMins : x.mins + 1;
+      return x.mins < endM && e > startM;
+    });
+
+    const nowLine = (isToday && nowMins >= startM && nowMins < endM)
+      ? `<div style="position:absolute; left:0; right:0; top:${((nowMins - startM) / 60) * 100}%; height:2px; background:var(--text-danger); z-index:2;">
+           <span style="position:absolute; left:-4px; top:-3px; width:8px; height:8px; border-radius:50%; background:var(--text-danger);"></span>
+         </div>`
+      : '';
+
+    const items = here.map(x => {
+      const t = x.t;
+      const done = todoDoneOn(t, dateK);
+      const pm = priorityMeta(todoPriority(t));
+      const span = (x.endMins != null && x.endMins > x.mins) ? ` ~ ${escapeHTML(t.endTime)}` : '';
+      return `<div onclick="event.stopPropagation(); openTodoModal(${t.id})" style="padding:6px 9px; margin-bottom:3px; background:${done ? 'var(--bg-secondary)' : 'var(--bg-primary)'}; border-left:3px solid ${done ? 'var(--border-tertiary)' : pm.color || 'var(--accent-tab, #6B5B96)'}; border-radius:7px; cursor:pointer; box-shadow:var(--shadow-card);">
+        <div style="font-size:12px; font-weight:${done ? '500' : '700'}; color:${done ? 'var(--text-tertiary)' : 'var(--text-primary)'}; ${done ? 'text-decoration:line-through;' : ''}">${escapeHTML(t.title)}</div>
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">${escapeHTML(t.time)}${span}</div>
+      </div>`;
+    }).join('');
+
+    rows += `
+      <div class="tl-row" data-hour="${h}"
+        onmousedown="tlDragStart(${h})" onmouseenter="tlDragOver(${h})" onmouseup="tlDragEnd()"
+        ontouchstart="tlDragStart(${h})" ontouchmove="tlTouchMove(event)" ontouchend="tlDragEnd()"
+        style="display:flex; gap:8px; min-height:44px; border-top:0.5px solid var(--border-tertiary); cursor:pointer; user-select:none;">
+        <div style="flex:0 0 34px; padding-top:4px; font-size:10.5px; color:var(--text-tertiary); text-align:right;">${String(h).padStart(2, '0')}</div>
+        <div style="flex:1; min-width:0; position:relative; padding:4px 0;">
+          ${nowLine}
+          ${items || `<div class="tl-empty" data-hour="${h}" style="height:100%; min-height:34px; border-radius:7px;"></div>`}
+        </div>
+      </div>`;
+  }
+
+  const untimedHtml = untimed.length === 0 ? '' : `
+    <div style="margin-top:14px; padding:11px 12px; background:var(--bg-secondary); border-radius:11px;">
+      <div style="font-size:11.5px; font-weight:800; color:var(--text-secondary); margin-bottom:6px;">⏰ 시간 미정 ${untimed.length}건</div>
+      ${untimed.map(t => {
+        const done = todoDoneOn(t, dateK);
+        return `<div onclick="openTodoModal(${t.id})" style="padding:7px 0; font-size:12px; cursor:pointer; ${done ? 'color:var(--text-tertiary); text-decoration:line-through;' : ''}">${escapeHTML(t.title)}</div>`;
+      }).join('')}
+    </div>`;
+
+  return `
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+      <button onclick="tlShiftDay(-1)" style="border:none; background:var(--bg-secondary); color:var(--text-secondary); width:32px; height:32px; border-radius:9px; font-size:14px; cursor:pointer; font-family:inherit;">‹</button>
+      <div style="text-align:center;">
+        <div style="font-size:14px; font-weight:800;">${Number(dateK.slice(5, 7))}월 ${Number(dateK.slice(8, 10))}일 (${dow})</div>
+        ${isToday ? '' : `<button onclick="setTlDate(todayKey())" style="border:none; background:transparent; color:var(--text-info); font-size:11px; cursor:pointer; font-family:inherit; font-weight:600;">오늘로</button>`}
+      </div>
+      <button onclick="tlShiftDay(1)" style="border:none; background:var(--bg-secondary); color:var(--text-secondary); width:32px; height:32px; border-radius:9px; font-size:14px; cursor:pointer; font-family:inherit;">›</button>
+    </div>
+
+    <div style="font-size:10.5px; color:var(--text-tertiary); text-align:center; margin-bottom:8px;">
+      빈 칸을 누르면 그 시각에 추가 · 끌면 그 구간으로 추가
+    </div>
+
+    <div id="tl-grid" style="background:var(--bg-primary); border:0.5px solid var(--border-tertiary); border-radius:12px; overflow:hidden;">
+      ${rows}
+    </div>
+    ${untimedHtml}`;
+}
+
+// ── 빈 칸 끌어서 구간 잡기 ──
+function tlDragStart(hour) {
+  window._tlDrag = { from: hour, to: hour };
+  tlPaint();
+}
+
+function tlDragOver(hour) {
+  if (!window._tlDrag) return;
+  window._tlDrag.to = hour;
+  tlPaint();
+}
+
+// 손가락은 mouseenter 가 없다 → 좌표로 어느 줄인지 찾는다
+function tlTouchMove(ev) {
+  if (!window._tlDrag) return;
+  const tch = ev.touches && ev.touches[0];
+  if (!tch) return;
+  const el = document.elementFromPoint(tch.clientX, tch.clientY);
+  const row = el && el.closest && el.closest('.tl-row');
+  if (row && row.dataset.hour != null) {
+    ev.preventDefault();
+    tlDragOver(Number(row.dataset.hour));
+  }
+}
+
+// 잡힌 구간에 색을 칠해 보여준다
+function tlPaint() {
+  const d = window._tlDrag;
+  document.querySelectorAll('.tl-row').forEach(row => {
+    const h = Number(row.dataset.hour);
+    const on = d && h >= Math.min(d.from, d.to) && h <= Math.max(d.from, d.to);
+    row.style.background = on ? 'var(--bg-info)' : '';
+  });
+}
+
+function tlDragEnd() {
+  const d = window._tlDrag;
+  window._tlDrag = null;
+  if (!d) return;
+  tlPaint();
+
+  const from = Math.min(d.from, d.to);
+  const to = Math.max(d.from, d.to);
+  const startTime = tlToHHMM(from * 60);
+  const endTime = tlToHHMM((to + 1) * 60);
+
+  // 한 칸만 눌렀으면 시작 시각만, 여러 칸이면 구간으로
+  window._tlPrefill = { date: tlDate(), time: startTime, endTime: to > from ? endTime : '' };
+  openTodoModal();
+}
+
+
+// ===== 📋 보드 (칸반) =====
+// 할 일 / 하는 중 / 완료 세 칸으로 나눠 본다.
+// 완료는 기존 체크와 같은 저장소를 쓴다 (보드에서 옮기면 목록에도 반영된다).
+
+const BOARD_COLS = [
+  { key: 'todo',  label: '할 일',   icon: '📥', color: 'var(--text-secondary)' },
+  { key: 'doing', label: '하는 중', icon: '🔥', color: 'var(--text-warning)' },
+  { key: 'done',  label: '완료',    icon: '✅', color: 'var(--text-success)' },
+];
+
+function boardDate() {
+  return window._boardDate || todayKey();
+}
+
+// 할일이 어느 칸에 있는지
+function todoStatus(t, dayK) {
+  if (todoDoneOn(t, dayK)) return 'done';
+  return t.status === 'doing' ? 'doing' : 'todo';
+}
+
+// 칸 사이 이동. '완료'는 기존 체크와 같은 경로를 타서 어긋나지 않게 한다.
+function setTodoStatus(id, status, dayK) {
+  const t = (todos || []).find(x => x.id === Number(id));
+  if (!t) return;
+  const dk = dayK || boardDate();
+  const now = todoStatus(t, dk);
+  if (now === status) return;
+
+  if (status === 'done') {
+    delete t.status;
+    toggleTodo(t.id, null, dk);      // 완료 처리는 원래 쓰던 함수에 맡긴다
+    return;
+  }
+
+  // 완료된 걸 되돌리는 경우 — 같은 함수로 해제
+  if (now === 'done') toggleTodo(t.id, null, dk);
+
+  if (status === 'doing') t.status = 'doing';
+  else delete t.status;
+
+  saveData();
+  showToast(status === 'doing' ? '하는 중으로' : '할 일로');
+  renderTodo();
+}
+
+function renderTodoBoard() {
+  const dateK = boardDate();
+  const isToday = dateK === todayKey();
+  const mine = (todos || []).filter(t => todoOnDay(t, dateK) && !todoSkippedOn(t, dateK));
+
+  const byCol = { todo: [], doing: [], done: [] };
+  for (const t of mine) byCol[todoStatus(t, dateK)].push(t);
+
+  // 우선순위 높은 것부터, 그다음 시간순
+  const sortCol = list => list.sort((a, b) => {
+    const pa = todoPriority(a), pb = todoPriority(b);
+    if (pa !== pb) return pa - pb;
+    return String(a.time || '99:99').localeCompare(String(b.time || '99:99'));
+  });
+
+  const card = (t, col) => {
+    const pm = priorityMeta(todoPriority(t));
+    const done = col === 'done';
+    // 옮길 수 있는 방향만 버튼으로 (양 끝에서는 한쪽만)
+    const back = col === 'doing' ? 'todo' : col === 'done' ? 'doing' : null;
+    const next = col === 'todo' ? 'doing' : col === 'doing' ? 'done' : null;
+    const sub = (t.subtasks || []).length;
+    const subDone = (t.subtasks || []).filter(x => x && x.done).length;
+
+    return `
+      <div style="padding:9px 10px; margin-bottom:6px; background:var(--bg-primary); border:0.5px solid var(--border-tertiary); border-left:3px solid ${done ? 'var(--border-tertiary)' : (pm.color || 'var(--accent-tab, #6B5B96)')}; border-radius:9px; box-shadow:var(--shadow-card);">
+        <div onclick="openTodoModal(${t.id})" style="cursor:pointer;">
+          <div style="font-size:12.5px; font-weight:${done ? '500' : '700'}; line-height:1.4; color:${done ? 'var(--text-tertiary)' : 'var(--text-primary)'}; ${done ? 'text-decoration:line-through;' : ''}">${escapeHTML(t.title)}</div>
+          <div style="display:flex; gap:6px; align-items:center; font-size:10px; color:var(--text-tertiary); margin-top:3px; flex-wrap:wrap;">
+            ${t.time ? `<span style="color:var(--text-info); font-weight:700;">${escapeHTML(t.time)}</span>` : ''}
+            ${t.tag ? `<span>${escapeHTML(t.tag)}</span>` : ''}
+            ${sub > 0 ? `<span>☑ ${subDone}/${sub}</span>` : ''}
+            ${t.repeat ? '<span>🔁</span>' : ''}
+          </div>
+        </div>
+        <div style="display:flex; gap:5px; margin-top:7px;">
+          ${back ? `<button onclick="setTodoStatus(${t.id}, '${back}')" style="flex:0 0 auto; padding:4px 9px; border:0.5px solid var(--border-tertiary); background:transparent; color:var(--text-tertiary); border-radius:7px; font-size:11px; cursor:pointer; font-family:inherit;">←</button>` : ''}
+          ${next ? `<button onclick="setTodoStatus(${t.id}, '${next}')" style="flex:1; padding:4px 9px; border:none; background:${next === 'done' ? 'var(--text-success)' : 'var(--bg-secondary)'}; color:${next === 'done' ? '#fff' : 'var(--text-secondary)'}; border-radius:7px; font-size:11px; font-weight:700; cursor:pointer; font-family:inherit;">${next === 'done' ? '완료' : '시작 →'}</button>` : ''}
+        </div>
+      </div>`;
+  };
+
+  const cols = BOARD_COLS.map(c => {
+    const list = sortCol(byCol[c.key]);
+    return `
+      <div style="margin-bottom:14px;">
+        <div style="display:flex; align-items:center; gap:6px; margin-bottom:7px;">
+          <span style="font-size:13px;">${c.icon}</span>
+          <span style="font-size:12.5px; font-weight:800; color:${c.color};">${c.label}</span>
+          <span style="font-size:11px; color:var(--text-tertiary);">${list.length}</span>
+        </div>
+        ${list.length > 0
+          ? list.map(t => card(t, c.key)).join('')
+          : `<div style="padding:14px; text-align:center; font-size:11px; color:var(--text-tertiary); background:var(--bg-secondary); border-radius:9px;">비어 있어요</div>`}
+      </div>`;
+  }).join('');
+
+  const d = new Date(...dateK.split('-').map((v, i) => i === 1 ? Number(v) - 1 : Number(v)));
+  const dow = ['일', '월', '화', '수', '목', '금', '토'][d.getDay()];
+
+  return `
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+      <button onclick="boardShiftDay(-1)" style="border:none; background:var(--bg-secondary); color:var(--text-secondary); width:32px; height:32px; border-radius:9px; font-size:14px; cursor:pointer; font-family:inherit;">‹</button>
+      <div style="text-align:center;">
+        <div style="font-size:14px; font-weight:800;">${Number(dateK.slice(5, 7))}월 ${Number(dateK.slice(8, 10))}일 (${dow})</div>
+        ${isToday ? '' : `<button onclick="setBoardDate(todayKey())" style="border:none; background:transparent; color:var(--text-info); font-size:11px; cursor:pointer; font-family:inherit; font-weight:600;">오늘로</button>`}
+      </div>
+      <button onclick="boardShiftDay(1)" style="border:none; background:var(--bg-secondary); color:var(--text-secondary); width:32px; height:32px; border-radius:9px; font-size:14px; cursor:pointer; font-family:inherit;">›</button>
+    </div>
+    ${cols}`;
+}
+
+function setBoardDate(dateK) {
+  window._boardDate = dateK;
+  renderTodo();
+}
+
+function boardShiftDay(delta) {
+  setBoardDate(dayBefore(boardDate(), -Number(delta || 0)));
+}
+
 function renderTodo() {
   // 주 이동 변수 초기화
   if (typeof window.todoWeekOffset === 'undefined') window.todoWeekOffset = 0;
@@ -3226,6 +3534,20 @@ function renderTodo() {
       const el = document.getElementById('todo-search-input');
       if (el && window._todoSearchFocus) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
     }, 20);
+    return;
+  }
+
+  // 📋 보드 뷰 — 할 일 / 하는 중 / 완료
+  if ((window._todoView || 'week') === 'board') {
+    html += renderTodoBoard();
+    screen.innerHTML = html;
+    return;
+  }
+
+  // 🕐 하루 뷰 — 시간표로 펼쳐 하루를 한눈에
+  if ((window._todoView || 'week') === 'day') {
+    html += renderTimeline();
+    screen.innerHTML = html;
     return;
   }
 
@@ -3495,7 +3817,7 @@ function renderTodoToolbar() {
         <button onclick="openTodoReview()" class="chip" style="font-size:11px; padding:6px 11px; margin-left:auto;">📖 돌아보기</button>
       </div>
       <div style="display:flex; gap:4px; margin-top:8px;">
-        ${[['week','주간'],['month','월간']].map(([v,label]) => {
+        ${[['day','하루'],['board','보드'],['week','주간'],['month','월간']].map(([v,label]) => {
           const on = (window._todoView || 'week') === v;
           return `<button onclick="setTodoView('${v}')" style="flex:1; padding:8px; border:0.5px solid ${on?'transparent':'var(--border-tertiary)'}; border-radius:9px; background:${on?'var(--text-primary)':'var(--bg-secondary)'}; color:${on?'white':'var(--text-secondary)'}; font-size:12px; font-weight:${on?'700':'500'}; cursor:pointer; font-family:inherit;">${label}</button>`;
         }).join('')}
@@ -7576,6 +7898,362 @@ function renderMonthlyReview(opts) {
     </div>`;
 }
 
+
+// ===== 💰 카테고리별 예산 =====
+// 쓰고 나서 집계만 하면 늦다. 미리 정해두고 '남은 돈'을 보게 한다.
+
+const BUDGET_CATS = ['식비','카페','편의점','마트','교통','쇼핑','문화','의료','미용','생활','통신','경조사','교육','도서','여행','운동','자녀','선물','학회','구독','기타'];
+
+function catBudgets() {
+  return settings.catBudget || {};
+}
+
+// 보고 있는 달의 카테고리별 지출 합계 (입금·투자는 뺀다)
+function catSpentThisMonth() {
+  const y = (typeof budgetViewYear !== 'undefined') ? budgetViewYear : new Date().getFullYear();
+  const m = (typeof budgetViewMonth !== 'undefined') ? budgetViewMonth : new Date().getMonth();
+  const prefix = `${y}-${String(m + 1).padStart(2, '0')}-`;
+  const out = {};
+  for (const e of (budget?.expenses || [])) {
+    if (e.type === 'income') continue;
+    if (!String(e.dateKey || '').startsWith(prefix)) continue;
+    const c = e.cat || '기타';
+    out[c] = (out[c] || 0) + (Number(e.amt) || 0);
+  }
+  return out;
+}
+
+// 예산을 정해둔 카테고리만, 많이 쓴 순서로
+function catBudgetRows() {
+  const budgets = catBudgets();
+  const spent = catSpentThisMonth();
+  const rows = [];
+  for (const cat of Object.keys(budgets)) {
+    const limit = Number(budgets[cat]) || 0;
+    if (limit <= 0) continue;
+    const used = Number(spent[cat]) || 0;
+    rows.push({ cat, limit, used, left: limit - used, pct: Math.round((used / limit) * 100) });
+  }
+  rows.sort((a, b) => b.pct - a.pct);
+  return rows;
+}
+
+function renderCatBudgetCard() {
+  const rows = catBudgetRows();
+
+  if (rows.length === 0) {
+    return `
+      <div style="margin-bottom:14px; padding:13px; background:var(--bg-secondary); border-radius:12px;">
+        <div style="display:flex; align-items:center; justify-content:space-between;">
+          <span class="sec-title" style="margin:0;">💰 카테고리 예산</span>
+          <button onclick="openCatBudgetModal()" style="border:none; background:transparent; font-size:12px; color:var(--text-info); cursor:pointer; font-family:inherit; font-weight:600;">+ 정하기</button>
+        </div>
+        <div style="font-size:11.5px; color:var(--text-tertiary); line-height:1.8; margin-top:6px;">
+          식비 40만원처럼 미리 정해두면, 이번 달 <b>얼마 남았는지</b> 바로 보여요.
+        </div>
+      </div>`;
+  }
+
+  const totalLimit = rows.reduce((s, r) => s + r.limit, 0);
+  const totalUsed = rows.reduce((s, r) => s + r.used, 0);
+  const totalPct = totalLimit > 0 ? Math.round((totalUsed / totalLimit) * 100) : 0;
+
+  const bar = (pct) => {
+    // 색으로 상태를 알린다: 여유 / 조심 / 넘음
+    const col = pct >= 100 ? 'var(--text-danger)' : pct >= 80 ? 'var(--text-warning)' : 'var(--text-success)';
+    return `<div style="height:6px; background:var(--bg-tertiary); border-radius:999px; overflow:hidden; margin-top:5px;">
+      <div style="height:100%; width:${Math.min(100, pct)}%; background:${col}; border-radius:999px;"></div>
+    </div>`;
+  };
+
+  const list = rows.map(r => {
+    const over = r.left < 0;
+    const col = r.pct >= 100 ? 'var(--text-danger)' : r.pct >= 80 ? 'var(--text-warning)' : 'var(--text-secondary)';
+    return `
+      <div onclick="openCatBudgetModal()" style="padding:9px 0; cursor:pointer;">
+        <div style="display:flex; align-items:baseline; justify-content:space-between; gap:8px;">
+          <span style="font-size:12.5px; font-weight:700;">${escapeHTML(r.cat)}</span>
+          <span style="font-size:11px; color:${col}; font-weight:700; white-space:nowrap;">
+            ${over ? `${Math.abs(r.left).toLocaleString()}원 초과` : `${r.left.toLocaleString()}원 남음`}
+          </span>
+        </div>
+        <div style="display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-top:2px;">
+          <span style="font-size:10.5px; color:var(--text-tertiary);">${r.used.toLocaleString()} / ${r.limit.toLocaleString()}원</span>
+          <span style="font-size:10.5px; color:${col}; font-weight:600;">${r.pct}%</span>
+        </div>
+        ${bar(r.pct)}
+      </div>`;
+  }).join('');
+
+  return `
+    <div style="margin-bottom:14px; padding:13px; background:var(--bg-secondary); border-radius:12px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
+        <span class="sec-title" style="margin:0;">💰 카테고리 예산</span>
+        <button onclick="openCatBudgetModal()" style="border:none; background:transparent; font-size:12px; color:var(--text-info); cursor:pointer; font-family:inherit; font-weight:600;">✏️ 수정</button>
+      </div>
+      <div style="font-size:11px; color:var(--text-tertiary); margin-bottom:2px;">
+        정해둔 예산 ${totalLimit.toLocaleString()}원 중 ${totalUsed.toLocaleString()}원 씀 (${totalPct}%)
+      </div>
+      ${list}
+    </div>`;
+}
+
+function openCatBudgetModal() {
+  const budgets = catBudgets();
+  const spent = catSpentThisMonth();
+
+  const rows = BUDGET_CATS.map(cat => {
+    const v = Number(budgets[cat]) || 0;
+    const used = Number(spent[cat]) || 0;
+    return `
+      <div style="display:flex; align-items:center; gap:9px; padding:8px 0; border-bottom:0.5px solid var(--border-tertiary);">
+        <div style="flex:0 0 62px; font-size:12.5px; font-weight:600;">${escapeHTML(cat)}</div>
+        <div style="flex:1; min-width:0;">
+          <input type="number" inputmode="numeric" data-cat="${escapeAttr(cat)}" value="${v > 0 ? v : ''}" placeholder="0"
+            style="width:100%; padding:8px 10px; border:0.5px solid var(--border-tertiary); border-radius:9px; font-size:13px; text-align:right; background:var(--bg-primary); color:var(--text-primary); font-family:inherit;" />
+        </div>
+        <div style="flex:0 0 74px; text-align:right; font-size:10.5px; color:var(--text-tertiary);">
+          ${used > 0 ? `이번 달<br>${used.toLocaleString()}원` : '—'}
+        </div>
+      </div>`;
+  }).join('');
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+        <h2 style="font-size:15px;">💰 카테고리 예산</h2>
+        <button class="modal-save" onclick="saveCatBudget()">저장</button>
+      </div>
+      <div style="padding:0 16px 20px;">
+        <div style="padding:11px 12px; background:var(--bg-secondary); border-radius:10px; font-size:11.5px; color:var(--text-secondary); line-height:1.9; margin-bottom:12px;">
+          한 달에 얼마까지 쓸지 정해두세요. 비워두면 그 카테고리는 표시하지 않아요.<br>
+          <span style="color:var(--text-tertiary);">오른쪽은 이번 달 실제로 쓴 금액입니다.</span>
+        </div>
+
+        <button onclick="fillCatBudgetFromHistory()" style="width:100%; margin-bottom:10px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">📊 지난 3개월 평균으로 채우기</button>
+
+        ${rows}
+      </div>
+    </div>`;
+  modal.classList.add('show');
+}
+
+function saveCatBudget() {
+  const out = {};
+  document.querySelectorAll('[data-cat]').forEach(el => {
+    const v = Math.round(Number(el.value) || 0);
+    if (v > 0) out[el.dataset.cat] = v;
+  });
+  settings.catBudget = out;
+  saveData();
+  closeModal();
+  showToast(Object.keys(out).length > 0 ? '예산을 정했어요' : '예산을 비웠어요');
+  if (currentTab === 'money') renderMoney();
+}
+
+// 지난 3개월 평균을 넣어준다 (0부터 채우는 것보다 쉽다)
+function fillCatBudgetFromHistory() {
+  const now = new Date();
+  const months = [];
+  for (let i = 1; i <= 3; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-`);
+  }
+  const sum = {}, seen = {};
+  for (const e of (budget?.expenses || [])) {
+    if (e.type === 'income') continue;
+    const k = String(e.dateKey || '');
+    const idx = months.findIndex(m => k.startsWith(m));
+    if (idx < 0) continue;
+    const c = e.cat || '기타';
+    sum[c] = (sum[c] || 0) + (Number(e.amt) || 0);
+    seen[c] = seen[c] || new Set();
+    seen[c].add(months[idx]);
+  }
+  let filled = 0;
+  document.querySelectorAll('[data-cat]').forEach(el => {
+    const c = el.dataset.cat;
+    if (!sum[c]) return;
+    const monthCount = seen[c] ? seen[c].size : 1;
+    // 만원 단위로 올림 — 평균보다 조금 여유를 준다
+    const avg = Math.ceil(sum[c] / monthCount / 10000) * 10000;
+    el.value = avg;
+    filled++;
+  });
+  showToast(filled > 0 ? `${filled}개 채웠어요 (저장을 눌러주세요)` : '지난 3개월 기록이 없어요');
+}
+
+
+// ===== 📉 이번 달 vs 지난달 (누적 선 그래프) =====
+// 막대는 '어느 카테고리가 큰가'를 보는 데 맞고,
+// '지난달보다 빨리 쓰고 있나'는 날짜별 누적선으로 봐야 한눈에 들어온다.
+
+// 그 달의 날짜별 누적 지출 (1일부터 마지막 날까지)
+function dailyCumulative(yearMonth, daysInMonth) {
+  const daily = new Array(daysInMonth + 1).fill(0);
+  for (const e of (budget?.expenses || [])) {
+    if (e.type === 'income') continue;
+    const k = String(e.dateKey || '');
+    if (!k.startsWith(yearMonth)) continue;
+    const day = Number(k.slice(8, 10));
+    if (!(day >= 1 && day <= daysInMonth)) continue;
+    daily[day] += Number(e.amt) || 0;
+  }
+  const cum = [];
+  let acc = 0;
+  for (let d = 1; d <= daysInMonth; d++) { acc += daily[d]; cum.push(acc); }
+  return cum;
+}
+
+function renderSpendTrend() {
+  const y = (typeof budgetViewYear !== 'undefined') ? budgetViewYear : new Date().getFullYear();
+  const m = (typeof budgetViewMonth !== 'undefined') ? budgetViewMonth : new Date().getMonth();
+
+  const curKey = `${y}-${String(m + 1).padStart(2, '0')}`;
+  const prevDate = new Date(y, m - 1, 1);
+  const prevKey = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
+
+  const curDays = new Date(y, m + 1, 0).getDate();
+  const prevDays = new Date(prevDate.getFullYear(), prevDate.getMonth() + 1, 0).getDate();
+
+  const cur = dailyCumulative(curKey, curDays);
+  const prev = dailyCumulative(prevKey, prevDays);
+  if (cur[curDays - 1] === 0 && prev[prevDays - 1] === 0) return '';
+
+  // 오늘까지만 선을 그린다 (미래는 아직 안 쓴 것이지 0원이 아니다)
+  const now = new Date();
+  const isCurrentMonth = y === now.getFullYear() && m === now.getMonth();
+  const cutDay = isCurrentMonth ? Math.min(now.getDate(), curDays) : curDays;
+
+  const maxVal = Math.max(cur[cutDay - 1] || 0, prev[prevDays - 1] || 0, 1);
+  const W = 300, H = 110, padL = 4, padR = 4, padT = 8, padB = 16;
+
+  const pt = (arr, day, days) => {
+    const x = padL + ((day - 1) / (Math.max(days, 2) - 1)) * (W - padL - padR);
+    const val = arr[day - 1] || 0;
+    const yy = padT + (1 - val / maxVal) * (H - padT - padB);
+    return `${x.toFixed(1)},${yy.toFixed(1)}`;
+  };
+
+  const prevLine = Array.from({ length: prevDays }, (_, i) => pt(prev, i + 1, curDays)).join(' ');
+  const curLine = Array.from({ length: cutDay }, (_, i) => pt(cur, i + 1, curDays)).join(' ');
+
+  const curTotal = cur[cutDay - 1] || 0;
+  const prevSame = prev[Math.min(cutDay, prevDays) - 1] || 0;   // 지난달 같은 날짜까지
+  const diff = curTotal - prevSame;
+  const diffPct = prevSame > 0 ? Math.round((diff / prevSame) * 100) : 0;
+
+  const good = diff <= 0;
+  const col = good ? 'var(--text-success)' : 'var(--text-danger)';
+  const label = prevSame === 0
+    ? '지난달 기록이 없어요'
+    : `${Math.abs(diff).toLocaleString()}원 ${good ? '덜' : '더'} 썼어요 (${diff >= 0 ? '+' : ''}${diffPct}%)`;
+
+  // 가로 눈금 (5·10·15·20·25일)
+  const ticks = [5, 10, 15, 20, 25].filter(d => d <= curDays).map(d => {
+    const x = padL + ((d - 1) / (Math.max(curDays, 2) - 1)) * (W - padL - padR);
+    return `<text x="${x.toFixed(1)}" y="${H - 3}" font-size="8" fill="var(--text-tertiary)" text-anchor="middle">${d}</text>`;
+  }).join('');
+
+  return `
+    <div style="margin-bottom:14px; padding:13px; background:var(--bg-secondary); border-radius:12px;">
+      <div style="display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-bottom:2px;">
+        <span class="sec-title" style="margin:0;">📉 지난달과 비교</span>
+        <span style="font-size:11.5px; font-weight:800; color:${col};">${label}</span>
+      </div>
+      <div style="font-size:10.5px; color:var(--text-tertiary); margin-bottom:6px;">
+        ${isCurrentMonth ? `${cutDay}일까지 누적` : '한 달 누적'} · ${curTotal.toLocaleString()}원
+      </div>
+
+      <svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto; display:block;">
+        ${ticks}
+        <polyline points="${prevLine}" fill="none" stroke="var(--text-tertiary)" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.75" />
+        <polyline points="${curLine}" fill="none" stroke="${col}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" />
+      </svg>
+
+      <div style="display:flex; gap:12px; font-size:10.5px; color:var(--text-tertiary); margin-top:2px;">
+        <span><span style="display:inline-block; width:14px; height:2px; background:${col}; vertical-align:middle;"></span> 이번 달</span>
+        <span><span style="display:inline-block; width:14px; border-top:2px dashed var(--text-tertiary); vertical-align:middle;"></span> 지난달</span>
+      </div>
+    </div>`;
+}
+
+
+// ===== 📊 월별 지출 추이 (선 그래프) =====
+// 쌓아올린 막대는 '내가 조절할 수 있는 변동지출'이 맨 위에 얹혀 흐름이 안 보였다.
+// 세 줄을 따로 그리면 각각의 추세가 그대로 읽힌다.
+
+const TREND_LINES = [
+  { key: 'variable', label: '변동', color: '#B06B7E' },
+  { key: 'fixed',    label: '고정', color: '#C9A063' },
+  { key: 'invest',   label: '투자', color: '#7C9CC4' },
+];
+
+function renderMonthTrendChart(monthData, selIdx) {
+  const n = monthData.length;
+  if (n === 0) return '';
+
+  // 세 줄 중 가장 큰 값이 기준 (합계가 아니라) → 작은 줄도 눌리지 않는다
+  let maxVal = 1;
+  for (const d of monthData) for (const l of TREND_LINES) maxVal = Math.max(maxVal, Number(d[l.key]) || 0);
+
+  const W = 300, H = 150, padL = 34, padR = 8, padT = 10, padB = 20;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const xAt = i => padL + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const yAt = v => padT + (1 - (Number(v) || 0) / maxVal) * plotH;
+
+  // 가로 눈금 4단계 (0 / 1/3 / 2/3 / 최대) — 만원 단위로 끊어 읽기 쉽게
+  const steps = [0, 1 / 3, 2 / 3, 1];
+  const grid = steps.map(s => {
+    const y = padT + (1 - s) * plotH;
+    const man = Math.round((maxVal * s) / 10000);
+    return `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" stroke="var(--border-tertiary)" stroke-width="0.5" ${s === 0 ? '' : 'stroke-dasharray="3 3"'} />
+      <text x="${padL - 4}" y="${(y + 3).toFixed(1)}" font-size="8.5" fill="var(--text-tertiary)" text-anchor="end">${man}만</text>`;
+  }).join('');
+
+  const lines = TREND_LINES.map(l => {
+    const pts = monthData.map((d, i) => `${xAt(i).toFixed(1)},${yAt(d[l.key]).toFixed(1)}`).join(' ');
+    const dots = monthData.map((d, i) =>
+      `<circle cx="${xAt(i).toFixed(1)}" cy="${yAt(d[l.key]).toFixed(1)}" r="${selIdx === i ? 4 : 2.6}" fill="${l.color}" />`).join('');
+    return `<polyline points="${pts}" fill="none" stroke="${l.color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" />${dots}`;
+  }).join('');
+
+  // 고른 달에 세로선
+  const selLine = (selIdx >= 0 && selIdx < n)
+    ? `<line x1="${xAt(selIdx).toFixed(1)}" y1="${padT}" x2="${xAt(selIdx).toFixed(1)}" y2="${padT + plotH}" stroke="var(--text-info)" stroke-width="1" stroke-dasharray="2 2" opacity="0.6" />`
+    : '';
+
+  // 달 이름 (칸이 좁으면 건너뛰며 표시)
+  const every = n > 8 ? 2 : 1;
+  const labels = monthData.map((d, i) => {
+    if (i % every !== 0 && i !== n - 1) return '';
+    const isCur = d.y === budgetViewYear && d.m === budgetViewMonth;
+    return `<text x="${xAt(i).toFixed(1)}" y="${H - 5}" font-size="8.5" text-anchor="middle"
+      fill="${isCur ? 'var(--text-primary)' : 'var(--text-tertiary)'}" font-weight="${isCur ? '700' : '400'}">${d.m + 1}월</text>`;
+  }).join('');
+
+  // 각 달을 눌러 상세를 볼 수 있게 투명한 칸을 깔아둔다
+  const hits = monthData.map((d, i) => {
+    const w = n === 1 ? plotW : plotW / (n - 1);
+    const x = xAt(i) - w / 2;
+    return `<rect x="${Math.max(0, x).toFixed(1)}" y="${padT}" width="${w.toFixed(1)}" height="${plotH}" fill="transparent" style="cursor:pointer;"
+      onclick="window._moneyBarSel = (window._moneyBarSel === ${i} ? -1 : ${i}); renderMoney();" />`;
+  }).join('');
+
+  return `
+    <div style="padding:12px; background:var(--bg-secondary); border-radius:12px;">
+      <div style="display:flex; gap:12px; margin-bottom:6px; font-size:11px; color:var(--text-secondary);">
+        ${TREND_LINES.map(l => `<span style="display:flex; align-items:center; gap:5px;"><span style="width:14px; height:2.5px; border-radius:2px; background:${l.color};"></span>${l.label}</span>`).join('')}
+      </div>
+      <svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto; display:block;">
+        ${grid}${selLine}${lines}${labels}${hits}
+      </svg>
+      <div style="font-size:10px; color:var(--text-tertiary); text-align:center; margin-top:2px;">달을 누르면 그 달 내역이 보여요</div>
+    </div>`;
+}
+
 function renderMoney() {
   // 자동매수 점검: 가드 버전으로만 호출 (중복 실행·경합 방지)
   runAllAutoBuysSafe('money-tab');
@@ -7924,6 +8602,12 @@ function renderMoney() {
 
   // (중복 페이스 경고 제거됨 — 위 '소비 페이스 예측' 카드가 같은 역할)
 
+  // 📉 지난달과 비교 — 누적 선으로 페이스를 본다
+  html += renderSpendTrend();
+
+  // 💰 카테고리별 예산 (정해둔 것만 보여준다)
+  html += renderCatBudgetCard();
+
   // ★ AI 분석 카드
   html += renderMoneyAI(variableSpent, projectedTotal);
 
@@ -8110,60 +8794,11 @@ function renderMoney() {
       </div>`;
 
     if (window.moneyBarExpanded) {
-      // Y축 눈금 (0, 1/3, 2/3, max) — 만원 단위
-      const gridSteps = [1, 0.66, 0.33, 0];
-      const chartH = 165;
+      // 선 그래프로 그린다 (쌓은 막대는 변동지출 흐름이 안 보였다)
+      const selNow = (window._moneyBarSel === undefined) ? -1 : window._moneyBarSel;
       html += `
-        <div style="padding:14px 12px 10px; background:var(--bg-secondary); border-radius:12px;">
-          <div style="display:flex; gap:12px; margin-bottom:12px; font-size:11px; color:var(--text-secondary);">
-            <span style="display:flex; align-items:center; gap:4px;"><span style="width:9px; height:9px; border-radius:2px; background:#B06B7E;"></span>변동</span>
-            <span style="display:flex; align-items:center; gap:4px;"><span style="width:9px; height:9px; border-radius:2px; background:#DCC29A;"></span>고정</span>
-            <span style="display:flex; align-items:center; gap:4px;"><span style="width:9px; height:9px; border-radius:2px; background:#7C9CC4;"></span>투자</span>
-          </div>
-          <div style="display:flex; gap:6px;">
-            <!-- Y축 눈금 -->
-            <div style="display:flex; flex-direction:column; justify-content:space-between; height:${chartH}px; padding-top:14px; flex-shrink:0;">
-              ${gridSteps.map(s => `<div style="font-size:10px; color:var(--text-tertiary); text-align:right; line-height:1;">${Math.round(maxVal * s / 10000)}만</div>`).join('')}
-            </div>
-            <!-- 차트 영역 (그리드선 + 막대) -->
-            <div style="flex:1; position:relative; padding-top:14px;">
-              <!-- 가로 그리드선 -->
-              <div style="position:absolute; left:0; right:0; top:14px; height:${chartH}px; pointer-events:none;">
-                ${gridSteps.map(s => `<div style="position:absolute; left:0; right:0; top:${(1-s)*chartH}px; border-top:0.5px ${s===0?'solid var(--text-tertiary)':'dashed var(--border-tertiary)'};"></div>`).join('')}
-              </div>
-              <!-- 막대들 -->
-              <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:10px; height:${chartH}px; position:relative;">
-                ${monthData.map((d, idx) => {
-                  const varH = Math.round((d.variable / maxVal) * chartH);
-                  const fixH = Math.round((d.fixed / maxVal) * chartH);
-                  const invH = Math.round((d.invest / maxVal) * chartH);
-                  const isCur = d.y === budgetViewYear && d.m === budgetViewMonth;
-                  const isSel = window._moneyBarSel === idx;
-                  return `
-                    <div onclick="window._moneyBarSel = (window._moneyBarSel === ${idx} ? -1 : ${idx}); renderMoney();" style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%; min-width:0; cursor:pointer; position:relative;">
-                      <div style="font-size:10px; color:var(--text-secondary); white-space:nowrap; font-weight:500; margin-bottom:2px;">${d.total > 0 ? Math.round(d.total/10000)+'만' : ''}</div>
-                      <div style="width:15px; display:flex; flex-direction:column; justify-content:flex-end; ${isSel ? 'outline:2px solid var(--text-info); outline-offset:2px; border-radius:3px;' : ''}">
-                        ${d.variable > 0 ? `<div style="height:${varH}px; background:#B06B7E; border-radius:3px 3px 0 0;"></div>` : ''}
-                        ${d.fixed > 0 ? `<div style="height:${fixH}px; background:#DCC29A;"></div>` : ''}
-                        ${d.invest > 0 ? `<div style="height:${invH}px; background:#7C9CC4;"></div>` : ''}
-                        ${d.total === 0 ? `<div style="height:2px; background:var(--border-tertiary);"></div>` : ''}
-                      </div>
-                    </div>`;
-                }).join('')}
-              </div>
-              <!-- X축 월 라벨 -->
-              <div style="display:flex; justify-content:space-between; gap:10px; margin-top:5px;">
-                ${monthData.map((d, i) => {
-                  const isCur = d.y === budgetViewYear && d.m === budgetViewMonth;
-                  // 첫 막대이거나, 연도가 바뀌는 지점(1월)이면 'YY년' 표시
-                  const prevY = i > 0 ? monthData[i-1].y : null;
-                  const showYear = (i === 0) || (d.y !== prevY);
-                  const label = showYear ? `${String(d.y).slice(2)}년 ${d.m+1}월` : `${d.m+1}월`;
-                  return `<div style="flex:1; text-align:center; font-size:10px; color:${isCur ? 'var(--text-primary)' : 'var(--text-tertiary)'}; font-weight:${isCur?'700':'400'}; white-space:nowrap; line-height:1.3;">${label}</div>`;
-                }).join('')}
-              </div>
-            </div>
-          </div>
+        <div style="padding:0;">
+          ${renderMonthTrendChart(monthData, selNow)}
           ${(() => {
             const sel = window._moneyBarSel;
             if (sel === undefined || sel < 0 || !monthData[sel]) return '';
@@ -16248,6 +16883,7 @@ function saveExpense() {
     showToast(`${cat} ${amt.toLocaleString()}원 저장됨`);
   }
 
+  window._tlPrefill = null;   // 타임라인에서 넘어온 미리 채운 값 정리
   saveData();
   closeModal();
   render();
@@ -16338,7 +16974,12 @@ function openTodoModal(forDateKey, editTodoObj) {
 
       <div class="field">
         <div class="field-label">🕐 시간 <span style="font-size:10px; color:var(--text-tertiary);">(선택 — 넣으면 시간순 정렬돼요)</span></div>
-        <input type="time" id="todo-time" value="${isEdit && editTodoObj.time ? editTodoObj.time : ''}" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:var(--bg-primary); color:var(--text-primary); font-family:inherit;" />
+        <div style="display:flex; align-items:center; gap:7px;">
+          <input type="time" id="todo-time" value="${isEdit && editTodoObj.time ? editTodoObj.time : (window._tlPrefill?.time || '')}" style="flex:1; min-width:0; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:var(--bg-primary); color:var(--text-primary); font-family:inherit;" />
+          <span style="font-size:12px; color:var(--text-tertiary);">~</span>
+          <input type="time" id="todo-end-time" value="${isEdit && editTodoObj.endTime ? editTodoObj.endTime : (window._tlPrefill?.endTime || '')}" style="flex:1; min-width:0; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:var(--bg-primary); color:var(--text-primary); font-family:inherit;" />
+        </div>
+        <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px;">끝 시간은 안 넣어도 돼요. 넣으면 하루 뷰에서 구간으로 보여요.</div>
       </div>
 
       <div class="field">
@@ -16537,6 +17178,7 @@ function saveTodo(editId) {
   const priority = Number(document.querySelector('#todo-priority .chip.active')?.dataset.p) || 3;
   const flag = priority === 1;
   const time = document.getElementById('todo-time')?.value || '';
+  const endTime = document.getElementById('todo-end-time')?.value || '';
   const memo = document.getElementById('todo-memo')?.value.trim() || '';
   // ☑️ 체크리스트 — 빈 항목은 버림
   const subtasks = (window._editSubtasks || [])
@@ -16582,6 +17224,7 @@ function saveTodo(editId) {
       t.priority = priority;
       t.subtasks = subtasks;
       t.time = time;
+      if (endTime) t.endTime = endTime; else delete t.endTime;
       t.memo = memo;
       if (endDateKeyVal) t.endDateKey = endDateKeyVal;
       else delete t.endDateKey; // 토글 끄면 일반 할일로
@@ -16607,6 +17250,7 @@ function saveTodo(editId) {
       memo,
       done: false,
     };
+    if (endTime) newTodo.endTime = endTime;
     if (endDateKeyVal) newTodo.endDateKey = endDateKeyVal;
     if (repeatVal) { newTodo.repeat = repeatVal; newTodo.doneDates = {}; }
     todos.unshift(newTodo);
@@ -22349,22 +22993,49 @@ async function saveMarketAlerts() {
 }
 
 // 시스템 알림 (앱이 켜져 있을 때만 동작 — 권한 있을 때)
+// 알림 하나를 실제로 띄운다.
+// 홈 화면 앱(PWA)에서는 new Notification() 이 안 먹거나 알림 센터에 안 남는다.
+// → 서비스워커의 showNotification 을 우선 쓰고, 안 되면 예전 방식으로 내려간다.
+async function showAppNotification(title, body, tag) {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return false;
+  const opts = {
+    body: body || '',
+    tag: tag || 'myplanner',
+    icon: './icon-192.png',
+    badge: './icon-192.png',
+    data: { url: './index.html' },
+  };
+
+  // 1순위 — 서비스워커 (알림 센터에 남고, 탭하면 앱이 열린다)
+  try {
+    if ('serviceWorker' in navigator) {
+      const reg = await navigator.serviceWorker.getRegistration(PUSH_SW_PATH)
+        || await navigator.serviceWorker.ready;
+      if (reg && reg.showNotification) {
+        await reg.showNotification(title, opts);
+        return true;
+      }
+    }
+  } catch (e) { console.warn('서비스워커 알림 실패:', e); }
+
+  // 2순위 — 예전 방식 (데스크톱 브라우저 등)
+  try { new Notification(title, opts); return true; } catch (e) { return false; }
+}
+
 function sendSystemNotification(h) {
   try {
     if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
-    // 목표가 알림이 아닌 종류(오늘 일정 등)도 들어온다 — 값이 없으면 msg 를 쓴다
+    // 목표가 알림이 아닌 종류(오늘 일정·운동 등)도 들어온다 — 값이 없으면 msg 를 쓴다
     if (!(Number(h.target) > 0 && Number(h.price) > 0)) {
-      new Notification(`🔔 ${h.name || '알림'}`, {
-        body: h.msg || '',
-        tag: `alert-${h.kind || 'etc'}-${h.id || ''}`,
-      });
+      showAppNotification(`🔔 ${h.name || '알림'}`, h.msg || '', `alert-${h.kind || 'etc'}-${h.id || ''}`);
       return;
     }
     const dir = h.kind === 'below' ? '이하로 내려왔어요 (매수 기회)' : '이상으로 올라왔어요';
-    new Notification(`🔔 ${h.name} 목표가 도달`, {
-      body: `목표 ${Number(h.target).toLocaleString()} · 현재 ${Number(h.price).toLocaleString()}\n${dir}`,
-      tag: `price-${h.ticker || h.name}`,
-    });
+    showAppNotification(
+      `🔔 ${h.name} 목표가 도달`,
+      `목표 ${Number(h.target).toLocaleString()} · 현재 ${Number(h.price).toLocaleString()}\n${dir}`,
+      `price-${h.ticker || h.name}`
+    );
   } catch (e) { /* 알림 미지원 환경 무시 */ }
 }
 
@@ -25097,7 +25768,12 @@ async function sendSubscriptionToServer(sub) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ key, sub: sub.toJSON ? sub.toJSON() : sub }),
   });
-  if (!res.ok) throw new Error('서버 등록 실패 (' + res.status + ')');
+  if (!res.ok) {
+    // 서버가 알려준 이유를 그대로 보여준다 (숫자만 보면 원인을 알 수 없다)
+    let why = '';
+    try { const d = await res.json(); why = d.error || ''; } catch (e) {}
+    throw new Error(why ? '서버: ' + why : '서버 등록 실패 (' + res.status + ')');
+  }
   return true;
 }
 
@@ -25242,6 +25918,7 @@ function openPushSettings() {
         </div>
 
         <button onclick="savePushSettings()" style="width:100%; margin-top:6px; padding:12px; border:none; background:var(--accent-tab, #6B5B96); color:#fff; border-radius:11px; font-size:13px; font-weight:800; cursor:pointer; font-family:inherit;">저장</button>
+        <button onclick="openSummarySettings()" style="width:100%; margin-top:10px; padding:12px; border:0.5px solid var(--accent-tab, #6B5B96); background:transparent; color:var(--accent-tab, #6B5B96); border-radius:11px; font-size:12.5px; font-weight:800; cursor:pointer; font-family:inherit;">📋 아침 요약 설정</button>
         <button onclick="sendTestPush()" style="width:100%; margin-top:7px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">🔔 테스트 알림 보내기</button>
       </div>
     </div>`;
@@ -25260,6 +25937,206 @@ function savePushSettings() {
   saveData();
   showToast('저장했어요');
   openPushSettings();
+}
+
+
+// ===== 📋 아침 요약 알림 =====
+// Worker 는 내 데이터를 모른다. 그래서 앱이 요약 문구를 미리 만들어 서버에 넣어둔다.
+// Cron 은 10분마다 돌면서 '앱이 정한 시각'이 됐는지만 보고 보낸다 → 시간 변경이 앱에서 된다.
+
+// 요약에 넣을 항목 (사용자가 켜고 끌 수 있다)
+const SUMMARY_PARTS = [
+  { key: 'todo',   label: '오늘 할일 · 일정' },
+  { key: 'workout',label: '어제 운동 · 오늘 목표' },
+  { key: 'money',  label: '어제 지출 · 예산' },
+  { key: 'asset',  label: '자산 · 환율' },
+];
+
+function summaryOn(key) {
+  const off = settings.summaryOff || {};
+  return !off[key];
+}
+
+// 어제 날짜 (YYYY-MM-DD)
+// 앱의 오늘 기준(todayKey)에서 하루를 빼야 한다. new Date() 를 따로 쓰면 기준이 갈린다.
+function yesterdayKey() {
+  return dayBefore(todayKey(), 1);
+}
+
+// 어떤 날짜에서 n일 전
+function dayBefore(dateK, n) {
+  const [y, m, d] = String(dateK).split('-').map(Number);
+  const t = new Date(y, m - 1, d);
+  t.setDate(t.getDate() - (Number(n) || 0));
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+}
+
+// ── 각 줄 만들기 ── 값이 없으면 빈 문자열을 돌려주고, 그런 줄은 빼고 보낸다
+function summaryLineTodo() {
+  const tk = todayKey();
+  const list = (todos || []).filter(t => !t.done);
+  const dueToday = list.filter(t => t.date === tk).length;
+  const overdue = list.filter(t => t.date && t.date < tk).length;
+  const routines = (challenges || []).filter(c => !(c.checks || {})[tk]).length;
+
+  const bits = [];
+  if (dueToday > 0) bits.push(`오늘 ${dueToday}건`);
+  if (overdue > 0) bits.push(`밀린 것 ${overdue}건`);
+  if (routines > 0) bits.push(`루틴 ${routines}개`);
+  if (bits.length === 0) return '✅ 오늘 할일 없음';
+  return '✅ ' + bits.join(' · ');
+}
+
+function summaryLineWorkout() {
+  const yk = yesterdayKey();
+  const log = (workoutLog || {})[yk];
+  const done = workoutSessions(log || {});
+  let line;
+  if (done.length > 0) {
+    const note = done.map(x => formatWorkoutNote(x.sport, x.dist, x.unit)).join(' · ');
+    line = `💪 어제 ${note}${Number(log.minutes) > 0 ? ` ${log.minutes}분` : ''}`;
+  } else {
+    line = '💪 어제 운동 기록 없음';
+  }
+  // 이번 주 몇 번 했는지
+  let weekCount = 0;
+  for (let i = 0; i < 7; i++) {
+    if ((workoutLog || {})[dayBefore(todayKey(), i)]?.done) weekCount++;
+  }
+  return line + ` (이번 주 ${weekCount}일)`;
+}
+
+function summaryLineMoney() {
+  const yk = yesterdayKey();
+  const list = (budget?.expenses || []).filter(e => e.dateKey === yk && e.type !== 'income');
+  const spent = list.reduce((s, e) => s + (Number(e.amt) || 0), 0);
+  if (spent <= 0) return '💰 어제 지출 없음';
+  return `💰 어제 ${spent.toLocaleString()}원 (${list.length}건)`;
+}
+
+function summaryLineAsset() {
+  const bits = [];
+  try {
+    const total = (assets || []).reduce((s, a) => {
+      const live = (liveAssetData || {})[a.id];
+      const v = live?.krwValue || (Number(a.qty) || 0) * (Number(a.price) || 0);
+      return s + (Number(v) || 0);
+    }, 0);
+    if (total > 0) bits.push(`총자산 ${Math.round(total / 10000).toLocaleString()}만원`);
+  } catch (e) {}
+  const fx = Number(typeof exchangeRateCache !== 'undefined' && exchangeRateCache ? exchangeRateCache.rate : 0) || 0;
+  if (fx > 0) bits.push(`$1=${Math.round(fx).toLocaleString()}원`);
+  return bits.length ? '📈 ' + bits.join(' · ') : '';
+}
+
+// 알림 본문 한 덩어리
+function buildMorningSummary() {
+  const lines = [];
+  if (summaryOn('todo')) lines.push(summaryLineTodo());
+  if (summaryOn('workout')) lines.push(summaryLineWorkout());
+  if (summaryOn('money')) lines.push(summaryLineMoney());
+  if (summaryOn('asset')) { const l = summaryLineAsset(); if (l) lines.push(l); }
+  return lines.filter(Boolean).join('\n');
+}
+
+// 서버에 '언제, 무슨 내용으로 보낼지'를 넣어둔다. 앱을 열 때마다 갱신된다.
+async function pushSummaryToServer() {
+  const url = pushServerUrl();
+  const key = settings.uploadKey || '';
+  if (!url || !key || !settings.pushEnabled) return false;
+  if (settings.summaryTime === 'off') return false;
+
+  try {
+    const res = await fetch(url.replace(/\/+$/, '') + '/push/plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        key,
+        at: settings.summaryTime || '08:00',   // 한국 시간 기준 HH:MM
+        title: '📋 오늘 정리',
+        body: buildMorningSummary(),
+        tag: 'daily-summary',
+      }),
+    });
+    return res.ok;
+  } catch (e) {
+    console.warn('요약 예약 실패:', e);
+    return false;
+  }
+}
+
+function openSummarySettings() {
+  const time = settings.summaryTime || '08:00';
+  const preview = buildMorningSummary() || '(보낼 내용이 없어요)';
+  const rows = SUMMARY_PARTS.map(p => `
+    <label style="display:flex; align-items:center; gap:10px; padding:11px 12px; background:var(--bg-primary); border:0.5px solid var(--border-tertiary); border-radius:10px; margin-bottom:6px; cursor:pointer;">
+      <input type="checkbox" data-part="${p.key}" ${summaryOn(p.key) ? 'checked' : ''} style="width:18px; height:18px;" />
+      <span style="font-size:12.5px; font-weight:600;">${p.label}</span>
+    </label>`).join('');
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="openPushSettings()">뒤로</button>
+        <h2 style="font-size:15px;">📋 아침 요약</h2>
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+      </div>
+      <div style="padding:0 16px 20px;">
+
+        <div style="padding:11px 12px; background:var(--bg-secondary); border-radius:10px; font-size:11.5px; color:var(--text-secondary); line-height:1.9; margin-bottom:14px;">
+          정한 시각에 하루 요약을 알림으로 보내요.<br>
+          <span style="color:var(--text-tertiary);">앱을 열 때마다 최신 내용으로 갱신됩니다.</span>
+        </div>
+
+        <div class="field">
+          <div class="field-label">보낼 시각</div>
+          <input type="time" id="summary-time" value="${time === 'off' ? '08:00' : escapeAttr(time)}" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:14px; background:var(--bg-primary); color:var(--text-primary); font-family:inherit;" />
+        </div>
+
+        <div style="font-size:12px; font-weight:800; margin:14px 0 7px;">담을 내용</div>
+        ${rows}
+
+        <div style="font-size:12px; font-weight:800; margin:16px 0 6px;">미리보기</div>
+        <div style="padding:12px 13px; background:var(--bg-secondary); border-radius:11px; font-size:12px; line-height:1.9; white-space:pre-wrap;">${escapeHTML(preview)}</div>
+
+        <button onclick="saveSummarySettings()" style="width:100%; margin-top:12px; padding:12px; border:none; background:var(--accent-tab, #6B5B96); color:#fff; border-radius:11px; font-size:13px; font-weight:800; cursor:pointer; font-family:inherit;">저장하고 예약</button>
+        <button onclick="stopSummary()" style="width:100%; margin-top:7px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-tertiary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">요약 알림 끄기</button>
+      </div>
+    </div>`;
+  modal.classList.add('show');
+}
+
+async function saveSummarySettings() {
+  const t = (document.getElementById('summary-time')?.value || '08:00').trim();
+  settings.summaryTime = t;
+  const off = {};
+  document.querySelectorAll('[data-part]').forEach(el => {
+    if (!el.checked) off[el.dataset.part] = true;
+  });
+  settings.summaryOff = off;
+  saveData();
+  const ok = await pushSummaryToServer();
+  showToast(ok ? `📋 매일 ${t} 에 보낼게요` : '저장했어요 (알림을 먼저 켜주세요)');
+  openSummarySettings();
+}
+
+async function stopSummary() {
+  settings.summaryTime = 'off';
+  saveData();
+  const url = pushServerUrl();
+  const key = settings.uploadKey || '';
+  if (url && key) {
+    try {
+      await fetch(url.replace(/\/+$/, '') + '/push/plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, at: 'off' }),
+      });
+    } catch (e) {}
+  }
+  showToast('요약 알림을 껐어요');
+  openSummarySettings();
 }
 
 function openSettingsModal() {
