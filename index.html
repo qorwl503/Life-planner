@@ -26195,10 +26195,35 @@ async function registerPushWorker() {
 // 알림 서버에 "나"를 증명하는 방법.
 // 예전엔 열쇠 하나를 모두가 나눠 썼는데, 그러면 남의 요약이 내 폰으로 올 수 있다.
 // 이제는 로그인 토큰을 보내고 서버가 구글에 물어 확인한다.
+// 앱을 막 켠 직후에는 Firebase 가 로그인 복구를 끝내지 못했을 수 있다.
+// 그때 바로 '로그인하세요'를 띄우면, 로그인해 있는 사람에게 거짓말을 하는 셈이 된다.
+async function waitForAuthUser(maxMs = 5000) {
+  const auth = window._fb && window._fb.auth;
+  if (!auth) return null;
+  if (auth.currentUser) return auth.currentUser;
+
+  const started = Date.now();
+  while (Date.now() - started < maxMs) {
+    await new Promise(r => setTimeout(r, 150));
+    if (auth.currentUser) return auth.currentUser;
+  }
+  return null;
+}
+
 async function pushAuthHeaders() {
-  const u = window._fb && window._fb.auth && window._fb.auth.currentUser;
-  if (!u) throw new Error('알림을 쓰려면 먼저 로그인해주세요');
-  const token = await u.getIdToken();
+  if (!window._fb || !window._fb.auth) {
+    throw new Error('앱이 아직 준비 중이에요. 잠시 후 다시 눌러주세요');
+  }
+  const u = await waitForAuthUser();
+  if (!u) throw new Error('알림을 쓰려면 먼저 로그인해주세요 (설정 → 계정)');
+
+  let token;
+  try {
+    token = await u.getIdToken();
+  } catch (e) {
+    // 토큰이 만료됐는데 갱신도 실패한 경우 — 한 번 더, 이번엔 강제로
+    token = await u.getIdToken(true);
+  }
   return { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token };
 }
 
