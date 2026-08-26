@@ -7583,10 +7583,6 @@ function openInboxReport() {
       ? '설정 → 계정 에서 로그인해주세요.'
       : '잠시 후 다시 눌러보세요. 계속 이러면 아래 오류 문구를 알려주세요.';
     tone = 'danger';
-  } else if (d.applied > 0 && d.viaDirect > 0 && server) {
-    verdict = d.applied + '건 들어왔지만 알림은 못 받아요';
-    advice = '단축어가 알림 서버를 안 거치고 Firestore 로 바로 보내고 있어요. 단축어 마지막 동작의 주소를 서버 주소로 바꾸면 앱이 꺼져 있어도 알림이 옵니다.';
-    tone = 'danger';
   } else if (d.applied > 0) {
     verdict = d.applied + '건 들어왔어요';
     advice = server ? '알림 서버를 거쳐 왔어요. 앱이 꺼져 있어도 알림이 옵니다.' : '운동 탭 달력에서 확인해보세요.';
@@ -7625,8 +7621,7 @@ function openInboxReport() {
           서버에 쌓여 있던 것 · ${d.found || 0}건<br>
           기록으로 넣은 것 · ${d.applied || 0}건<br>
           ${d.error ? `오류 · ${escapeHTML(String(d.error).slice(0, 120))}<br>` : ''}
-          앱 설정 · ${server ? '내 알림 서버' : 'Firestore 직행 (알림 없음)'}<br>
-          실제로 온 길 · ${(d.viaRelay || 0) > 0 ? `서버 경유 ${d.viaRelay}건` : ''}${(d.viaRelay || 0) > 0 && (d.viaDirect || 0) > 0 ? ' / ' : ''}${(d.viaDirect || 0) > 0 ? `직행 ${d.viaDirect}건 ⚠️` : ''}${!(d.viaRelay || d.viaDirect) ? '-' : ''}
+          보내는 곳 · ${server ? '내 알림 서버' : 'Firestore 직행 (알림 없음)'}
         </div>
 
         <button onclick="testRelayPush()" style="width:100%; padding:12px; border:none; background:var(--accent-tab, #3D8168); color:#fff; border-radius:10px; font-size:12.5px; font-weight:800; cursor:pointer; font-family:inherit; margin-bottom:7px;">🔔 서버 알림 시험</button>
@@ -7676,9 +7671,7 @@ async function drainWorkoutInbox(silent = true) {
 
   let applied = 0;
   const appliedItems = [];        // 알림을 건별로 띄우려고 모아둔다
-  let viaRelay = 0, viaDirect = 0; // 단축어가 서버를 거쳤는지 세어 둔다
   for (const it of picked) {
-    if (String(it.via || '') === 'relay') viaRelay++; else viaDirect++;
     // 날짜가 없거나 이상하면 오늘로
     let dateK = todayKey();
     const raw = String(it.date || '');
@@ -7770,8 +7763,6 @@ async function drainWorkoutInbox(silent = true) {
   }
 
   info.applied = applied;
-  info.viaRelay = viaRelay;
-  info.viaDirect = viaDirect;
   info.step = applied > 0 ? '반영 완료' : '가져왔지만 반영 0건';
 
   const added = (settings.syncLog || []).length - logBefore;
@@ -7790,7 +7781,7 @@ async function drainWorkoutInbox(silent = true) {
 
     logSyncEvent('workout', `⌚ ${what}`,
       `앱이 꺼져 있는 동안 들어온 ${applied}건${days.length ? ' · ' + days.join(', ') : ''}`
-      + (viaDirect > 0 && pushServerUrl() ? ' · ⚠️ 단축어가 옛 주소로 보내는 중' : ''));
+      );
 
     // 🔔 종목이 여러 개면 각각 알린다 — 합쳐 놓으면 뭐가 뭔지 모른다
     try {
@@ -7811,11 +7802,6 @@ async function drainWorkoutInbox(silent = true) {
       }
     } catch (e) { console.warn('운동 알림 실패:', e); }
 
-    // 단축어가 서버를 안 거치면 앱을 열어야만 알 수 있다 — 그 사실을 알려준다
-    if (viaDirect > 0 && pushServerUrl()) {
-      logSyncEvent('workout', '⚠️ 알림 서버를 안 거치고 들어왔어요',
-        '단축어 마지막 동작의 주소를 서버 주소로 바꾸면, 앱이 꺼져 있어도 도착 즉시 알림이 옵니다');
-    }
     saveData();
     showToast(`⌚ 워치 운동 ${applied}건 들어왔어요`);
     if (currentTab === 'workout') renderWorkout();
