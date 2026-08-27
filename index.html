@@ -7538,6 +7538,16 @@ async function checkInboxNow() {
   } catch (e) {
     window._lastDrainInfo = { step: '확인 중 오류', found: 0, applied: 0, error: String(e && e.message || e) };
   }
+  // 방금 보낸 게 아직 안 보일 수 있다. 0건이면 잠깐 뒤 한 번 더 본다.
+  const got = (window._lastDrainInfo && window._lastDrainInfo.found) || 0;
+  if (!got) {
+    await new Promise(r => setTimeout(r, 2500));
+    try {
+      await drainWorkoutInbox(false);
+      await drainExpenseInbox(false);
+    } catch (e) { /* 두 번째는 실패해도 아래 보고에 첫 결과가 남는다 */ }
+  }
+
   settings.lastInboxCheck = Date.now();
   saveData();
   if (currentTab === 'workout') renderWorkout();
@@ -7639,6 +7649,13 @@ async function drainWorkoutInbox(silent = true) {
   window._lastDrainInfo = { at: Date.now(), step: '시작', found: 0, applied: 0, error: '' };
   const info = window._lastDrainInfo;
 
+  if (!photosReady()) {
+    // 앱을 켠 직후엔 로그인 복구가 아직 안 끝나 있다.
+    // 여기서 바로 포기하면 '들어온 게 없어요' 가 뜨고, 실제로 와 있던 기록을
+    // 한참 뒤에야 한꺼번에 가져오게 된다. 잠깐 기다려 준다.
+    info.step = '로그인 기다리는 중';
+    await waitForAuthUser(6000);
+  }
   if (!photosReady()) {
     info.step = '로그인 안 됨';
     info.error = currentUser ? 'Firestore 준비 안 됨' : '로그인이 안 돼 있어요';
@@ -8048,26 +8065,37 @@ async function openWatchPhotoSetup(regenerate = false) {
           단축어 앱 → 자동화 → <b>Apple Watch 운동</b> → 종료될 때 → <b>즉시 실행</b><br>
           동작을 <b>순서대로 추가</b>하면 됩니다. 끌어옮길 일 없어요.<br><br>
           <b>①</b> 대기 — <b>10초</b><br>
-          <b>②</b> 최근 스크린샷 가져오기 — <b>2장</b><br>
-          <b>③</b> <span style="color:var(--text-danger); font-weight:700;">이미지 크기 조절 — 너비 <b>800</b></span><br>
-          <b>④</b> Base64 인코딩<br>
-          <b>⑤</b> 목록에서 항목 가져오기 — <b>첫 번째 항목</b><br>
-          <b>⑥</b> 목록에서 항목 가져오기 — <b>마지막 항목</b><br>
-          <b>⑦</b> 텍스트<br>
-          <b>⑧</b> URL의 콘텐츠 가져오기 — <b>POST</b>, 본문 <b>파일</b> → ⑦의 텍스트
+          <b>②</b> 최근 사진 가져오기 — <b>2장</b><br>
+          <b>③</b> <span style="color:var(--text-danger); font-weight:700;">이미지 변환 — JPEG</span> (입력: ②)<br>
+          <b>④</b> 목록에서 항목 가져오기 — <b>첫 번째 항목</b> (입력: ③)<br>
+          <b>⑤</b> Base64로 인코딩 (입력: <b>④</b>)<br>
+          <b>⑥</b> 목록에서 항목 가져오기 — <b>마지막 항목</b> (입력: ③)<br>
+          <b>⑦</b> Base64로 인코딩 (입력: <b>⑥</b>)<br>
+          <b>⑧</b> 텍스트 — photo 자리에 <b>⑤</b>, photo2 자리에 <b>⑦</b><br>
+          <b>⑨</b> URL의 콘텐츠 가져오기 — <b>POST</b>, 본문 <b>파일</b> → ⑧의 텍스트
         </div>
 
         <div style="margin-top:10px; padding:11px 12px; background:var(--bg-danger); border-radius:10px; font-size:11px; color:var(--text-danger); line-height:1.8;">
-          <b>③ 이미지 크기 조절이 핵심입니다.</b><br>
-          원본 캡처는 한 장에 1MB 가 넘습니다. 손으로 실행할 땐 넘어가지만,
-          <b>운동 종료 자동 실행은 백그라운드라</b> 큰 데이터를 보내다 중간에 끊깁니다.
-          그래서 "실행됨"이라고 뜨는데 아무것도 안 들어오는 겁니다.<br>
-          <span style="opacity:0.85;">너비 800 이면 글자는 그대로 읽히고 용량은 1/10 이 됩니다.</span>
+          <b>순서가 핵심입니다.</b><br>
+          Base64 인코딩을 <b>사진 2장에 한꺼번에</b> 걸면 결과가 목록이 아니라 텍스트 하나가 됩니다.
+          그러면 <b>목록에서 항목 가져오기</b>가 빈 값을 내고, 사진이 <b>0KB·회색</b>으로 들어갑니다.<br>
+          <span style="opacity:0.85;">사진을 <b>먼저 하나씩 꺼낸 뒤</b> 각각 인코딩해야 합니다.</span>
+        </div>
+
+        <div style="margin-top:10px; padding:11px 12px; background:var(--bg-danger); border-radius:10px; font-size:11px; color:var(--text-danger); line-height:1.8;">
+          <b>③ 이미지 변환(JPEG)이 핵심입니다.</b><br>
+          워치 캡처는 <b>PNG</b> 라서 한 장에 1MB 를 넘깁니다.
+          Firestore 는 한 항목에 1MB 까지만 담기 때문에 그대로 보내면 통째로 거부됩니다.<br>
+          <span style="opacity:0.85;">
+            JPEG 로 바꾸면 <b>800KB → 80KB</b> 로 줄고 글자는 그대로 읽힙니다.
+            워치 캡처는 원래 400px 정도라 <b>크기 조절은 필요 없습니다</b> — 오히려 늘어납니다.
+          </span>
         </div>
 
         <div style="margin-top:10px; padding:10px 11px; background:var(--bg-secondary); border-radius:10px; font-size:11px; color:var(--text-tertiary); line-height:1.8;">
-          ⑤⑥ 의 입력은 둘 다 <b>④ Base64 결과</b>여야 합니다.
-          한 장만 찍은 날은 ⑤와 ⑥이 같은 사진이 되는데, 앱이 알아서 한 번만 읽습니다.
+          ⑧의 회색 변수 두 개는 <b>서로 다른 것</b>이어야 합니다 — 앞은 ⑤, 뒤는 ⑦.
+          둘 다 같은 걸 가리키면 같은 사진이 두 번 들어갑니다.
+          한 장만 찍은 날은 ④와 ⑥이 같은 사진이 되는데, 앱이 알아서 한 번만 읽습니다.
         </div>
 
         <div style="font-size:11.5px; font-weight:700; margin:14px 0 4px;">⑧의 주소</div>
@@ -28343,7 +28371,7 @@ async function sendSubscriptionToServer(sub) {
   const res = await fetch(url.replace(/\/+$/, '') + '/push/subscribe', {
     method: 'POST',
     headers: await pushAuthHeaders(),
-    body: JSON.stringify({ key: settings.uploadKey || '', sub: sub.toJSON ? sub.toJSON() : sub }),
+    body: JSON.stringify({ uid: (currentUser && currentUser.uid) || '', key: settings.uploadKey || '', sub: sub.toJSON ? sub.toJSON() : sub }),
   });
   if (!res.ok) {
     // 서버가 알려준 이유를 그대로 보여준다 (숫자만 보면 원인을 알 수 없다)
@@ -28419,7 +28447,7 @@ async function disablePush() {
       await fetch(url.replace(/\/+$/, '') + '/push/unsubscribe', {
         method: 'POST',
         headers: await pushAuthHeaders(),
-        body: JSON.stringify({ key: settings.uploadKey || '', endpoint }),
+        body: JSON.stringify({ uid: (currentUser && currentUser.uid) || '', key: settings.uploadKey || '', endpoint }),
       });
     } catch (e) { console.warn('서버 구독 삭제 실패:', e); }
   }
@@ -28453,7 +28481,7 @@ async function sendTestPush() {
     const res = await fetch(url.replace(/\/+$/, '') + '/push/test', {
       method: 'POST',
       headers: await pushAuthHeaders(),
-      body: JSON.stringify({ key: settings.uploadKey || '' }),
+      body: JSON.stringify({ uid: (currentUser && currentUser.uid) || '', key: settings.uploadKey || '' }),
     });
     const txt = await res.text();
     if (!res.ok) { showToast('테스트 실패: ' + txt.slice(0, 80)); return; }
@@ -28485,7 +28513,8 @@ async function refreshPushServerState() {
     return;
   }
   try {
-    const res = await fetch(url.replace(/\/+$/, '') + '/push/status', {
+    const q = `?uid=${encodeURIComponent((currentUser && currentUser.uid) || '')}&key=${encodeURIComponent(settings.uploadKey || '')}`;
+    const res = await fetch(url.replace(/\/+$/, '') + '/push/status' + q, {
       headers: await pushAuthHeaders(),
     });
     const d = await res.json().catch(() => ({}));
@@ -28847,6 +28876,7 @@ async function pushSummaryToServer() {
       method: 'POST',
       headers: await pushAuthHeaders(),
       body: JSON.stringify({
+        uid: (currentUser && currentUser.uid) || '',
         key: settings.uploadKey || '',
         at: settings.summaryTime || '08:00',   // 한국 시간 기준 HH:MM
         title: '📋 오늘 정리',
@@ -28933,7 +28963,7 @@ async function stopSummary() {
       await fetch(url.replace(/\/+$/, '') + '/push/plan', {
         method: 'POST',
         headers: await pushAuthHeaders(),
-        body: JSON.stringify({ key: settings.uploadKey || '', at: 'off' }),
+        body: JSON.stringify({ uid: (currentUser && currentUser.uid) || '', key: settings.uploadKey || '', at: 'off' }),
       });
     } catch (e) {}
   }
