@@ -4583,17 +4583,44 @@ function renderMonthlyGoals() {
 }
 
 // 🔁 데일리 루틴 — 이미 있는 반복 할일을 모아서 오늘 체크 상태와 함께 보여준다
+// 반복을 켰는데 오늘 안 뜨는 경우가 있다 — 요일이 아니거나 시작 전이거나 끝났거나.
+// 그냥 안 보이면 '반복이 저장 안 됐나' 싶어진다. 이유를 적어준다.
+function routineOffReason(t, tk) {
+  const r = t.repeat || {};
+  if (t.dateKey && tk < t.dateKey) return `${t.dateKey}부터`;
+  if (r.until && tk > r.until) return `${r.until}에 끝남`;
+  if (r.type === 'weekly') {
+    const names = ['일', '월', '화', '수', '목', '금', '토'];
+    const dows = Array.isArray(r.dows) ? r.dows : [];
+    return dows.length ? `${dows.map(d => names[d]).join('·')}요일` : '오늘은 쉬는 날';
+  }
+  if (r.type === 'monthly') return `매달 ${r.day || '?'}일`;
+  return '오늘은 쉬는 날';
+}
+
 function renderDailyRoutines() {
   const tk = todayKey();
-  const routines = todos.filter(t => t.repeat && t.repeat.type && todoRepeatsOn(t, tk));
+  const all = todos.filter(t => t.repeat && t.repeat.type);
+  const routines = all.filter(t => todoRepeatsOn(t, tk));
+  const resting = all.filter(t => !todoRepeatsOn(t, tk));
+
   if (routines.length === 0) {
     return `
       <div class="card" style="margin-bottom:12px;">
         <div style="font-size:13px; font-weight:700; margin-bottom:6px;">🔁 데일리 루틴</div>
-        <div style="font-size:11px; color:var(--text-tertiary); line-height:1.6;">
-          매일·매주 반복하는 일을 루틴으로 만들어보세요.<br>
-          <span style="opacity:0.8;">할일 추가할 때 <b>반복</b>을 켜면 여기 모여요.</span>
-        </div>
+        ${resting.length === 0 ? `
+          <div style="font-size:11px; color:var(--text-tertiary); line-height:1.6;">
+            매일·매주 반복하는 일을 루틴으로 만들어보세요.<br>
+            <span style="opacity:0.8;">할일 추가할 때 <b>반복</b>을 켜면 여기 모여요.</span>
+          </div>` : `
+          <div style="font-size:11px; color:var(--text-tertiary); line-height:1.6; margin-bottom:8px;">
+            오늘 할 루틴은 없어요. <b>${resting.length}개</b>가 다른 날에 잡혀 있어요.
+          </div>
+          ${resting.map(t => `
+            <div style="display:flex; justify-content:space-between; gap:8px; padding:7px 0; border-top:0.5px solid var(--border-tertiary); font-size:11.5px;">
+              <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHTML(t.title)}</span>
+              <span style="flex:none; color:var(--text-tertiary);">${escapeHTML(routineOffReason(t, tk))}</span>
+            </div>`).join('')}`}
       </div>`;
   }
 
@@ -6140,9 +6167,9 @@ function renderWorkoutPlanCard() {
       ${rows.map(r => {
         const ok = r.did >= r.target;
         return `
-        <div style="margin-bottom:7px;">
+        <div style="margin-bottom:7px; cursor:pointer;" onclick="openWeekDoneDetail('${r.sport}')">
           <div style="display:flex; justify-content:space-between; align-items:baseline; font-size:11.5px; margin-bottom:3px;">
-            <span style="font-weight:600;">${r.emoji} ${escapeHTML(r.sport)}</span>
+            <span style="font-weight:600;">${r.emoji} ${escapeHTML(r.sport)}${r.did > 0 ? ' <span style="color:var(--text-tertiary); font-weight:600;">›</span>' : ''}</span>
             <span style="color:${ok ? 'var(--text-success)' : 'var(--text-tertiary)'}; font-weight:${ok ? '800' : '600'};">
               ${ok ? '완료' : `${r.left}회 남음`} <span style="color:var(--text-tertiary); font-weight:600;">(${r.did}/${r.target})</span>
             </span>
@@ -6152,7 +6179,58 @@ function renderWorkoutPlanCard() {
           </div>
         </div>`;
       }).join('')}
+
+      ${totalDid > 0 ? `<div style="margin-top:8px; font-size:10.5px; color:var(--text-tertiary);">
+        종목을 누르면 <b>이번 주에 센 날</b>을 볼 수 있어요. 안 한 게 들어가 있으면 거기서 지우세요.
+      </div>` : ''}
     </div>`;
+}
+
+// 계획 횟수는 실제 기록에서 세어진다. 그래서 잘못 들어간 기록을 지울 방법이
+// 없으면 "안 했는데 했다고 나온다" 가 된다 — 센 날을 그대로 보여주고 지우게 한다.
+function openWeekDoneDetail(sport) {
+  const hits = [];
+  for (const k of thisWeekKeys()) {
+    const log = (workoutLog || {})[k];
+    if (!log) continue;
+    workoutSessions(log).forEach((ses, i) => {
+      if (((sportMeta(ses.sport) || {}).key || '기타') !== sport) return;
+      hits.push({ dateK: k, idx: i, ses });
+    });
+  }
+
+  const emoji = (SPORTS.find(x => x.key === sport) || {}).emoji || '💪';
+  modal.innerHTML = `
+    <div class="modal-head">
+      <button onclick="closeModal()" style="border:none; background:transparent; color:var(--text-tertiary); font-size:13px; cursor:pointer; font-family:inherit;">닫기</button>
+      <div style="font-size:14px; font-weight:800;">${emoji} ${escapeHTML(sport)} — 이번 주</div>
+      <span style="width:32px;"></span>
+    </div>
+    <div style="padding:14px 16px 20px;">
+      <div style="padding:11px 12px; background:var(--bg-secondary); border-radius:10px; font-size:11.5px; color:var(--text-secondary); line-height:1.7; margin-bottom:12px;">
+        계획 횟수는 <b>실제 기록</b>에서 셉니다. 하루에 같은 종목을 여러 번 해도 <b>하루 1회</b>로 셉니다.<br>
+        <span style="opacity:0.85;">안 한 게 들어가 있으면 여기서 지우면 횟수도 같이 줄어요.</span>
+      </div>
+
+      ${hits.length === 0 ? `
+        <div style="font-size:12px; color:var(--text-tertiary); text-align:center; padding:22px 0;">
+          이번 주엔 아직 기록이 없어요
+        </div>` : hits.map(h => `
+        <div style="display:flex; align-items:center; gap:9px; padding:10px 11px; border:0.5px solid var(--border-tertiary); border-radius:10px; margin-bottom:7px;">
+          <div style="flex:1; min-width:0;">
+            <div style="font-size:12px; font-weight:700;">${escapeHTML(h.dateK)}</div>
+            <div style="font-size:10.5px; color:var(--text-tertiary); margin-top:2px;">
+              ${escapeHTML(formatWorkoutNote(h.ses.sport, h.ses.dist, h.ses.unit))}
+              ${Number(h.ses.minutes) > 0 ? ' · ' + Math.round(h.ses.minutes) + '분' : ''}
+              ${Number(h.ses.kcal) > 0 ? ' · ' + Math.round(h.ses.kcal) + 'kcal' : ''}
+              ${h.ses.manual ? '' : ' · 자동'}
+            </div>
+          </div>
+          <button onclick="deleteWorkoutSession('${h.dateK}', ${h.idx}); openWeekDoneDetail('${sport}');"
+            style="flex:none; padding:6px 10px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-danger); border-radius:8px; font-size:11px; cursor:pointer; font-family:inherit;">지우기</button>
+        </div>`).join('')}
+    </div>`;
+  modal.classList.add('show');
 }
 
 function openWorkoutPlanModal() {
@@ -6872,7 +6950,79 @@ function renderConditionCard() {
 
       ${row('mood', '🙂', '오늘 기분', COND_MOODS)}
       ${row('fatigue', '💪', '몸 상태', COND_FATIGUE)}
+
+      <button onclick="openConditionHistory()" style="width:100%; margin-top:8px; padding:8px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:9px; font-size:11.5px; font-weight:600; cursor:pointer; font-family:inherit;">
+        📈 지난 컨디션 보기
+      </button>
     </div>`;
+}
+
+// 적어두기만 하고 다시 볼 수 없으면 적을 이유가 없다. 지난 기록을 그대로 보여준다.
+function conditionHistoryRows(days) {
+  const out = [];
+  const now = new Date();
+  for (let i = 0; i < (days || 30); i++) {
+    const d = new Date(now);
+    d.setDate(now.getDate() - i);
+    const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const c = (settings.condition || {})[k];
+    if (!c || (!c.sleep && !c.mood && !c.fatigue)) continue;
+    out.push({ dateK: k, dow: ['일', '월', '화', '수', '목', '금', '토'][d.getDay()], ...c });
+  }
+  return out;
+}
+
+function openConditionHistory() {
+  const rows = conditionHistoryRows(60);
+  const moods = rows.filter(r => r.mood).map(r => Number(r.mood));
+  const sleeps = rows.filter(r => Number(r.sleep) > 0).map(r => Number(r.sleep));
+  const avg = (a) => a.length ? Math.round((a.reduce((s, v) => s + v, 0) / a.length) * 10) / 10 : null;
+  const avgMood = avg(moods), avgSleep = avg(sleeps);
+
+  modal.innerHTML = `
+    <div class="modal-head">
+      <button onclick="closeModal()" style="border:none; background:transparent; color:var(--text-tertiary); font-size:13px; cursor:pointer; font-family:inherit;">닫기</button>
+      <div style="font-size:14px; font-weight:800;">📈 지난 컨디션</div>
+      <span style="width:32px;"></span>
+    </div>
+    <div style="padding:14px 16px 20px;">
+      ${rows.length === 0 ? `
+        <div style="font-size:12px; color:var(--text-tertiary); text-align:center; padding:26px 0; line-height:1.7;">
+          아직 적어둔 컨디션이 없어요<br>
+          <span style="opacity:0.8;">운동 탭에서 기분·몸 상태를 고르면 여기 쌓여요</span>
+        </div>` : `
+        <div style="display:flex; gap:8px; margin-bottom:12px;">
+          <div style="flex:1; padding:11px; background:var(--bg-secondary); border-radius:10px; text-align:center;">
+            <div style="font-size:10.5px; color:var(--text-tertiary);">적어둔 날</div>
+            <div style="font-size:16px; font-weight:800; margin-top:2px;">${rows.length}일</div>
+          </div>
+          <div style="flex:1; padding:11px; background:var(--bg-secondary); border-radius:10px; text-align:center;">
+            <div style="font-size:10.5px; color:var(--text-tertiary);">평균 기분</div>
+            <div style="font-size:16px; font-weight:800; margin-top:2px;">${avgMood ? COND_MOODS[Math.round(avgMood) - 1] || '—' : '—'}</div>
+          </div>
+          <div style="flex:1; padding:11px; background:var(--bg-secondary); border-radius:10px; text-align:center;">
+            <div style="font-size:10.5px; color:var(--text-tertiary);">평균 수면</div>
+            <div style="font-size:16px; font-weight:800; margin-top:2px;">${avgSleep ? avgSleep + 'h' : '—'}</div>
+          </div>
+        </div>
+
+        ${rows.map(r => `
+          <div style="display:flex; align-items:center; gap:9px; padding:9px 2px; border-top:0.5px solid var(--border-tertiary);">
+            <div style="flex:none; width:74px; font-size:11px; color:var(--text-tertiary);">
+              ${escapeHTML(r.dateK.slice(5))} <span style="opacity:0.7;">${r.dow}</span>
+            </div>
+            <div style="flex:1; display:flex; align-items:center; gap:10px; font-size:12px;">
+              <span title="기분">${r.mood ? COND_MOODS[r.mood - 1] : '·'}</span>
+              <span title="몸 상태">${r.fatigue ? COND_FATIGUE[r.fatigue - 1] : '·'}</span>
+              <span style="color:var(--text-tertiary); font-size:11px;">${Number(r.sleep) > 0 ? r.sleep + '시간' : ''}</span>
+            </div>
+          </div>`).join('')}
+
+        <div style="margin-top:10px; font-size:10.5px; color:var(--text-tertiary); line-height:1.7;">
+          최근 60일 중 적어둔 날만 보여줍니다.
+        </div>`}
+    </div>`;
+  modal.classList.add('show');
 }
 
 // ===== 🏋️ 근력 상세 =====
