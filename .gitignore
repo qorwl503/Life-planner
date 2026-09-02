@@ -1,0 +1,9 @@
+# 개인 설정 · 임시 파일은 올리지 않는다
+.dev.vars
+.dev.vars.example
+.env
+.env.example
+wrangler.toml
+design/
+*.log
+UsersqorwlAppData*
