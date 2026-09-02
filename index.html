@@ -6201,12 +6201,14 @@ function openWeekDoneDetail(sport) {
 
   const emoji = (SPORTS.find(x => x.key === sport) || {}).emoji || '💪';
   modal.innerHTML = `
-    <div class="modal-head">
-      <button onclick="closeModal()" style="border:none; background:transparent; color:var(--text-tertiary); font-size:13px; cursor:pointer; font-family:inherit;">닫기</button>
-      <div style="font-size:14px; font-weight:800;">${emoji} ${escapeHTML(sport)} — 이번 주</div>
-      <span style="width:32px;"></span>
-    </div>
-    <div style="padding:14px 16px 20px;">
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+        <h2 style="font-size:15px;">${emoji} ${escapeHTML(sport)} — 이번 주</h2>
+        <span></span>
+      </div>
+      <div style="padding:0 16px 20px;">
       <div style="padding:11px 12px; background:var(--bg-secondary); border-radius:10px; font-size:11.5px; color:var(--text-secondary); line-height:1.7; margin-bottom:12px;">
         계획 횟수는 <b>실제 기록</b>에서 셉니다. 하루에 같은 종목을 여러 번 해도 <b>하루 1회</b>로 셉니다.<br>
         <span style="opacity:0.85;">안 한 게 들어가 있으면 여기서 지우면 횟수도 같이 줄어요.</span>
@@ -6229,6 +6231,7 @@ function openWeekDoneDetail(sport) {
           <button onclick="deleteWorkoutSession('${h.dateK}', ${h.idx}); openWeekDoneDetail('${sport}');"
             style="flex:none; padding:6px 10px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-danger); border-radius:8px; font-size:11px; cursor:pointer; font-family:inherit;">지우기</button>
         </div>`).join('')}
+      </div>
     </div>`;
   modal.classList.add('show');
 }
@@ -6980,12 +6983,14 @@ function openConditionHistory() {
   const avgMood = avg(moods), avgSleep = avg(sleeps);
 
   modal.innerHTML = `
-    <div class="modal-head">
-      <button onclick="closeModal()" style="border:none; background:transparent; color:var(--text-tertiary); font-size:13px; cursor:pointer; font-family:inherit;">닫기</button>
-      <div style="font-size:14px; font-weight:800;">📈 지난 컨디션</div>
-      <span style="width:32px;"></span>
-    </div>
-    <div style="padding:14px 16px 20px;">
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+        <h2 style="font-size:15px;">📈 지난 컨디션</h2>
+        <span></span>
+      </div>
+      <div style="padding:0 16px 20px;">
       ${rows.length === 0 ? `
         <div style="font-size:12px; color:var(--text-tertiary); text-align:center; padding:26px 0; line-height:1.7;">
           아직 적어둔 컨디션이 없어요<br>
@@ -7021,6 +7026,7 @@ function openConditionHistory() {
         <div style="margin-top:10px; font-size:10.5px; color:var(--text-tertiary); line-height:1.7;">
           최근 60일 중 적어둔 날만 보여줍니다.
         </div>`}
+      </div>
     </div>`;
   modal.classList.add('show');
 }
