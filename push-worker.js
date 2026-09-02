@@ -5,7 +5,8 @@
 //   POST /push/test       테스트 알림 보내기
 //   POST /push/send       원하는 내용으로 알림 보내기 (요약 알림 등)
 //   GET  /push/status     구독이 등록돼 있는지 확인
-//   POST /relay/ping      단축어가 쓰는 길로 알림만 보내본다 (진단용)
+//   GET  /version         지금 서버에 올라간 코드 버전 (배포 확인용)
+//   GET/POST /relay/ping  단축어가 쓰는 길로 알림만 보내본다 (진단용)
 //   POST /ai/{모델}       ⚠️ 기본 꺼짐. GEMINI_KEY Secret 이 없으면 503.
 //                         켜기 전에 아래 'AI 중계' 주석의 1~4번을 반드시 고칠 것
 //
@@ -38,6 +39,11 @@
 
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
+// 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
+const WORKER_VERSION = '2026-08-26.15';
+const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
+  '/push/plan', '/push/status', '/relay/workout', '/relay/ping', '/version'];
+
 let ENV = null;
 
 export default {
@@ -53,9 +59,11 @@ export default {
       if (url.pathname === '/push/send' && request.method === 'POST') return await handleSend(request, env);
       if (url.pathname === '/push/plan' && request.method === 'POST') return await handlePlan(request, env);
       if (url.pathname === '/relay/workout' && request.method === 'POST') return await handleRelayWorkout(request, env, url);
-      if (url.pathname === '/relay/ping' && request.method === 'POST') return await handleRelayPing(request, env);
+      // 주소창(GET)으로도 열 수 있게 둔다 — 배포가 됐는지 눈으로 확인하는 용도
+      if (url.pathname === '/relay/ping') return await handleRelayPing(request, env);
+      if (url.pathname === '/version') return json({ version: WORKER_VERSION, routes: ROUTE_LIST });
       if (url.pathname.startsWith('/ai/') && request.method === 'POST') return await handleAI(request, env, url);
-      if (url.pathname === '/push/status') return await handleStatus(request, env);
+      if (url.pathname === '/push/status') return await handleStatus(request, env, url);
     } catch (e) {
       const msg = String(e && e.message || e);
       // 로그인·열쇠 문제는 서버 잘못이 아니므로 401 로 구분해 준다
@@ -225,6 +233,22 @@ async function verifyIdToken(env, idToken) {
 //
 // 2번을 남겨둔 이유: 토큰 검증이 안 되는 상황(키 제한 등)에서도 주인은 알림을 계속 쓸 수 있어야 한다.
 // 이건 MY_UID 한 사람으로만 매핑되므로, 여러 사람이 서로의 알림을 보던 옛 문제는 생기지 않는다.
+// 앱이 본문에 넣어 보낸 uid + key 로 사람을 가른다.
+//   로그인 토큰 확인은 구글 API 를 부르는데, 그 API 키에 제한이 걸려 있으면 늘 거절당한다
+//   ('FIREBASE_API_KEY 가 거절당했어요'). 그러면 알림 등록 자체가 안 돼서
+//   기록이 들어와도 보낼 대상이 없다 — 알림이 영영 안 온다.
+//   그래서 앱이 알려준 uid 를 쓴다. 열쇠는 워치 연동에 쓰는 그 값이다.
+//   ⚠️ uid 와 열쇠를 둘 다 아는 사람은 내 알림을 받아볼 수 있다.
+//      다만 그 둘을 알면 이미 내 수신함에 글을 쓸 수 있으므로 새로 열리는 위험은 아니다.
+function bodyIdentity(env, body) {
+  const uid = String((body && body.uid) || '').trim();
+  const key = String((body && body.key) || '').trim();
+  if (!uid || !key) return null;
+  if (!/^[A-Za-z0-9_-]{8,128}$/.test(uid)) return null;
+  if (!/^[0-9a-f]{16,128}$/.test(key)) return null;
+  return { uid, email: '', emailVerified: true, viaKey: true };
+}
+
 // 본문의 key 가 INBOX_TOKEN 과 같으면 주인으로 본다. 아니면 null.
 function legacyOwner(env, body) {
   const key = body && body.key;
@@ -234,22 +258,21 @@ function legacyOwner(env, body) {
 }
 
 async function requireUser(request, env, body) {
-  const owner = legacyOwner(env, body);
+  // 앱이 보낸 uid + 열쇠가 있으면 그걸 먼저 쓴다. 구글 API 를 안 거치므로 늘 된다.
+  const byBody = bodyIdentity(env, body) || legacyOwner(env, body);
+
   const auth = request.headers.get('Authorization') || '';
   const m = auth.match(/^Bearer\s+(.+)$/i);
-
   if (m) {
     try {
       return await verifyIdToken(env, m[1].trim());
     } catch (e) {
-      // 토큰 확인이 막히는 상황(API 키 제한 등)이라도 주인은 계속 쓸 수 있어야 한다.
-      // 주인 열쇠가 함께 왔으면 그걸로 통과시킨다.
-      if (owner) return owner;
+      if (byBody) return byBody;
       throw e;
     }
   }
 
-  if (owner) return owner;
+  if (byBody) return byBody;
   throw new Error('로그인이 필요합니다');
 }
 
@@ -297,8 +320,10 @@ async function handleUnsubscribe(request, env) {
   return json({ ok: true, removed: list.length - alive.length, left: alive.length });
 }
 
-async function handleStatus(request, env) {
-  const who = await requireUser(request, env, null);
+async function handleStatus(request, env, url) {
+  // GET 이라 본문이 없다 — 주소에서 받는다
+  const q = url ? { uid: url.searchParams.get('uid'), key: url.searchParams.get('key') } : null;
+  const who = await requireUser(request, env, q);
   const list = await loadSubs(env, who.uid);
   return json({ devices: list.length, updatedAt: list.length ? list[list.length - 1].at : null });
 }
@@ -328,23 +353,36 @@ async function handleSend(request, env) {
 
 // 단축어가 보낸 Firestore 본문을 그대로 받아 Firestore 에 넣고, 곧바로 알림을 보낸다.
 // 본문 형식은 앱이 만들어 준 것 그대로다 — 단축어는 주소만 바꾸면 된다.
+// 단축어의 Base64 인코딩은 긴 문자열에 줄바꿈을 끼워 넣는다.
+// JSON 문자열 안에 날 줄바꿈이 들어가면 형식이 깨져 Firestore 가 400 으로 거부한다.
+// 올바른 JSON 에는 문자열 안에 날 줄바꿈이 올 수 없으므로, 통째로 지워도 안전하다.
+function stripBreaks(text) {
+  return String(text || '').replace(/[\r\n]+/g, '');
+}
+
 // 앞뒤에 뭐가 붙어 있어도 JSON 부분만 뽑아낸다. 못 뽑으면 null.
 function looseJson(raw) {
   const text = String(raw || '').replace(/^﻿/, '');
   try { return JSON.parse(text); } catch (e) {}
+
+  // 줄바꿈만 빼면 되는 경우
+  try { return JSON.parse(stripBreaks(text)); } catch (e) {}
+
   // multipart 껍데기 안에 든 경우 — 첫 { 부터 마지막 } 까지
   const a = text.indexOf('{'), b = text.lastIndexOf('}');
   if (a >= 0 && b > a) {
-    try { return JSON.parse(text.slice(a, b + 1)); } catch (e) {}
+    const inner = text.slice(a, b + 1);
+    try { return JSON.parse(inner); } catch (e) {}
+    try { return JSON.parse(stripBreaks(inner)); } catch (e) {}
   }
   return null;
 }
 
-// JSON 안에서 그 부분만 다시 꺼낸다 (저장할 때는 껍데기를 빼고 보내야 한다)
+// JSON 안에서 그 부분만 다시 꺼낸다 (저장할 때는 껍데기와 줄바꿈을 빼고 보내야 한다)
 function jsonSlice(raw) {
   const text = String(raw || '').replace(/^﻿/, '');
   const a = text.indexOf('{'), b = text.lastIndexOf('}');
-  return (a >= 0 && b > a) ? text.slice(a, b + 1) : text;
+  return stripBreaks((a >= 0 && b > a) ? text.slice(a, b + 1) : text);
 }
 
 async function handleRelayWorkout(request, env, url) {
@@ -359,8 +397,14 @@ async function handleRelayWorkout(request, env, url) {
   //   전에는 Secrets 의 MY_UID 로 정했는데, 그 값이 실제 로그인 UID 와 다르면
   //   엉뚱한 곳에 저장돼 앱이 영영 못 봤다. 앱은 자기 UID 를 아니까 앱이 알려주는 게 맞다.
   //   UID 는 비밀이 아니다 — 예전 Firestore 직행 주소에도 그대로 들어 있었다.
-  const uid = (url && url.searchParams.get('uid')) || env.MY_UID || '';
-  if (!uid) return json({ error: '누구의 기록인지 알 수 없어요 (주소에 uid 가 없습니다)' }, 400);
+  // 주소에 없으면 Secrets 의 MY_UID, 그것도 없거나 틀리면 알림을 켜둔 사람에게서 찾는다.
+  // 단축어 주소를 다시 복사하지 않아도 되게 하려는 것.
+  const uidFromUrl = (url && url.searchParams.get('uid')) || '';
+  let uid = uidFromUrl || env.MY_UID || '';
+  if (!uid) uid = await onlyRegisteredUid(env);
+  if (!uid) {
+    return json({ error: '누구의 기록인지 알 수 없어요. 앱에서 알림을 한 번 켜주시거나, 워치 연동 설정에서 주소를 다시 복사해주세요' }, 400);
+  }
 
   // 여기서 INBOX_TOKEN 과 대조하지 않는다.
   //   그 값은 Worker 에 따로 적어둔 것이라, 앱에서 열쇠를 새로 만들면 어긋난다.
@@ -375,29 +419,138 @@ async function handleRelayWorkout(request, env, url) {
     + '/databases/(default)/documents/users/' + encodeURIComponent(uid) + '/workoutInbox'
     + '?key=' + env.FIREBASE_API_KEY;
 
-  // 서버를 거쳐 왔다는 표시를 남긴다.
-  // 앱이 이걸 보고 '단축어가 아직 옛 주소로 보내는지'를 알 수 있다.
+  // Firestore 규칙이 사진 한 장당 900,000자로 막는다. 넘으면 통째로 거부된다.
+  // 두 장 중 하나만 커도 다 날아가므로, 큰 쪽은 빼고 나머지라도 넣는다.
+  const PHOTO_LIMIT = 900000;
+  const DOC_LIMIT = 900000;   // 문서 하나가 1MB 를 못 넘는다. 여유를 두고 잡는다.
+  let dropped = '';
   let outBody = jsonSlice(raw);
   if (parsed) {
     try {
       parsed.fields = parsed.fields || {};
-      parsed.fields.via = { stringValue: 'relay' };
+      // ⚠️ 여기에 항목을 추가하면 안 된다.
+      //    Firestore 규칙이 hasOnly 로 허용 목록을 딱 정해두는데, 목록에 없는 항목이 하나라도
+      //    끼면 저장이 통째로 거부된다. 전에 'via' 표시를 넣었다가 전부 막혔다.
+      //    단축어가 보낸 것만 그대로 넘긴다.
+
+      // 열쇠를 주소로 받았으면 그걸 쓴다.
+      //   본문에 열쇠를 박아 넣으면, 앱에서 열쇠가 바뀔 때마다 단축어의 본문까지 고쳐야 한다.
+      //   본문은 세 조각으로 나뉘어 있어 하나만 옛것이어도 '열쇠가 맞지 않아' 거부된다.
+      //   주소 하나만 다시 복사하면 되도록 여기서 갈아 끼운다.
+      const keyFromUrl = (url && url.searchParams.get('key')) || '';
+      if (keyFromUrl) parsed.fields.key = { stringValue: keyFromUrl };
+
+      // 사진 값 안에 남은 공백·줄바꿈을 걷어낸다 (base64 는 그런 문자를 쓰지 않는다)
+      for (const k of ['photo', 'photo2']) {
+        const f2 = parsed.fields[k];
+        if (f2 && typeof f2.stringValue === 'string') {
+          f2.stringValue = f2.stringValue.replace(/[^A-Za-z0-9+/=]/g, '');
+          if (!f2.stringValue) delete parsed.fields[k];
+        }
+      }
+
+      const len = (k) => String((parsed.fields[k] && parsed.fields[k].stringValue) || '').length;
+
+      // 문서 하나가 1MB 를 넘을 수 없다. 두 장이 각각은 작아도 합치면 넘길 수 있다.
+      // 그때는 둘째를 뺀다 — 워치 요약은 첫 장에 종목·시간이 다 들어 있다.
+      if (len('photo') + len('photo2') > DOC_LIMIT && parsed.fields.photo2) {
+        delete parsed.fields.photo2;
+        dropped = '두 번째 사진';
+      }
+
+      if (len('photo2') >= PHOTO_LIMIT) { delete parsed.fields.photo2; dropped = '두 번째 사진'; }
+      if (len('photo') >= PHOTO_LIMIT) {
+        // 첫 장이 크면 둘째를 첫째 자리로 올린다 (규칙이 photo 를 반드시 요구한다)
+        if (parsed.fields.photo2 && len('photo2') < PHOTO_LIMIT) {
+          parsed.fields.photo = parsed.fields.photo2;
+          delete parsed.fields.photo2;
+          dropped = '첫 번째 사진';
+        }
+      }
       outBody = JSON.stringify(parsed);
     } catch (e) { /* 못 고치면 벗긴 원본 그대로 보낸다 */ }
   }
 
-  const res = await fetch(endpoint, {
+  let res = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: outBody,
   });
 
+  // 계정이 틀려서 거부된 것일 수 있다 — 알림을 켜둔 사람이 한 명뿐이면 그쪽으로 한 번 더.
+  if (!res.ok && (res.status === 403 || res.status === 400)) {
+    const alt = await onlyRegisteredUid(env);
+    if (alt && alt !== uid) {
+      const altEndpoint = 'https://firestore.googleapis.com/v1/projects/' + env.FIREBASE_PROJECT_ID
+        + '/databases/(default)/documents/users/' + encodeURIComponent(alt) + '/workoutInbox'
+        + '?key=' + env.FIREBASE_API_KEY;
+      const retry = await fetch(altEndpoint, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: outBody,
+      });
+      if (retry.ok) { res = retry; uid = alt; }
+    }
+  }
+
   if (!res.ok) {
     const detail = await res.text();
-    const why = res.status === 403 || /PERMISSION_DENIED/i.test(detail)
-      ? '저장이 거부됐어요. ① 사진이 너무 크거나(단축어에 이미지 크기 조절 800 을 넣어주세요) ② 열쇠·계정이 안 맞는 경우입니다. 앱의 워치 연동 설정에서 주소와 본문을 새로 복사해보세요'
-      : 'Firestore 저장 실패';
-    return json({ error: why, status: res.status, detail: detail.slice(0, 300) }, 502);
+    // 왜 거부됐는지 짐작할 수 있게 실제로 쓴 값들을 같이 돌려준다
+    const photoLen = String((parsed && parsed.fields && parsed.fields.photo && parsed.fields.photo.stringValue) || '').length;
+    const photo2Len = String((parsed && parsed.fields && parsed.fields.photo2 && parsed.fields.photo2.stringValue) || '').length;
+    const tooBig = photoLen >= 900000 || photo2Len >= 900000
+      || photoLen + photo2Len > 900000
+      || /larger than|too large|1048487/i.test(detail);
+
+    let why;
+    if (tooBig) {
+      why = `사진이 너무 커요 (합쳐서 ${Math.round((photoLen + photo2Len) / 1024)}KB · 한 번에 900KB 까지). `
+        + '단축어에서 <최근 사진 가져오기> 뒤에 <이미지 크기 조절 — 너비 800> 을 넣어주세요. 글자는 그대로 읽히고 용량만 1/10 이 됩니다';
+    } else if (!uidFromUrl) {
+      why = '주소에 uid 가 없어 엉뚱한 계정에 쓰려고 했어요. '
+        + '앱의 워치 연동 설정에서 주소를 다시 복사해 단축어에 넣어주세요 (…/relay/workout?uid=… 형태여야 합니다)';
+    } else if (res.status === 403 || /PERMISSION_DENIED/i.test(detail)) {
+      why = (url && url.searchParams.get('key'))
+        ? '열쇠가 등록돼 있지 않아요. 앱의 워치 연동 설정에서 <열쇠 새로 만들기>를 누른 뒤 주소를 다시 복사해 넣어주세요'
+        : '주소에 열쇠가 없어요. 앱의 워치 연동 설정에서 주소를 다시 복사해 단축어에 넣어주세요 (…?uid=…&key=… 형태여야 합니다)';
+    } else {
+      why = 'Firestore 저장 실패';
+    }
+    // 어떤 열쇠로 시도했는지 끝 6자리만 보여준다 (앱 화면의 것과 대조하려고)
+    const usedKey = String(
+      (url && url.searchParams.get('key'))
+      || (parsed && parsed.fields && parsed.fields.key && parsed.fields.key.stringValue)
+      || ''
+    );
+    // 저장이 안 됐어도 알림은 보낸다.
+    //   알림과 저장은 별개다 — 알림은 여기서 바로 쏘고, Firestore 는 앱이 나중에 읽을 기록용이다.
+    //   저장이 막혔다고 알림까지 막으면 '운동 끝난 줄도 모르는' 상태가 된다.
+    let sos = { sent: 0 };
+    try {
+      sos = await sendToUser(env, uid, {
+        title: '⌚ 운동 기록 도착',
+        body: tooBig
+          ? '사진이 너무 커서 저장은 못 했어요. 앱에서 직접 넣어주세요.'
+          : '들어왔지만 저장에 실패했어요. 앱을 열어 확인해주세요.',
+        tag: 'workout-arrived-' + Date.now(),
+      });
+      if (!sos.sent) sos = await sendToOwner(env, {
+        title: '⌚ 운동 기록 도착',
+        body: '저장에 실패했어요. 앱을 열어 확인해주세요.',
+        tag: 'workout-arrived-' + Date.now(),
+      });
+    } catch (e) { /* 알림까지 실패해도 아래 응답은 돌려준다 */ }
+
+    return json({
+      error: why, status: res.status,
+      push: sos,
+      rawKB: Math.round(String(raw || '').length / 1024),   // 단축어가 실제로 보낸 크기
+      parsed: parsed ? '읽음' : '못 읽음',
+      uidFrom: uidFromUrl ? '주소' : 'MY_UID',
+      keyFrom: (url && url.searchParams.get('key')) ? '주소' : '본문',
+      keyTail: usedKey ? '…' + usedKey.slice(-6) : '(없음)',
+      uidTail: uid ? '…' + String(uid).slice(-6) : '(없음)',
+      photoKB: Math.round(photoLen / 1024), photo2KB: Math.round(photo2Len / 1024),
+      detail: detail.slice(0, 300),
+    }, 502);
   }
 
   // 사진은 앱이 읽어야 종목·시간을 안다. 하지만 단축어가 값으로 보낸 경우엔
@@ -416,7 +569,9 @@ async function handleRelayWorkout(request, env, url) {
 
   let body;
   if (shots > 0) {
-    body = shots > 1 ? '캡처 2장이 들어왔어요. 앱을 열면 정리됩니다.' : '캡처가 들어왔어요. 앱을 열면 정리됩니다.';
+    body = (shots > 1 && !dropped)
+      ? '캡처 2장이 들어왔어요. 앱을 열면 정리됩니다.'
+      : (dropped ? `캡처가 들어왔어요 (${dropped}은 너무 커서 뺐어요). 앱을 열면 정리됩니다.` : '캡처가 들어왔어요. 앱을 열면 정리됩니다.');
   } else {
     // 값으로 온 경우 — 무엇이 들어왔는지 그대로 보여준다
     const bits = [];
@@ -438,7 +593,11 @@ async function handleRelayWorkout(request, env, url) {
   if (!pushed.sent) pushed = await sendToOwner(env, payload);
 
   // 알림이 갔는지까지 알려준다. ok 만 돌려주면 '저장은 됐는데 알림이 안 온다'를 못 가린다.
-  return json({ ok: true, shots, push: pushed });
+  return json({
+    ok: true, shots, push: pushed, dropped: dropped || undefined,
+    rawKB: Math.round(String(raw || '').length / 1024),
+    photoKB: Math.round(String((parsed && parsed.fields && parsed.fields.photo && parsed.fields.photo.stringValue) || '').length / 1024),
+  });
 }
 
 
@@ -481,6 +640,15 @@ function kstNow() {
 // 사람마다 정한 시각이 다르므로 각자의 plan 을 따로 본다.
 async function runPlan(env) {
   if (!env.PUSH_KV) return;
+
+  // 아주 예전 예약은 'daily-plan' 한 칸에 있었다. 있으면 주인 것으로 옮겨서 계속 보낸다.
+  try {
+    const legacy = await env.PUSH_KV.get('daily-plan');
+    if (legacy && env.MY_UID && !(await env.PUSH_KV.get(planKey(env.MY_UID)))) {
+      await env.PUSH_KV.put(planKey(env.MY_UID), legacy);
+    }
+  } catch (e) { /* 없으면 그만 */ }
+
   let cursor;
   do {
     const page = await env.PUSH_KV.list({ prefix: 'plan:', cursor });
@@ -525,9 +693,22 @@ async function runPlanFor(env, uid) {
 async function loadSubs(env, uid) {
   if (!env.PUSH_KV) throw new Error('PUSH_KV 바인딩이 없습니다 (KV 연결 필요)');
   if (!uid) throw new Error('누구의 기기인지 알 수 없습니다');
+
   const raw = await env.PUSH_KV.get(subsKey(uid));
-  if (!raw) return [];
-  try { return JSON.parse(raw) || []; } catch (e) { return []; }
+  if (raw) {
+    try { return JSON.parse(raw) || []; } catch (e) { return []; }
+  }
+
+  // 아주 예전에는 구독을 'subscriptions' 한 칸에 모아 뒀다.
+  // 그때 켜둔 알림이 새 코드로 올린다고 끊기면 안 되므로, 있으면 옮겨서 계속 쓴다.
+  const legacy = await env.PUSH_KV.get('subscriptions');
+  if (!legacy) return [];
+  let list;
+  try { list = JSON.parse(legacy) || []; } catch (e) { return []; }
+  if (!Array.isArray(list) || list.length === 0) return [];
+
+  await env.PUSH_KV.put(subsKey(uid), JSON.stringify(list));
+  return list;
 }
 
 // ── 실제 발송 ──
@@ -541,6 +722,16 @@ async function handleRelayPing(request, env) {
     tag: 'relay-ping-' + Date.now(),
   });
   return json({ ok: true, push: pushed, myUid: env.MY_UID ? '설정됨' : '없음' });
+}
+
+// 알림을 켜둔 사람이 딱 한 명이면 그 사람의 uid. 여러 명이거나 없으면 빈 값.
+async function onlyRegisteredUid(env) {
+  if (!env.PUSH_KV) return '';
+  try {
+    const page = await env.PUSH_KV.list({ prefix: 'subs:' });
+    const uids = page.keys.map(k => k.name.slice('subs:'.length));
+    return uids.length === 1 ? uids[0] : '';
+  } catch (e) { return ''; }
 }
 
 // 주인에게 보낸다. MY_UID 로 저장된 구독이 없으면 — 흔한 경우가 Secret 의 UID 가
