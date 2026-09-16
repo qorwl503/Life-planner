@@ -6140,12 +6140,50 @@ function thisWeekKeys() {
 
 // 이번 주에 종목별로 몇 번 했는지.
 // 같은 날 같은 종목을 여러 세션 해도 '하루 1회'로 센다 — 계획이 '주 2회' 같은 횟수라서.
+// 계획에만 체크해 두는 것 — 운동 기록으로는 남기지 않는다.
+// 스트레칭처럼 매일 하지만 '운동 한 건'으로 세고 싶지 않은 것들이 있다.
+//   settings.planTicks['YYYY-MM-DD'] = { '스트레칭': true }
+function planTicks(dateK) {
+  if (!settings.planTicks || typeof settings.planTicks !== 'object') settings.planTicks = {};
+  const k = dateK || todayKey();
+  if (!settings.planTicks[k] || typeof settings.planTicks[k] !== 'object') settings.planTicks[k] = {};
+  return settings.planTicks[k];
+}
+
+function planTickedOn(sport, dateK) {
+  return !!planTicks(dateK)[sport];
+}
+
+function togglePlanTick(sport, dateK) {
+  const k = dateK || todayKey();
+  if (k > todayKey()) { showToast('아직 오지 않은 날이에요'); return; }
+  const day = planTicks(k);
+  const on = !day[sport];        // 바뀐 뒤의 상태
+  if (on) day[sport] = true;
+  else delete day[sport];
+
+  // 빈 날은 통째로 치운다. 이 판정 뒤에 planTicks() 를 다시 부르면
+  // 빈 객체가 되살아나므로, 아래에서는 on 값을 그대로 쓴다.
+  if (Object.keys(day).length === 0) delete settings.planTicks[k];
+  saveData();
+  showToast(on ? `${sport} 했어요 ✓` : `${sport} 해제`);
+  if (currentTab === 'workout') renderWorkout();
+}
+
 function weeklyDoneBySport() {
   const out = {};
   for (const k of thisWeekKeys()) {
+    const seen = new Set();
+
+    // 계획에만 체크한 것 — 운동 기록과 같은 자격으로 하루 1회 센다
+    for (const sport of Object.keys(planTicks(k))) {
+      if (seen.has(sport)) continue;
+      seen.add(sport);
+      out[sport] = (out[sport] || 0) + 1;
+    }
+
     const log = (workoutLog || {})[k];
     if (!log) continue;
-    const seen = new Set();
     for (const s of workoutSessions(log)) {
       const key = (sportMeta(s.sport) || {}).key || '기타';
       if (seen.has(key)) continue;
@@ -6211,13 +6249,19 @@ function renderWorkoutPlanCard() {
 
       ${rows.map(r => {
         const ok = r.did >= r.target;
+        const tickedToday = planTickedOn(r.sport);
         return `
-        <div style="margin-bottom:7px; cursor:pointer;" onclick="openWeekDoneDetail('${r.sport}')">
-          <div style="display:flex; justify-content:space-between; align-items:baseline; font-size:11.5px; margin-bottom:3px;">
-            <span style="font-weight:600;">${r.emoji} ${escapeHTML(r.sport)}${r.did > 0 ? ' <span style="color:var(--text-tertiary); font-weight:600;">›</span>' : ''}</span>
-            <span style="color:${ok ? 'var(--text-success)' : 'var(--text-tertiary)'}; font-weight:${ok ? '800' : '600'};">
+        <div style="margin-bottom:7px;">
+          <div style="display:flex; align-items:center; gap:8px; font-size:11.5px; margin-bottom:3px;">
+            <span style="flex:1; min-width:0; font-weight:600; cursor:pointer;" onclick="openWeekDoneDetail('${escapeAttr(r.sport)}')">
+              ${r.emoji} ${escapeHTML(r.sport)}${r.did > 0 ? ' <span style="color:var(--text-tertiary); font-weight:600;">›</span>' : ''}
+            </span>
+            <span style="flex:none; color:${ok ? 'var(--text-success)' : 'var(--text-tertiary)'}; font-weight:${ok ? '800' : '600'};">
               ${ok ? '완료' : `${r.left}회 남음`} <span style="color:var(--text-tertiary); font-weight:600;">(${r.did}/${r.target})</span>
             </span>
+            <button onclick="event.stopPropagation(); togglePlanTick('${escapeAttr(r.sport)}')"
+              title="오늘 했으면 눌러두세요 (운동 기록으로는 안 남아요)"
+              style="flex:none; width:26px; height:26px; padding:0; border:0.5px solid ${tickedToday ? 'var(--accent-tab, #3D8168)' : 'var(--border-tertiary)'}; background:${tickedToday ? 'var(--accent-tab, #3D8168)' : 'var(--bg-primary)'}; color:${tickedToday ? '#fff' : 'var(--text-tertiary)'}; border-radius:8px; font-size:12px; line-height:1; cursor:pointer; font-family:inherit;">✓</button>
           </div>
           <div style="height:5px; background:var(--bg-primary); border-radius:999px; overflow:hidden;">
             <div style="width:${r.pct}%; height:100%; background:${ok ? 'var(--text-success)' : 'var(--accent-tab, #3D8168)'}; border-radius:999px;"></div>
@@ -6225,9 +6269,11 @@ function renderWorkoutPlanCard() {
         </div>`;
       }).join('')}
 
-      ${totalDid > 0 ? `<div style="margin-top:8px; font-size:10.5px; color:var(--text-tertiary);">
-        종목을 누르면 <b>이번 주에 센 날</b>을 볼 수 있어요. 안 한 게 들어가 있으면 거기서 지우세요.
-      </div>` : ''}
+      <div style="margin-top:8px; font-size:10.5px; color:var(--text-tertiary); line-height:1.7;">
+        <b>✓</b> 를 누르면 오늘 한 것으로 세요. <b>운동 기록으로는 안 남습니다</b> —
+        스트레칭처럼 매일 하지만 운동 목록에 넣고 싶지 않은 것에 쓰세요.
+        ${totalDid > 0 ? '<br>종목 이름을 누르면 <b>이번 주에 센 날</b>을 볼 수 있어요.' : ''}
+      </div>
     </div>`;
 }
 
@@ -6236,6 +6282,9 @@ function renderWorkoutPlanCard() {
 function openWeekDoneDetail(sport) {
   const hits = [];
   for (const k of thisWeekKeys()) {
+    // 계획에만 체크해 둔 날
+    if (planTickedOn(sport, k)) hits.push({ dateK: k, tick: true });
+
     const log = (workoutLog || {})[k];
     if (!log) continue;
     workoutSessions(log).forEach((ses, i) => {
@@ -6243,6 +6292,7 @@ function openWeekDoneDetail(sport) {
       hits.push({ dateK: k, idx: i, ses });
     });
   }
+  hits.sort((a, b) => a.dateK < b.dateK ? 1 : -1);
 
   const emoji = (SPORTS.find(x => x.key === sport) || {}).emoji || '💪';
   modal.innerHTML = `
@@ -6267,13 +6317,16 @@ function openWeekDoneDetail(sport) {
           <div style="flex:1; min-width:0;">
             <div style="font-size:12px; font-weight:700;">${escapeHTML(h.dateK)}</div>
             <div style="font-size:10.5px; color:var(--text-tertiary); margin-top:2px;">
-              ${escapeHTML(formatWorkoutNote(h.ses.sport, h.ses.dist, h.ses.unit))}
-              ${Number(h.ses.minutes) > 0 ? ' · ' + Math.round(h.ses.minutes) + '분' : ''}
-              ${Number(h.ses.kcal) > 0 ? ' · ' + Math.round(h.ses.kcal) + 'kcal' : ''}
-              ${h.ses.manual ? '' : ' · 자동'}
+              ${h.tick ? '계획에 체크만 해둠 (운동 기록 아님)' : `
+                ${escapeHTML(formatWorkoutNote(h.ses.sport, h.ses.dist, h.ses.unit))}
+                ${Number(h.ses.minutes) > 0 ? ' · ' + Math.round(h.ses.minutes) + '분' : ''}
+                ${Number(h.ses.kcal) > 0 ? ' · ' + Math.round(h.ses.kcal) + 'kcal' : ''}
+                ${h.ses.manual ? '' : ' · 자동'}`}
             </div>
           </div>
-          <button onclick="deleteWorkoutSession('${h.dateK}', ${h.idx}); openWeekDoneDetail('${sport}');"
+          <button onclick="${h.tick
+              ? `togglePlanTick('${escapeAttr(sport)}', '${h.dateK}')`
+              : `deleteWorkoutSession('${h.dateK}', ${h.idx})`}; openWeekDoneDetail('${escapeAttr(sport)}');"
             style="flex:none; padding:6px 10px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-danger); border-radius:8px; font-size:11px; cursor:pointer; font-family:inherit;">지우기</button>
         </div>`).join('')}
       </div>
