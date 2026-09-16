@@ -40,7 +40,7 @@
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
 // 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
-const WORKER_VERSION = '2026-08-26.15';
+const WORKER_VERSION = '2026-09-17.1';
 const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
   '/push/plan', '/push/status', '/relay/workout', '/relay/ping', '/version'];
 
@@ -530,12 +530,12 @@ async function handleRelayWorkout(request, env, url) {
         body: tooBig
           ? '사진이 너무 커서 저장은 못 했어요. 앱에서 직접 넣어주세요.'
           : '들어왔지만 저장에 실패했어요. 앱을 열어 확인해주세요.',
-        tag: 'workout-arrived-' + Date.now(),
+        tag: 'workout-' + kstNow().date,
       });
       if (!sos.sent) sos = await sendToOwner(env, {
         title: '⌚ 운동 기록 도착',
         body: '저장에 실패했어요. 앱을 열어 확인해주세요.',
-        tag: 'workout-arrived-' + Date.now(),
+        tag: 'workout-' + kstNow().date,
       });
     } catch (e) { /* 알림까지 실패해도 아래 응답은 돌려준다 */ }
 
@@ -586,7 +586,7 @@ async function handleRelayWorkout(request, env, url) {
   const payload = {
     title: '⌚ 운동 기록 도착',
     body,
-    tag: 'workout-arrived-' + Date.now(),   // 매번 다른 태그 — 이전 알림을 덮지 않게
+    tag: 'workout-' + kstNow().date,   // 같은 날 것은 하나로 덮는다 (매번 다르면 알림이 쌓인다)
   };
   // 저장한 그 사람에게 보낸다. 없으면 예전처럼 주인을 찾아본다.
   let pushed = await sendToUser(env, uid, payload);
@@ -680,11 +680,22 @@ async function runPlanFor(env, uid) {
   // 하루 한 번만
   if (plan.sentOn === now.date) return;
 
-  // 앱이 며칠째 안 켜졌으면 내용이 낡았다 — 그대로 보내면 틀린 숫자를 보게 된다
-  const stale = Date.now() - (Number(plan.savedAt) || 0) > 36 * 60 * 60 * 1000;
-  const body = stale ? '앱을 열어 오늘 기록을 확인해보세요.' : (plan.body || '');
+  // 요약은 '만들어진 그 날'의 내용이다. 어제 만든 것을 오늘 아침에 보내면
+  // 어제의 할일·목표·환율이 오늘 것인 양 뜬다. 시간(36시간)으로 재면
+  // 어제 아침에 만든 것이 오늘 아침까지 '신선'으로 통과해 버린다 — 날짜로 잰다.
+  const builtFor = String(plan.builtFor || '');
+  const fresh = builtFor === now.date;
+  const body = fresh
+    ? (plan.body || '')
+    : '앱을 열면 오늘 할일·목표·시세를 정리해드릴게요.';
 
-  await sendToUser(env, uid, { title: plan.title, body, tag: plan.tag });
+  await sendToUser(env, uid, {
+    title: plan.title,
+    body,
+    tag: plan.tag,
+    url: './index.html?open=summary',   // 누르면 오늘 것으로 새로 만들어 보여준다
+    kind: 'summary',
+  });
 
   plan.sentOn = now.date;
   await env.PUSH_KV.put(planKey(uid), JSON.stringify(plan));
@@ -719,7 +730,7 @@ async function handleRelayPing(request, env) {
   const pushed = await sendToOwner(env, {
     title: '⌚ 서버 알림 시험',
     body: '이 알림이 보이면 앱이 꺼져 있어도 알림이 옵니다.',
-    tag: 'relay-ping-' + Date.now(),
+    tag: 'relay-ping',
   });
   return json({ ok: true, push: pushed, myUid: env.MY_UID ? '설정됨' : '없음' });
 }

@@ -42,7 +42,9 @@ self.addEventListener('push', (event) => {
 // 알림을 탭하면 이미 열린 앱으로 가고, 없으면 새로 연다
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const target = (event.notification.data && event.notification.data.url) || APP_URL;
+  const info = event.notification.data || {};
+  const target = info.url || APP_URL;
+  const kind = info.kind || '';
 
   event.waitUntil((async () => {
     const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
@@ -50,6 +52,12 @@ self.addEventListener('notificationclick', (event) => {
       // 같은 출처의 창이 이미 있으면 그걸 앞으로
       if ('focus' in client) {
         try { await client.focus(); } catch (e) {}
+        // 이미 떠 있는 앱은 navigate 하면 통째로 다시 뜬다 — 쓰던 화면이 날아간다.
+        // 대신 무엇을 눌렀는지만 알려주고, 앱이 알아서 그 화면을 연다.
+        if (kind) {
+          try { client.postMessage({ type: 'notification-click', kind }); } catch (e) {}
+          return;
+        }
         if ('navigate' in client && target) {
           try { await client.navigate(target); } catch (e) {}
         }
