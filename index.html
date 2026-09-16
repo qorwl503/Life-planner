@@ -1734,6 +1734,15 @@ const TODO_TAGS = [
   { tag: '데이트', emoji: '💕',   color: '#B06B7E' },
   { tag: '여행',   emoji: '✈️',   color: '#2E5F73' },
   { tag: '취미',   emoji: '🎨',   color: '#8B7FAE' },
+  { tag: '집안일', emoji: '🧹',   color: '#4E7F68' },
+  { tag: '약속',   emoji: '📅',   color: '#5A7CA6' },
+  { tag: '연락',   emoji: '📞',   color: '#6E8CB0' },
+  { tag: '병원',   emoji: '💊',   color: '#A8524B' },
+  { tag: '은행',   emoji: '🏦',   color: '#7A6234' },
+  { tag: '관공서', emoji: '🏛️',   color: '#5F6B73' },
+  { tag: '차량',   emoji: '🚗',   color: '#4A6B80' },
+  { tag: '반려',   emoji: '🐾',   color: '#9A7B52' },
+  { tag: '정리',   emoji: '🗃️',   color: '#6B7A82' },
   { tag: '기타',   emoji: '🗂️',   color: '#5F6B73' },
 ];
 function todoTagMeta(tag) {
@@ -10258,7 +10267,7 @@ function renderMonthlyReview(opts) {
 // ===== 💰 카테고리별 예산 =====
 // 쓰고 나서 집계만 하면 늦다. 미리 정해두고 '남은 돈'을 보게 한다.
 
-const BUDGET_CATS = ['식비','카페','편의점','마트','교통','쇼핑','문화','의료','미용','생활','통신','경조사','교육','도서','여행','운동','자녀','선물','학회','구독','기타'];
+const BUDGET_CATS = ['식비','외식','배달','카페','술·모임','간식','편의점','마트','생필품','쇼핑','의류','가전·가구','교통','택시','주유','주차','문화','취미','게임·앱','의료','약국','미용','헬스','반려동물','생활','세탁','통신','경조사','기부','교육','도서','자기계발','여행','운동','자녀','선물','학회','구독','수수료','기타'];
 
 function catBudgets() {
   return settings.catBudget || {};
@@ -10447,7 +10456,7 @@ function fillCatBudgetFromHistory() {
 // 앱 전체가 쓰는 '변동지출' 기준을 한 군데로 모은다.
 //   · 투자 카테고리는 소비가 아니다 (주식·예적금 등)
 //   · 가계부에 찍은 입금은 전부 빼야 실제로 나간 돈이 된다
-const LIVING_EXCLUDE_CATS = ['투자', '주식', '국내주식', '미국주식', 'ETF', '국내ETF', '해외ETF', '펀드', '채권', '금', '달러', '예적금', '청약', '현금', '부동산'];
+const LIVING_EXCLUDE_CATS = ['투자', '저축', '주식', '국내주식', '미국주식', 'ETF', '국내ETF', '해외ETF', '펀드', '채권', '금', '달러', '예적금', '청약', '현금', '부동산'];
 
 function isInvestCat(cat) {
   return LIVING_EXCLUDE_CATS.includes(cat || '');
@@ -11805,6 +11814,19 @@ function editFixed(id) {
           </div>
         </label>
 
+        <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; margin-bottom:12px; padding:10px; background:var(--bg-primary); border-radius:8px; box-shadow:var(--shadow-card);">
+          <input type="checkbox" id="ef-carryover" ${f.carryOver?'checked':''} style="width:18px; height:18px; cursor:pointer; flex-shrink:0; margin-top:2px;" />
+          <div style="flex:1;">
+            <div style="font-size:11px; font-weight:600; color:var(--text-primary);">💵 남은 돈 다음 회차로</div>
+            <div style="font-size:10px; color:var(--text-tertiary); margin-top:3px; line-height:1.5;">
+              정수 매수에서 <b>28만원 / 2.5만원 = 11주 + 2.5만원</b> 처럼 남는 돈이 생깁니다.<br>
+              ✅ <b>체크</b>: 남은 돈을 다음 회차에 얹어 삽니다 (증권사가 그렇게 해줄 때)<br>
+              ❌ <b>해제</b>: 남은 돈은 그냥 빠집니다<br>
+              <span style="opacity:0.85;">실제 주수가 앱보다 <b>많다면</b> 체크해보세요. 회차마다 한 주 가까이가 새고 있는 겁니다.</span>
+            </div>
+          </div>
+        </label>
+
         <div class="field">
           <div class="field-label">💸 거래 수수료율 % (선택)</div>
           <input type="number" id="ef-feerate" value="${f.feeRate || ''}" step="0.001" min="0" placeholder="예: 0.015" />
@@ -12087,7 +12109,10 @@ async function updateFixed(id) {
   if (isInvest) {
     const autoBuy = document.getElementById('ef-autobuy')?.checked;
     const fractional = !!document.getElementById('ef-fractional')?.checked;
+    const carryOver = !!document.getElementById('ef-carryover')?.checked;
     f.fractional = fractional;
+    f.carryOver = carryOver;
+    if (!carryOver) f.carry = 0;   // 끄면 들고 있던 잔돈도 버린다
     f.feeRate = Number(document.getElementById('ef-feerate')?.value) || 0;
     const assetType = document.querySelector('#ef-asset-type .chip.active')?.dataset.t || '주식';
     const assetName = document.getElementById('ef-asset-name')?.value?.trim() || name;
@@ -12488,9 +12513,19 @@ function openFixedAddModal() {
         <div class="field-label">카테고리</div>
         <div style="display:flex; gap:6px; flex-wrap:wrap;" id="fx-cat">
           <button class="chip active" data-c="주거" data-icon="ti-home">주거</button>
+          <button class="chip" data-c="관리비" data-icon="ti-building">관리비</button>
           <button class="chip" data-c="공과금" data-icon="ti-bolt">공과금</button>
+          <button class="chip" data-c="통신" data-icon="ti-device-mobile">통신</button>
           <button class="chip" data-c="보험" data-icon="ti-shield">보험</button>
+          <button class="chip" data-c="대출" data-icon="ti-businessplan">대출</button>
           <button class="chip" data-c="구독" data-icon="ti-device-tv">구독</button>
+          <button class="chip" data-c="교육" data-icon="ti-school">교육</button>
+          <button class="chip" data-c="교통" data-icon="ti-bus">교통</button>
+          <button class="chip" data-c="건강" data-icon="ti-heartbeat">건강</button>
+          <button class="chip" data-c="자녀" data-icon="ti-mood-kid">자녀</button>
+          <button class="chip" data-c="반려동물" data-icon="ti-paw">반려동물</button>
+          <button class="chip" data-c="회비" data-icon="ti-users">회비</button>
+          <button class="chip" data-c="저축" data-icon="ti-pig-money">💰 저축</button>
           <button class="chip" data-c="투자" data-icon="ti-trending-up">💎 투자</button>
           <button class="chip" data-c="기타" data-icon="ti-dots">기타</button>
         </div>
@@ -18638,18 +18673,37 @@ function parseExpenseText(text) {
 // 가맹점·텍스트에서 카테고리 추측
 function guessExpenseCategoryFromText(text) {
   const t = (text || '').toLowerCase();
+  // ⚠️ 위에서부터 먼저 맞는 것이 이긴다. 좁은 것(배달·택시·주유)을 넓은 것(식비·교통) 위에 둔다.
   const rules = [
-    { cat:'식비', kw:['배달의민족','요기요','쿠팡이츠','맥도날드','버거킹','롯데리아','BBQ','BHC','교촌','피자','치킨','김밥','분식','한솥','국밥','족발','보쌈','한식','중식','일식','양식'] },
-    { cat:'카페', kw:['스타벅스','이디야','투썸','커피','메가커피','컴포즈','파스쿠찌','할리스','폴바셋','블루보틀','카페'] },
+    { cat:'배달', kw:['배달의민족','배민','요기요','쿠팡이츠','땡겨요','배달'] },
+    { cat:'카페', kw:['스타벅스','이디야','투썸','커피','메가커피','컴포즈','파스쿠찌','할리스','폴바셋','블루보틀','카페','공차','설빙'] },
+    { cat:'술·모임', kw:['호프','포차','이자카야','와인','맥주','소주','주점','바틀','펍','술집'] },
+    { cat:'간식', kw:['베이커리','파리바게뜨','뚜레쥬르','던킨','크리스피','아이스크림','배스킨','떡집'] },
+    { cat:'외식', kw:['맥도날드','버거킹','롯데리아','맘스터치','BBQ','BHC','교촌','피자','치킨','스시','초밥','고깃집','삼겹살','뷔페','아웃백','빕스'] },
+    { cat:'식비', kw:['김밥','분식','한솥','국밥','족발','보쌈','한식','중식','일식','양식','식당','백반'] },
     { cat:'편의점', kw:['gs25','cu','seven','세븐일레븐','이마트24','미니스톱'] },
-    { cat:'마트', kw:['이마트','홈플러스','코스트코','롯데마트','농협하나로','트레이더스'] },
-    { cat:'교통', kw:['카카오t','우버','택시','지하철','버스','t머니','therail','코레일','SRT','KTX','주유','GS칼텍스','SK에너지','S-OIL'] },
-    { cat:'쇼핑', kw:['쿠팡','11번가','지마켓','옥션','네이버페이','무신사','29cm','SSG','유니클로','자라'] },
-    { cat:'구독', kw:['넷플릭스','netflix','웨이브','wavve','티빙','tving','디즈니','disney','유튜브','youtube','애플','apple','spotify','챗gpt','chatgpt'] },
-    { cat:'통신', kw:['kt','skt','lg유플','lg u+','알뜰폰'] },
-    { cat:'의료', kw:['병원','약국','한의원','치과','내과'] },
-    { cat:'생활', kw:['올리브영','다이소'] },
-    { cat:'도서', kw:['교보문고','예스24','yes24','알라딘','aladin','인터파크도서','리디','ridi','밀리의서재','북센','영풍문고','반디앤루니스','서점','북스토어','bookstore'] },
+    { cat:'마트', kw:['이마트','홈플러스','코스트코','롯데마트','농협하나로','트레이더스','마켓컬리','오아시스'] },
+    { cat:'택시', kw:['카카오t','우버','택시','타다','아이엠택시'] },
+    { cat:'주유', kw:['주유','gs칼텍스','sk에너지','s-oil','현대오일','주유소'] },
+    { cat:'주차', kw:['주차','파킹','하이패스','통행료'] },
+    { cat:'교통', kw:['지하철','버스','t머니','therail','코레일','srt','ktx','고속버스'] },
+    { cat:'의류', kw:['무신사','29cm','유니클로','자라','h&m','스파오','탑텐','에이블리','지그재그'] },
+    { cat:'가전·가구', kw:['이케아','한샘','일룸','전자랜드','하이마트','롯데하이마트'] },
+    { cat:'쇼핑', kw:['쿠팡','11번가','지마켓','옥션','네이버페이','ssg','위메프','티몬','알리익스프레스'] },
+    { cat:'게임·앱', kw:['스팀','steam','플레이스토어','google play','앱스토어','app store','넥슨','엔씨','라이엇'] },
+    { cat:'구독', kw:['넷플릭스','netflix','웨이브','wavve','티빙','tving','디즈니','disney','유튜브','youtube','애플','apple','spotify','챗gpt','chatgpt','왓챠','밀리의서재'] },
+    { cat:'통신', kw:['kt','skt','lg유플','lg u+','알뜰폰','헬로모바일'] },
+    { cat:'약국', kw:['약국','온누리약국','pharmacy'] },
+    { cat:'의료', kw:['병원','한의원','치과','내과','의원','clinic'] },
+    { cat:'헬스', kw:['헬스','피트니스','짐','gym','필라테스','요가','pt샵','크로스핏'] },
+    { cat:'미용', kw:['미용실','헤어','네일','왁싱','에스테틱','피부과','바버'] },
+    { cat:'반려동물', kw:['동물병원','펫','반려','강아지','고양이','애견'] },
+    { cat:'세탁', kw:['세탁','크린토피아','런드리'] },
+    { cat:'생필품', kw:['다이소','생활용품'] },
+    { cat:'생활', kw:['올리브영'] },
+    { cat:'도서', kw:['교보문고','예스24','yes24','알라딘','aladin','인터파크도서','리디','ridi','북센','영풍문고','반디앤루니스','서점','북스토어','bookstore'] },
+    { cat:'문화', kw:['cgv','메가박스','롯데시네마','영화','인터파크티켓','예스24공연','전시','공연'] },
+    { cat:'수수료', kw:['수수료','이체수수료','atm'] },
   ];
   for (const r of rules) {
     if (r.kw.some(k => t.includes(k.toLowerCase()))) return r.cat;
@@ -19202,7 +19256,7 @@ function openCardReviewModal(items) {
   const dupCount = window._cardReviewItems.filter(it => it._dup).length;
   const incomeCount = window._cardReviewItems.filter(it => it.type === 'income').length;
 
-  const CARD_CATS = ['식비','카페','편의점','마트','교통','쇼핑','문화','의료','미용','생활','통신','경조사','교육','도서','여행','운동','자녀','선물','학회','구독','투자','기타'];
+  const CARD_CATS = [...BUDGET_CATS.filter(c => c !== '기타'), '투자', '기타'];
   // 입력 화면(가계부 입금 항목)과 같은 목록을 써야 캡처로 넣은 뒤 수정할 때 어긋나지 않는다
   const INCOME_CATS = ['더치페이','송금받음','빌려준돈','회비정산','경조사','환급','환불','용돈','급여','상여','이자','중고판매','지원금','기타입금'];
   const renderList = () => {
