@@ -14986,11 +14986,11 @@ async function processAutoBuy(fixed) {
       // 시세 알면 정확한 수량 계산 — 수수료 포함가로 살 수 있는 수량
       const effectivePrice = lotPrice * feeMul;
 
-      // 🔧 잔돈 이월. 내림만 하고 남은 돈을 버리면 회차마다 최대 1주 가까이가 사라진다.
-      //    20만원 / 2.5만원짜리면 회차당 평균 반 주씩 — 1년이면 6주가 비었다.
-      //    증권사의 금액모으기는 남은 돈을 다음 회차에 얹거나 소수점으로 산다.
-      //    그래서 여기서도 남은 돈을 들고 간다. (실제와 어긋나던 가장 큰 원인)
-      const carryIn = Math.max(0, Number(fixed.carry) || 0);
+      // 🔧 잔돈 이월은 '증권사가 실제로 그렇게 할 때만' 켠다 (fixed.carryOver).
+      //    ISA 정수 매수처럼 정한 금액 안에서 정수배만 사고 남는 돈은 그냥 빠지는
+      //    방식이 기본이다. 여기서 임의로 이월하면 실제보다 많이 산 것으로 잡힌다.
+      const useCarry = fixed.carryOver === true;
+      const carryIn = useCarry ? Math.max(0, Number(fixed.carry) || 0) : 0;
       const budget = fixed.amt + carryIn;
 
       let newQty = budget / effectivePrice;
@@ -14999,19 +14999,25 @@ async function processAutoBuy(fixed) {
       const allowFractional = fixed.fractional === true;
       if (!allowFractional) {
         newQty = Math.floor(newQty);
-        // 쓰고 남은 돈을 다음 회차로 넘긴다.
+        // 이월을 켠 경우에만 남은 돈을 들고 간다.
         // 상한은 '한 주 값' — 그보다 많이 남았다면 한 주 더 샀어야 하므로,
         // 정상 상태에서는 넘을 일이 없다. 잘못된 시세가 들어와도 불어나지 않게 막는다.
-        const left = budget - newQty * effectivePrice;
-        fixed.carry = Math.max(0, Math.min(Math.round(left), Math.ceil(effectivePrice)));
+        if (useCarry) {
+          const left = budget - newQty * effectivePrice;
+          fixed.carry = Math.max(0, Math.min(Math.round(left), Math.ceil(effectivePrice)));
+        } else {
+          fixed.carry = 0;   // 남는 돈은 그대로 빠진다 (ISA 정수 매수 등)
+        }
       } else {
         newQty = parseFloat(newQty.toFixed(4));
         fixed.carry = 0;   // 소수점으로 다 사면 남는 돈이 없다
       }
       if (newQty <= 0) {
-        // 한 주도 못 사는 회차 — 돈은 그대로 들고 간다 (다음 회차에 합쳐서 산다).
-        // 비싼 종목은 몇 회차를 모아야 한 주가 되므로 회차 금액으로 막으면 영영 못 산다.
-        fixed.carry = Math.max(0, Math.min(Math.round(budget), Math.ceil(effectivePrice)));
+        // 한 주도 못 사는 회차. 이월을 켰으면 들고 가서 다음 회차에 합쳐 산다
+        // (비싼 종목은 몇 회차를 모아야 한 주가 된다). 안 켰으면 그냥 넘어간다.
+        fixed.carry = useCarry
+          ? Math.max(0, Math.min(Math.round(budget), Math.ceil(effectivePrice)))
+          : 0;
         console.warn(`⚠️ ${asset.name} 이번 회차는 1주도 못 삼 (예산 ${Math.round(budget)} / 시세 ${Math.round(effectivePrice)}) → 다음 회차로 이월`);
         return;
       }
