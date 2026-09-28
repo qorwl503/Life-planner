@@ -29294,6 +29294,7 @@ const SUMMARY_PARTS = [
   { key: 'workout', label: '어제 운동' },
   { key: 'money',   label: '남은 생활비' },
   { key: 'market',  label: '환율 · 금 시세' },
+  { key: 'alert',   label: '오늘 목표가 도달' },
 ];
 
 // 한 줄에 이름을 다 늘어놓으면 알림이 잘린다. 앞의 몇 개만 보여주고 나머지는 숫자로.
@@ -29382,14 +29383,19 @@ function livingBudgetNow() {
 function summaryTodoLines() {
   const tk = todayKey();
   const today = (todos || []).filter(t => todoOnDay(t, tk) && !todoDoneOn(t, tk));
-  // 시간 있는 것부터, 시간순
-  today.sort((a, b) => String(a.time || '~').localeCompare(String(b.time || '~')));
+  // 시간 있는 것부터, 시간순. 시간 없는 것은 뒤로.
+  //   localeCompare 는 '~' 같은 기호를 숫자보다 앞에 놓기도 해서 순서가 뒤집혔다.
+  //   있음/없음을 먼저 가르고, 있는 것끼리만 문자열로 비교한다.
+  today.sort((a, b) => {
+    const ta = String(a.time || ''), tb = String(b.time || '');
+    if (!ta && !tb) return 0;
+    if (!ta) return 1;
+    if (!tb) return -1;
+    return ta < tb ? -1 : (ta > tb ? 1 : 0);
+  });
 
-  // 어제까지가 기한인데 아직 안 끝난 것
-  const overdue = (todos || []).filter(t =>
-    t.dateKey && t.dateKey < tk && !t.done && !todoDoneOn(t, t.dateKey)
-  ).length;
-
+  // 지난 할일은 넣지 않는다. 아침 알림은 '오늘 뭘 하나' 를 보는 것이고,
+  // 밀린 것까지 붙으면 매일 같은 목록이 계속 따라다닌다. 밀린 것은 앱에서 본다.
   const out = [];
   if (today.length === 0) {
     out.push('📝 오늘 할일 없음');
@@ -29397,7 +29403,6 @@ function summaryTodoLines() {
     out.push(`📝 오늘 할일 ${today.length}건`);
     out.push(...summaryItemList(today.map(t => (t.time ? t.time + ' ' : '') + (t.title || '제목 없음'))));
   }
-  if (overdue > 0) out.push(`  ⚠️ 밀린 것 ${overdue}건`);
   return out;
 }
 
@@ -29478,6 +29483,26 @@ function summaryMoneyLines() {
   return out;
 }
 
+// 목표가에 닿은 것 — 오늘 것만. 지난 도달까지 붙이면 목록이 계속 쌓인다.
+function summaryAlertLines() {
+  const tk = todayKey();
+  const hits = (settings.alertHits || []).filter(h => {
+    if (!h || !h.at) return false;
+    const d = new Date(h.at);
+    if (isNaN(d.getTime())) return false;
+    const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return k === tk;
+  });
+  if (hits.length === 0) return [];
+
+  const names = hits.map(h => {
+    const dir = h.kind === 'below' ? '↓' : '↑';
+    const price = Number(h.price) > 0 ? ' ' + Math.round(h.price).toLocaleString() : '';
+    return `${dir} ${h.name || '알림'}${price}`;
+  });
+  return [`🔔 목표가 ${hits.length}건`, ...summaryItemList(names)];
+}
+
 function summaryMarketLines() {
   const bits = [];
   const mi = (typeof marketIndices !== 'undefined' && marketIndices) ? marketIndices : null;
@@ -29511,6 +29536,7 @@ const SUMMARY_BUILDERS = {
   workout: summaryWorkoutLines,
   money: summaryMoneyLines,
   market: summaryMarketLines,
+  alert: summaryAlertLines,
 };
 
 function buildMorningSummary() {
