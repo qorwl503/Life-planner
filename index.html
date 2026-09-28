@@ -6109,6 +6109,31 @@ function hasWorkoutPlan() {
 }
 
 // 이번 주 일요일부터 오늘까지의 날짜 키 (일요일 시작 — 앱의 다른 주간 계산과 맞춘다)
+// 이번 주 일~토 전체. thisWeekKeys 는 오늘까지만 주므로 요일 칸에는 이걸 쓴다.
+function weekKeysFull() {
+  const now = new Date();
+  const sun = new Date(now);
+  sun.setDate(now.getDate() - now.getDay());
+  const keys = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(sun);
+    d.setDate(sun.getDate() + i);
+    keys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+  }
+  return keys;
+}
+
+// 그 날 그 종목을 했나 — 운동 기록이면 'log', 계획에만 체크했으면 'tick', 없으면 ''
+function planDayState(sport, dateK) {
+  const log = (workoutLog || {})[dateK];
+  if (log) {
+    for (const ses of workoutSessions(log)) {
+      if (((sportMeta(ses.sport) || {}).key || '기타') === sport) return 'log';
+    }
+  }
+  return planTickedOn(sport, dateK) ? 'tick' : '';
+}
+
 function thisWeekKeys() {
   const now = new Date();
   const keys = [];
@@ -6139,6 +6164,13 @@ function planTickedOn(sport, dateK) {
 function togglePlanTick(sport, dateK) {
   const k = dateK || todayKey();
   if (k > todayKey()) { showToast('아직 오지 않은 날이에요'); return; }
+
+  // 그날 실제 운동 기록이 있으면 이미 센 날이다. 체크를 더 해도 횟수는 그대로라
+  // 아무 일도 안 일어난 것처럼 보인다 — 왜 그런지 말해준다.
+  if (planDayState(sport, k) === 'log') {
+    showToast('그날은 운동 기록이 있어요. 지우려면 종목 이름을 누르세요');
+    return;
+  }
   const day = planTicks(k);
   const on = !day[sport];        // 바뀐 뒤의 상태
   if (on) day[sport] = true;
@@ -6231,29 +6263,48 @@ function renderWorkoutPlanCard() {
 
       ${rows.map(r => {
         const ok = r.did >= r.target;
-        const tickedToday = planTickedOn(r.sport);
+        const DOW = ['일', '월', '화', '수', '목', '금', '토'];
+        const tk = todayKey();
+        const cells = weekKeysFull().map((dk, i) => {
+          const st = planDayState(r.sport, dk);
+          const future = dk > tk;
+          const isToday = dk === tk;
+          // 운동 기록으로 한 날은 꽉 찬 색, 계획에만 체크한 날은 테두리만
+          const bg = st === 'log' ? 'var(--accent-tab, #3D8168)'
+                   : st === 'tick' ? 'rgba(61,129,104,0.14)' : 'var(--bg-primary)';
+          const fg = st === 'log' ? '#fff'
+                   : st === 'tick' ? 'var(--accent-tab, #3D8168)' : 'var(--text-tertiary)';
+          const bd = st ? 'var(--accent-tab, #3D8168)' : 'var(--border-tertiary)';
+          const mark = st === 'log' ? '✓' : st === 'tick' ? '✓' : '';
+          return `
+            <button ${future ? 'disabled' : ''}
+              onclick="event.stopPropagation(); togglePlanTick('${escapeAttr(r.sport)}', '${dk}')"
+              title="${dk}${st === 'log' ? ' · 운동 기록 있음' : st === 'tick' ? ' · 계획 체크' : ''}"
+              style="flex:1; min-width:0; padding:5px 0 4px; border:0.5px solid ${bd}; background:${bg}; color:${fg}; border-radius:7px; cursor:${future ? 'default' : 'pointer'}; font-family:inherit; opacity:${future ? '0.35' : '1'}; ${isToday ? 'box-shadow:0 0 0 1.5px var(--accent-tab, #3D8168);' : ''}">
+              <div style="font-size:9px; line-height:1.1;">${DOW[i]}</div>
+              <div style="font-size:11px; line-height:1.3; font-weight:800; min-height:14px;">${mark}</div>
+            </button>`;
+        }).join('');
+
         return `
-        <div style="margin-bottom:7px;">
-          <div style="display:flex; align-items:center; gap:8px; font-size:11.5px; margin-bottom:3px;">
+        <div style="margin-bottom:10px;">
+          <div style="display:flex; align-items:center; gap:8px; font-size:11.5px; margin-bottom:4px;">
             <span style="flex:1; min-width:0; font-weight:600; cursor:pointer;" onclick="openWeekDoneDetail('${escapeAttr(r.sport)}')">
               ${r.emoji} ${escapeHTML(r.sport)}${r.did > 0 ? ' <span style="color:var(--text-tertiary); font-weight:600;">›</span>' : ''}
             </span>
             <span style="flex:none; color:${ok ? 'var(--text-success)' : 'var(--text-tertiary)'}; font-weight:${ok ? '800' : '600'};">
               ${ok ? '완료' : `${r.left}회 남음`} <span style="color:var(--text-tertiary); font-weight:600;">(${r.did}/${r.target})</span>
             </span>
-            <button onclick="event.stopPropagation(); togglePlanTick('${escapeAttr(r.sport)}')"
-              title="오늘 했으면 눌러두세요 (운동 기록으로는 안 남아요)"
-              style="flex:none; width:26px; height:26px; padding:0; border:0.5px solid ${tickedToday ? 'var(--accent-tab, #3D8168)' : 'var(--border-tertiary)'}; background:${tickedToday ? 'var(--accent-tab, #3D8168)' : 'var(--bg-primary)'}; color:${tickedToday ? '#fff' : 'var(--text-tertiary)'}; border-radius:8px; font-size:12px; line-height:1; cursor:pointer; font-family:inherit;">✓</button>
           </div>
-          <div style="height:5px; background:var(--bg-primary); border-radius:999px; overflow:hidden;">
-            <div style="width:${r.pct}%; height:100%; background:${ok ? 'var(--text-success)' : 'var(--accent-tab, #3D8168)'}; border-radius:999px;"></div>
-          </div>
+          <div style="display:flex; gap:3px;">${cells}</div>
         </div>`;
       }).join('')}
 
       <div style="margin-top:8px; font-size:10.5px; color:var(--text-tertiary); line-height:1.7;">
-        <b>✓</b> 를 누르면 오늘 한 것으로 세요. <b>운동 기록으로는 안 남습니다</b> —
-        스트레칭처럼 매일 하지만 운동 목록에 넣고 싶지 않은 것에 쓰세요.
+        요일을 누르면 그날 한 것으로 세요. <b>운동 기록으로는 안 남습니다</b> —
+        스트레칭처럼 매일 하지만 운동 목록에 넣고 싶지 않은 것에 쓰세요.<br>
+        <span style="display:inline-block; width:9px; height:9px; border-radius:2px; background:var(--accent-tab, #3D8168); vertical-align:-1px;"></span> 운동 기록이 있는 날 ·
+        <span style="display:inline-block; width:9px; height:9px; border-radius:2px; background:rgba(61,129,104,0.14); border:0.5px solid var(--accent-tab, #3D8168); vertical-align:-1px;"></span> 눌러서 체크한 날
         ${totalDid > 0 ? '<br>종목 이름을 누르면 <b>이번 주에 센 날</b>을 볼 수 있어요.' : ''}
       </div>
     </div>`;
