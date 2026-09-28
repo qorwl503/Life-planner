@@ -2776,17 +2776,8 @@ function renderCalendar() {
     const dayTodos = todos.filter(t => todoOnDay(t, k)); // 🔧 기간 일정은 기간 내 모든 날에 점 표시
     if (dayTodos.length > 0) dots.push('t');
     // 챌린지 점 - 시작일 ~ 종료일 사이만 표시 (완료/실패한 챌린지는 제외)
-    const activeChs = challenges.filter(c => {
-      if (c.completed || c.failed) return false; // 🔧 끝난 챌린지는 캘린더에서 숨김
-      if (!c.startDate || !c.totalDays) return false;
-      if (k < c.startDate) return false; // 시작 전
-      // 종료일 계산 (시작일 + totalDays - 1)
-      const start = new Date(c.startDate + 'T00:00:00');
-      const end = new Date(start);
-      end.setDate(start.getDate() + c.totalDays - 1);
-      const endK = dateKey(end.getFullYear(), end.getMonth(), end.getDate());
-      return k <= endK;
-    });
+    // 끝난 것·시작 전·기간 지난 것은 뺀다 (challengeOnDay 가 그 규칙을 갖고 있다)
+    const activeChs = challenges.filter(c => challengeOnDay(c, k));
     if (activeChs.length > 0) dots.push('c');
     return dots;
   }
@@ -2855,16 +2846,7 @@ function renderCalendar() {
       const dayWorkout = workoutLog[dKey]?.done;
       const dayTodos = todos.filter(t => todoOnDay(t, dKey)); // 🔧 기간 일정 포함
       const dayExpenses = budget.expenses.filter(e => e.dateKey === dKey);
-      const dayChs = challenges.filter(c => {
-        if (c.completed || c.failed) return false; // 🔧 끝난 챌린지는 캘린더에서 숨김
-        if (!c.startDate || !c.totalDays) return false;
-        if (dKey < c.startDate) return false;
-        const start = new Date(c.startDate + 'T00:00:00');
-        const end = new Date(start);
-        end.setDate(start.getDate() + c.totalDays - 1);
-        const endK = dateKey(end.getFullYear(), end.getMonth(), end.getDate());
-        return dKey <= endK;
-      });
+      const dayChs = challenges.filter(c => challengeOnDay(c, dKey));
 
       const colorCount = (dayWorkout ? 1 : 0) + (dayTodos.length > 0 ? 1 : 0) + (dayExpenses.length > 0 ? 1 : 0) + (dayChs.length > 0 ? 1 : 0);
 
@@ -3097,16 +3079,7 @@ function getEventsForDay(d) {
 
   // 챌린지 (시작일 ~ 종료일 사이, 시간대 안전 · 완료/실패한 챌린지는 제외)
   challenges.forEach(c => {
-    if (c.completed || c.failed) return; // 🔧 끝난 챌린지는 캘린더에서 숨김
-    if (!c.startDate || !c.totalDays) return;
-    if (k < c.startDate) return; // 시작 전
-
-    // 종료일 계산
-    const start = new Date(c.startDate + 'T00:00:00');
-    const end = new Date(start);
-    end.setDate(start.getDate() + c.totalDays - 1);
-    const endK = dateKey(end.getFullYear(), end.getMonth(), end.getDate());
-    if (k > endK) return; // 종료 후
+    if (!challengeOnDay(c, k)) return;   // 끝난 것·시작 전·기간 지난 것은 뺀다
 
     // 일차 계산 - 문자열 비교로 정확
     const [sy, sm, sd] = c.startDate.split('-').map(Number);
@@ -29406,9 +29379,25 @@ function summaryTodoLines() {
   return out;
 }
 
+// 그 날에 해당하는 챌린지인가. 캘린더가 쓰던 규칙을 함수로 뺀 것 —
+// 요약은 이걸 안 쓰고 '안 끝난 것' 전부를 세고 있어서, 기간이 지난 챌린지까지
+// 매일 '오늘 남은 루틴' 으로 올라왔다.
+function challengeOnDay(c, dayK) {
+  if (!c || c.completed || c.failed || c.archived) return false;
+  if (!c.startDate || !c.totalDays) return false;
+  if (dayK < c.startDate) return false;            // 시작 전
+
+  const start = new Date(c.startDate + 'T00:00:00');
+  if (isNaN(start.getTime())) return false;
+  const end = new Date(start);
+  end.setDate(start.getDate() + Number(c.totalDays) - 1);
+  const endK = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
+  return dayK <= endK;                             // 기간 안
+}
+
 function summaryRoutineLines() {
   const tk = todayKey();
-  const live = (challenges || []).filter(c => c && !c.completed && !c.archived);
+  const live = (challenges || []).filter(c => challengeOnDay(c, tk));
   const todo = live.filter(c => !(c.checks || {})[tk]);
   if (live.length === 0) return [];
   if (todo.length === 0) return [`🔁 오늘 루틴 ${live.length}개 전부 완료`];
