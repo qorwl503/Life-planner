@@ -40,7 +40,7 @@
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
 // 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
-const WORKER_VERSION = '2026-09-17.1';
+const WORKER_VERSION = '2026-09-30.1';
 const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
   '/push/plan', '/push/status', '/relay/workout', '/relay/ping', '/version'];
 
@@ -616,10 +616,30 @@ async function handlePlan(request, env) {
     return json({ error: '시각은 HH:MM 형식이어야 합니다' }, 400);
   }
 
+  // 요약은 앱을 열 때 만들어 둔다. 그날 아침에 앱을 안 열면 낡은 것이 나가므로
+  // 날짜별로 미리 담아 둔다 (오늘 + 내일). 서버는 그날에 맞는 것을 골라 보낸다.
+  const days = Array.isArray(body.days) ? body.days.filter(d =>
+    d && /^\d{4}-\d{2}-\d{2}$/.test(String(d.builtFor || '')) && typeof d.body === 'string'
+  ).slice(0, 7) : [];
+
+  // 정한 시각에 뜨는 할일 알림 (앱이 꺼져 있어도 온다)
+  const todoAlerts = Array.isArray(body.todoAlerts) ? body.todoAlerts.filter(a =>
+    a && /^\d{4}-\d{2}-\d{2}$/.test(String(a.on || '')) &&
+    /^\d{2}:\d{2}$/.test(String(a.at || '')) && typeof a.title === 'string'
+  ).slice(0, 60) : [];
+
+  const prev = await env.PUSH_KV.get(planKey(who.uid));
+  let old = null;
+  try { old = prev ? JSON.parse(prev) : null; } catch (e) {}
+
   const plan = {
     at: body.at,                                  // 한국 시간 기준
     title: body.title || '📋 오늘 정리',
     body: body.body || '',
+    builtFor: body.builtFor || '',
+    days,
+    todoAlerts,
+    sentTodo: (old && old.sentTodo) || {},        // 이미 보낸 할일 알림 (중복 방지)
     tag: body.tag || 'daily-summary',
     savedAt: Date.now(),
   };
@@ -656,6 +676,7 @@ async function runPlan(env) {
       const uid = k.name.slice('plan:'.length);
       // 한 사람이 실패해도 나머지는 보내야 한다
       try { await runPlanFor(env, uid); } catch (e) { /* 다음 사람으로 */ }
+      try { await runTodoAlertsFor(env, uid); } catch (e) { console.log('할일 알림 실패', uid, e && e.message); }
     }
     cursor = page.list_complete ? null : page.cursor;
   } while (cursor);
@@ -681,13 +702,14 @@ async function runPlanFor(env, uid) {
   if (plan.sentOn === now.date) return;
 
   // 요약은 '만들어진 그 날'의 내용이다. 어제 만든 것을 오늘 아침에 보내면
-  // 어제의 할일·목표·환율이 오늘 것인 양 뜬다. 시간(36시간)으로 재면
-  // 어제 아침에 만든 것이 오늘 아침까지 '신선'으로 통과해 버린다 — 날짜로 잰다.
-  const builtFor = String(plan.builtFor || '');
-  const fresh = builtFor === now.date;
-  const body = fresh
-    ? (plan.body || '')
-    : '앱을 열면 오늘 할일·목표·시세를 정리해드릴게요.';
+  // 어제의 할일·목표·환율이 오늘 것인 양 뜬다 — 날짜로 고른다.
+  // 앱이 오늘·내일 것을 미리 담아 두므로, 아침에 앱을 안 열어도 내용이 나온다.
+  const forToday = (plan.days || []).find(d => d && d.builtFor === now.date);
+  const body = forToday
+    ? (forToday.body || '')
+    : (String(plan.builtFor || '') === now.date
+        ? (plan.body || '')
+        : '앱을 열면 오늘 할일·목표·시세를 정리해드릴게요.');
 
   await sendToUser(env, uid, {
     title: plan.title,
@@ -698,6 +720,52 @@ async function runPlanFor(env, uid) {
   });
 
   plan.sentOn = now.date;
+  await env.PUSH_KV.put(planKey(uid), JSON.stringify(plan));
+}
+
+// 시각을 정해둔 할일은 그 시각에 알린다. 앱이 꺼져 있어도 온다.
+// Cron 간격만큼(10분) 늦을 수 있어, 지난 30분 안의 것까지 훑어 놓치지 않게 한다.
+async function runTodoAlertsFor(env, uid) {
+  const raw = await env.PUSH_KV.get(planKey(uid));
+  if (!raw) return;
+
+  let plan;
+  try { plan = JSON.parse(raw); } catch (e) { return; }
+  const list = (plan && plan.todoAlerts) || [];
+  if (!Array.isArray(list) || list.length === 0) return;
+
+  const now = kstNow();
+  if (!plan.sentTodo || typeof plan.sentTodo !== 'object') plan.sentTodo = {};
+
+  const due = [];
+  for (const a of list) {
+    if (!a || a.on !== now.date) continue;
+    const [hh, mm] = String(a.at).split(':').map(Number);
+    const target = hh * 60 + mm;
+    const diff = now.minutes - target;
+    if (diff < 0 || diff > 30) continue;          // 아직이거나 너무 늦음
+    const key = `${a.on} ${a.at} ${a.title}`;
+    if (plan.sentTodo[key]) continue;             // 이미 보냄
+    due.push({ a, key });
+  }
+  if (due.length === 0) return;
+
+  for (const { a, key } of due) {
+    await sendToUser(env, uid, {
+      title: `⏰ ${a.at} ${a.title}`,
+      body: a.note || '지금 할 시간이에요',
+      tag: 'todo-' + key,                          // 같은 할일은 하나로
+      url: './index.html',
+    });
+    plan.sentTodo[key] = 1;
+  }
+
+  // 지난 날짜 기록은 버린다 (KV 값이 무한정 커지지 않게)
+  const keep = {};
+  for (const k of Object.keys(plan.sentTodo)) {
+    if (String(k).slice(0, 10) >= now.date) keep[k] = 1;
+  }
+  plan.sentTodo = keep;
   await env.PUSH_KV.put(planKey(uid), JSON.stringify(plan));
 }
 

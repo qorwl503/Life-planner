@@ -1920,8 +1920,21 @@ function dateLabel(dateKeyStr) {
 
 // 오늘 키
 function todayKey() {
+  // 요약을 하루 앞서 만들 때만 잠깐 다른 날로 본다 (withDay 참고).
+  // 그 밖에는 언제나 진짜 오늘이다.
+  if (window._asOfDay) return window._asOfDay;
   const n = new Date();
   return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;
+}
+
+// 잠깐 '그 날'인 것처럼 보고 fn 을 돌린다. 끝나면 반드시 되돌린다.
+//   아침 요약을 하루 앞서 만들어 두려고 쓴다 — 앱을 아침에 안 열어도
+//   알림에 그날 할일·목표가 제대로 나오게 하기 위해서다.
+function withDay(dayK, fn) {
+  const before = window._asOfDay;
+  window._asOfDay = dayK;
+  try { return fn(); }
+  finally { window._asOfDay = before; }
 }
 
 // 일자(d) + 현재 캘린더 월 → dateKey
@@ -29579,7 +29592,8 @@ const SUMMARY_BUILDERS = {
   alert: summaryAlertLines,
 };
 
-function buildMorningSummary() {
+function buildMorningSummary(dayK) {
+  if (dayK && dayK !== todayKey()) return withDay(dayK, () => buildMorningSummary());
   const out = [];
   for (const part of SUMMARY_PARTS) {
     if (!summaryOn(part.key)) continue;
@@ -29591,6 +29605,50 @@ function buildMorningSummary() {
     if (lines.length > 0) out.push(...lines);
   }
   return out.filter(Boolean).join('\n');
+}
+
+// 오늘과 내일 요약을 미리 만들어 둔다.
+//   요약은 앱을 열 때만 만들어진다. 아침에 앱을 안 열면 서버에 그날 것이 없어
+//   "앱을 열면 정리해드릴게요" 만 나갔다. 할일·목표는 날짜가 정해져 있어
+//   하루 앞서 만들 수 있으므로, 미리 담아 둔다.
+function summaryDaysAhead() {
+  const out = [];
+  for (let i = 0; i < 2; i++) {
+    const dayK = i === 0 ? todayKey() : dayAfter(todayKey(), i);
+    try {
+      out.push({ builtFor: dayK, body: buildMorningSummary(dayK) });
+    } catch (e) { console.warn('요약 미리 만들기 실패:', dayK, e); }
+  }
+  return out;
+}
+
+// 어떤 날짜에서 n일 뒤
+function dayAfter(dateK, n) {
+  const [y, m, d] = String(dateK).split('-').map(Number);
+  const t = new Date(y, m - 1, d);
+  t.setDate(t.getDate() + (Number(n) || 0));
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+}
+
+// 시각을 정해둔 할일 → 서버가 그 시각에 알린다 (앱이 꺼져 있어도 온다).
+//   오늘·내일 것만. 이미 끝낸 것은 뺀다.
+function timedTodoAlerts() {
+  const out = [];
+  for (let i = 0; i < 2; i++) {
+    const dayK = i === 0 ? todayKey() : dayAfter(todayKey(), i);
+    (todos || []).forEach(t => {
+      if (!t || !t.time || !/^\d{2}:\d{2}$/.test(String(t.time))) return;
+      if (!todoOnDay(t, dayK)) return;
+      if (todoDoneOn(t, dayK)) return;
+      out.push({
+        on: dayK,
+        at: String(t.time),
+        title: String(t.title || '할일').slice(0, 60),
+        note: t.memo ? String(t.memo).slice(0, 80) : '',
+      });
+    });
+  }
+  return out.slice(0, 60);
 }
 
 // 서버에 '언제, 무슨 내용으로 보낼지'를 넣어둔다. 앱을 열 때마다 갱신된다.
@@ -29613,8 +29671,13 @@ async function pushSummaryToServer() {
         key: settings.uploadKey || '',
         at: settings.summaryTime || '08:00',   // 한국 시간 기준 HH:MM
         title: '📋 오늘 정리',
+        // 오늘 것 (옛 서버도 이걸 본다)
         body: buildMorningSummary(),
-        builtFor: todayKey(),   // 어느 날 기준인지. 서버가 이걸로 낡았는지 본다
+        builtFor: todayKey(),
+        // 오늘 + 내일을 미리 담아 둔다. 아침에 앱을 안 열어도 그날 내용이 나간다
+        days: summaryDaysAhead(),
+        // 시각을 정해둔 할일 — 서버가 그 시각에 알린다
+        todoAlerts: timedTodoAlerts(),
         tag: 'daily-summary',
       }),
     });
