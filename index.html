@@ -10264,8 +10264,8 @@ function renderMonthlyReview(opts) {
         <div style="padding:10px 12px; background:var(--bg-primary); border-radius:10px; margin-bottom:8px; box-shadow:var(--shadow-card);">
           <div style="font-size:11px; font-weight:600; color:var(--text-secondary); margin-bottom:6px;">지출 카테고리 TOP3</div>
           ${top3.map(([cat, amt], i) => `
-            <div style="display:flex; justify-content:space-between; padding:3px 0; font-size:11px;">
-              <span><b style="color:var(--text-tertiary);">${i+1}.</b> ${escapeHTML(cat)}</span>
+            <div onclick="openCatDetail('${escapeAttr(cat)}')" style="display:flex; justify-content:space-between; padding:3px 0; font-size:11px; cursor:pointer;">
+              <span><b style="color:var(--text-tertiary);">${i+1}.</b> ${escapeHTML(cat)} <span style="color:var(--text-tertiary);">›</span></span>
               <span style="font-weight:600;">${amt.toLocaleString()}원</span>
             </div>
           `).join('')}
@@ -10300,6 +10300,99 @@ function renderMonthlyReview(opts) {
     </div>`;
 }
 
+
+// ===== 📂 카테고리 하나만 모아 보기 =====
+//    도넛에서 '쇼핑' 을 누르면 그 달 쇼핑 내역만 쭉 나온다.
+//    보고 있는 달 기준이고, 같은 카테고리로 들어온 돈(입금)도 함께 보여준다.
+
+function catDetailRows(cat, prefix) {
+  const want = String(cat || '기타');
+  return (budget.expenses || [])
+    .filter(e => e && e.dateKey && String(e.dateKey).startsWith(prefix))
+    .filter(e => (e.cat || '기타') === want)
+    .filter(e => !isTransferRow(e))     // 주머니 사이 이동은 쓴 돈이 아니다
+    .sort((a, b) => String(b.dateKey).localeCompare(String(a.dateKey)));
+}
+
+function openCatDetail(cat) {
+  const prefix = `${budgetViewYear}-${String(budgetViewMonth + 1).padStart(2, '0')}`;
+  const rows = catDetailRows(cat, prefix);
+
+  const spent = rows.filter(e => !isDepositEntry(e)).reduce((n, e) => n + (Number(e.amt) || 0), 0);
+  const got = rows.filter(isDepositEntry).reduce((n, e) => n + (Number(e.amt) || 0), 0);
+  const net = Math.max(0, spent - got);
+  const spendCount = rows.filter(e => !isDepositEntry(e)).length;
+  const avg = spendCount > 0 ? Math.round(spent / spendCount) : 0;
+
+  // 날짜별로 묶어서 보여준다 — 같은 날 여러 건이 흩어져 보이지 않게
+  const byDay = {};
+  rows.forEach(e => { (byDay[e.dateKey] = byDay[e.dateKey] || []).push(e); });
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+        <h2 style="font-size:15px;">${escapeHTML(cat)}</h2>
+        <span></span>
+      </div>
+      <div style="padding:0 16px 20px;">
+        <div style="font-size:11px; color:var(--text-tertiary); margin-bottom:10px;">
+          ${budgetViewYear}년 ${budgetViewMonth + 1}월
+        </div>
+
+        ${rows.length === 0 ? `
+          <div style="font-size:12px; color:var(--text-tertiary); text-align:center; padding:28px 0; line-height:1.7;">
+            이 달엔 ${escapeHTML(cat)} 내역이 없어요
+          </div>` : `
+          <div style="display:flex; gap:8px; margin-bottom:12px;">
+            <div style="flex:1; padding:11px; background:var(--bg-secondary); border-radius:10px; text-align:center;">
+              <div style="font-size:10.5px; color:var(--text-tertiary);">${got > 0 ? '쓴 돈' : '합계'}</div>
+              <div style="font-size:15px; font-weight:800; margin-top:2px;">${spent.toLocaleString()}원</div>
+            </div>
+            ${got > 0 ? `<div style="flex:1; padding:11px; background:var(--bg-secondary); border-radius:10px; text-align:center;">
+              <div style="font-size:10.5px; color:var(--text-tertiary);">들어온 돈</div>
+              <div style="font-size:15px; font-weight:800; margin-top:2px; color:var(--text-success);">-${got.toLocaleString()}</div>
+            </div>` : ''}
+            <div style="flex:1; padding:11px; background:var(--bg-secondary); border-radius:10px; text-align:center;">
+              <div style="font-size:10.5px; color:var(--text-tertiary);">${spendCount}건 · 평균</div>
+              <div style="font-size:15px; font-weight:800; margin-top:2px;">${avg.toLocaleString()}원</div>
+            </div>
+          </div>
+
+          ${got > 0 ? `<div style="padding:9px 12px; background:var(--bg-info); border-radius:9px; font-size:11.5px; color:var(--text-info); margin-bottom:12px;">
+            실제로 쓴 금액은 <b>${net.toLocaleString()}원</b> 이에요 (들어온 돈을 뺀 값)
+          </div>` : ''}
+
+          ${Object.keys(byDay).map(dk => `
+            <div style="margin-bottom:10px;">
+              <div style="font-size:10.5px; color:var(--text-tertiary); margin-bottom:4px;">${escapeHTML(dk)}</div>
+              ${byDay[dk].map(e => {
+                const dep = isDepositEntry(e);
+                const amt = Number(e.amt) || 0;
+                return `
+                <div onclick="closeModal(); setTimeout(() => { try { editExpense(${e.id}); } catch (err) {} }, 100);"
+                  style="display:flex; align-items:center; gap:9px; padding:9px 11px; border:0.5px solid var(--border-tertiary); border-radius:10px; margin-bottom:5px; cursor:pointer;">
+                  <div style="flex:1; min-width:0;">
+                    <div style="font-size:12px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                      ${escapeHTML(e.memo || e.place || (dep ? '입금' : '지출'))}
+                    </div>
+                    ${e.place && e.memo ? `<div style="font-size:10.5px; color:var(--text-tertiary); margin-top:2px;">${escapeHTML(e.place)}</div>` : ''}
+                  </div>
+                  <div style="flex:none; font-size:12.5px; font-weight:800; color:${dep ? 'var(--text-success)' : 'var(--text-primary)'};">
+                    ${dep ? '+' : ''}${amt.toLocaleString()}
+                  </div>
+                </div>`;
+              }).join('')}
+            </div>`).join('')}
+
+          <div style="font-size:10.5px; color:var(--text-tertiary); margin-top:6px; line-height:1.7;">
+            항목을 누르면 고칠 수 있어요.
+          </div>`}
+      </div>
+    </div>`;
+  modal.classList.add('show');
+}
 
 // ===== 💰 카테고리별 예산 =====
 // 쓰고 나서 집계만 하면 늦다. 미리 정해두고 '남은 돈'을 보게 한다.
@@ -11154,9 +11247,9 @@ function renderMoney() {
           <div style="flex:1; min-width:0; max-height:140px; overflow-y:auto;">
             ${catEntries.slice(0, 8).map(([cat, amt], i) => {
               const pct = (amt / totalExp) * 100;
-              return `<div style="display:flex; align-items:center; gap:6px; margin-bottom:5px; font-size:11px;">
+              return `<div onclick="openCatDetail('${escapeAttr(cat)}')" style="display:flex; align-items:center; gap:6px; margin-bottom:5px; font-size:11px; cursor:pointer;">
                 <div style="width:10px; height:10px; border-radius:2px; background:${catColors[i % catColors.length]}; flex-shrink:0;"></div>
-                <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${cat}</span>
+                <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${cat} <span style="color:var(--text-tertiary);">›</span></span>
                 <span style="font-weight:600;">${pct.toFixed(0)}%</span>
                 <span style="color:var(--text-tertiary); font-size:11px;">${fmtManShort(amt)}</span>
               </div>`;
