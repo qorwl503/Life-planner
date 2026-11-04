@@ -2119,6 +2119,7 @@ function render() {
       try { drainExpenseInbox(true); } catch (e) { console.warn('가계부 수신함 처리 실패:', e); }
       try { setupInboxWatch(); } catch (e) {}
       try { clearSeenNotifications(); } catch (e) {}
+      try { setupTodoAlarmWatch(); } catch (e) {}
 
       // 알림을 눌러 들어온 경우 — 오늘 것으로 새로 만들어 통째로 보여준다.
       // 알림 본문은 길면 잘리기 때문에 전문은 여기서만 볼 수 있다.
@@ -8083,6 +8084,94 @@ function openTodaySummary() {
       </div>
     </div>`;
   modal.classList.add('show');
+}
+
+// ⏰ 앱을 보고 있는 동안에는 화면에 바로 팝업을 띄운다.
+//    푸시 알림은 앱이 꺼져 있을 때를 위한 것이고, 켜 둔 채로 있으면
+//    알림이 안 뜨거나 지나치기 쉬워 정작 제때를 놓친다.
+function dueTodosNow() {
+  const tk = todayKey();
+  const n = new Date();
+  const nowMin = n.getHours() * 60 + n.getMinutes();
+  return (todos || []).filter(t => {
+    if (!t || !t.time || !/^\d{2}:\d{2}$/.test(String(t.time))) return false;
+    if (!todoOnDay(t, tk) || todoDoneOn(t, tk)) return false;
+    const [hh, mm] = String(t.time).split(':').map(Number);
+    const diff = nowMin - (hh * 60 + mm);
+    return diff >= 0 && diff <= 30;        // 지난 30분 안의 것까지
+  });
+}
+
+function todoAlertSeen(t, tk) {
+  if (!settings.todoAlertSeen || typeof settings.todoAlertSeen !== 'object') settings.todoAlertSeen = {};
+  return settings.todoAlertSeen[`${tk} ${t.id}`];
+}
+
+function markTodoAlertSeen(t, tk) {
+  if (!settings.todoAlertSeen || typeof settings.todoAlertSeen !== 'object') settings.todoAlertSeen = {};
+  settings.todoAlertSeen[`${tk} ${t.id}`] = 1;
+  // 지난 날짜 기록은 버린다 (설정이 무한정 커지지 않게)
+  Object.keys(settings.todoAlertSeen).forEach(k => {
+    if (String(k).slice(0, 10) < tk) delete settings.todoAlertSeen[k];
+  });
+  saveData();
+}
+
+function openTodoDuePopup(t) {
+  const tk = todayKey();
+  markTodoAlertSeen(t, tk);
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">나중에</button>
+        <h2 style="font-size:15px;">⏰ ${escapeHTML(t.time)}</h2>
+        <span></span>
+      </div>
+      <div style="padding:0 16px 20px; text-align:center;">
+        <div style="font-size:20px; font-weight:800; margin:10px 0 6px; line-height:1.4;">
+          ${escapeHTML(t.title || '할일')}
+        </div>
+        ${t.memo ? `<div style="font-size:12.5px; color:var(--text-secondary); line-height:1.7; margin-bottom:6px;">${escapeHTML(t.memo)}</div>` : ''}
+        ${t.tag ? `<div style="margin-bottom:12px;">${todoTagBadge(t.tag)}</div>` : '<div style="height:8px;"></div>'}
+
+        <button onclick="completeTodoFromPopup(${t.id})" style="width:100%; padding:13px; border:none; background:var(--accent-tab, #3D8168); color:#fff; border-radius:11px; font-size:14px; font-weight:800; cursor:pointer; font-family:inherit;">
+          ✓ 했어요
+        </button>
+        <button onclick="closeModal()" style="width:100%; margin-top:8px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:12.5px; font-weight:600; cursor:pointer; font-family:inherit;">
+          나중에 할게요
+        </button>
+      </div>
+    </div>`;
+  modal.classList.add('show');
+}
+
+function completeTodoFromPopup(id) {
+  const t = (todos || []).find(x => x && x.id === id);
+  if (t) {
+    try { toggleTodo(id); } catch (e) { t.done = true; saveData(); }
+  }
+  closeModal();
+  try { render(); } catch (e) {}
+}
+
+// 1분마다 본다. 화면이 보일 때만 — 안 보이는 동안은 푸시가 맡는다.
+function checkDueTodos() {
+  if (document.visibilityState !== 'visible') return;
+  if (modal && modal.classList && modal.classList.contains('show')) return;   // 뭔가 떠 있으면 방해하지 않는다
+  const tk = todayKey();
+  const due = dueTodosNow().filter(t => !todoAlertSeen(t, tk));
+  if (due.length === 0) return;
+  due.sort((a, b) => String(a.time).localeCompare(String(b.time)));
+  openTodoDuePopup(due[0]);
+}
+
+function setupTodoAlarmWatch() {
+  if (window._todoAlarmOn) return;
+  window._todoAlarmOn = true;
+  setInterval(() => { try { checkDueTodos(); } catch (e) {} }, 60 * 1000);
+  document.addEventListener('visibilitychange', () => { try { checkDueTodos(); } catch (e) {} });
+  setTimeout(() => { try { checkDueTodos(); } catch (e) {} }, 3000);
 }
 
 function setupInboxWatch() {
@@ -29736,10 +29825,14 @@ function dayAfter(dateK, n) {
 }
 
 // 시각을 정해둔 할일 → 서버가 그 시각에 알린다 (앱이 꺼져 있어도 온다).
-//   오늘·내일 것만. 이미 끝낸 것은 뺀다.
+//   앞으로 2주치를 한꺼번에 올려둔다. 오늘·내일 것만 올리면 며칠 뒤 할일은
+//   그날까지 앱을 열지 않는 한 서버가 아예 모른다 — 그래서 아무 알림도 안 왔다.
+//   이미 끝낸 것은 뺀다.
+const TODO_ALERT_DAYS = 14;
+
 function timedTodoAlerts() {
   const out = [];
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < TODO_ALERT_DAYS; i++) {
     const dayK = i === 0 ? todayKey() : dayAfter(todayKey(), i);
     (todos || []).forEach(t => {
       if (!t || !t.time || !/^\d{2}:\d{2}$/.test(String(t.time))) return;
@@ -29753,7 +29846,7 @@ function timedTodoAlerts() {
       });
     });
   }
-  return out.slice(0, 60);
+  return out.slice(0, 300);
 }
 
 // 서버에 '언제, 무슨 내용으로 보낼지'를 넣어둔다. 앱을 열 때마다 갱신된다.

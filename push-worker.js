@@ -40,7 +40,7 @@
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
 // 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
-const WORKER_VERSION = '2026-11-05.1';
+const WORKER_VERSION = '2026-11-05.2';
 const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
   '/push/plan', '/push/status', '/relay/workout', '/relay/ping', '/version'];
 
@@ -626,7 +626,7 @@ async function handlePlan(request, env) {
   const todoAlerts = Array.isArray(body.todoAlerts) ? body.todoAlerts.filter(a =>
     a && /^\d{4}-\d{2}-\d{2}$/.test(String(a.on || '')) &&
     /^\d{2}:\d{2}$/.test(String(a.at || '')) && typeof a.title === 'string'
-  ).slice(0, 60) : [];
+  ).slice(0, 300) : [];      // 앞으로 2주치를 한꺼번에 받아둔다
 
   const prev = await env.PUSH_KV.get(planKey(who.uid));
   let old = null;
