@@ -29831,21 +29831,44 @@ function dayAfter(dateK, n) {
 const TODO_ALERT_DAYS = 14;
 
 function timedTodoAlerts() {
+  const tk = todayKey();
   const out = [];
-  for (let i = 0; i < TODO_ALERT_DAYS; i++) {
-    const dayK = i === 0 ? todayKey() : dayAfter(todayKey(), i);
-    (todos || []).forEach(t => {
-      if (!t || !t.time || !/^\d{2}:\d{2}$/.test(String(t.time))) return;
-      if (!todoOnDay(t, dayK)) return;
-      if (todoDoneOn(t, dayK)) return;
-      out.push({
-        on: dayK,
-        at: String(t.time),
-        title: String(t.title || '할일').slice(0, 60),
-        note: t.memo ? String(t.memo).slice(0, 80) : '',
-      });
+  const seen = new Set();
+
+  const add = (t, dayK) => {
+    const key = dayK + ' ' + t.id;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({
+      on: dayK,
+      at: String(t.time),
+      title: String(t.title || '할일').slice(0, 60),
+      note: t.memo ? String(t.memo).slice(0, 80) : '',
     });
-  }
+  };
+
+  (todos || []).forEach(t => {
+    if (!t || !t.time || !/^\d{2}:\d{2}$/.test(String(t.time))) return;
+
+    if (t.repeat && t.repeat.type) {
+      // 반복은 끝이 없을 수 있다 — 앞으로 2주치만 펼친다 (앱을 열 때마다 다시 채워진다)
+      for (let i = 0; i < TODO_ALERT_DAYS; i++) {
+        const dayK = i === 0 ? tk : dayAfter(tk, i);
+        if (todoOnDay(t, dayK) && !todoDoneOn(t, dayK)) add(t, dayK);
+      }
+      return;
+    }
+
+    // 반복이 아니면 날짜가 하나뿐이다 — 한 달 뒤든 석 달 뒤든 그대로 올린다.
+    // (2주치만 올리면 그 뒤로 적어둔 것은 그날까지 앱을 안 열면 알림이 안 온다)
+    const dayK = t.dateKey || '';
+    if (!dayK || dayK < tk) return;
+    if (t.done || todoDoneOn(t, dayK)) return;
+    add(t, dayK);
+  });
+
+  // 가까운 날부터. 너무 많으면 먼 것부터 잘린다
+  out.sort((x, y) => (x.on + x.at) < (y.on + y.at) ? -1 : 1);
   return out.slice(0, 300);
 }
 
