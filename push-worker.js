@@ -40,7 +40,7 @@
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
 // 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
-const WORKER_VERSION = '2026-09-30.1';
+const WORKER_VERSION = '2026-11-05.1';
 const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
   '/push/plan', '/push/status', '/relay/workout', '/relay/ping', '/version'];
 
@@ -756,6 +756,10 @@ async function runTodoAlertsFor(env, uid) {
       body: a.note || '지금 할 시간이에요',
       tag: 'todo-' + key,                          // 같은 할일은 하나로
       url: './index.html',
+      // 눌러서 치울 때까지 화면에 남긴다. 잠깐 떴다 사라지면 놓친다.
+      requireInteraction: true,
+      renotify: true,
+      vibrate: [200, 100, 200, 100, 200],
     });
     plan.sentTodo[key] = 1;
   }

@@ -33,6 +33,8 @@ self.addEventListener('push', (event) => {
     tag: data.tag || 'myplanner',          // 같은 tag 면 덮어써서 알림이 쌓이지 않는다
     renotify: !!data.renotify,
     requireInteraction: !!data.requireInteraction,
+    // 손목에서도 알아채게 — 진동 패턴이 있으면 그대로 쓴다
+    vibrate: Array.isArray(data.vibrate) ? data.vibrate : undefined,
     data: { url: data.url || APP_URL, kind: data.kind || '' },
   };
 
