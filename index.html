@@ -4607,12 +4607,66 @@ function getMonthlyGoals(mKey) {
   return settings.monthlyGoals[k];
 }
 
+// 목표는 '했다/안 했다' 만으로는 관리가 안 된다. "수영 8회" 처럼 셀 수 있으면
+// 지금 어디쯤인지, 남은 날에 얼마씩 해야 하는지가 보인다.
+//   목표 하나: { id, text, done, target, unit, cur }
+//   target 이 없으면 예전처럼 체크만 하는 목표로 돈다 (하위호환)
+function goalHasCount(g) {
+  return !!(g && Number(g.target) > 0);
+}
+
+function goalPct(g) {
+  if (!goalHasCount(g)) return g && g.done ? 100 : 0;
+  const t = Number(g.target) || 0;
+  return t > 0 ? Math.min(100, Math.round((Number(g.cur) || 0) / t * 100)) : 0;
+}
+
+function goalDone(g) {
+  if (!g) return false;
+  return goalHasCount(g) ? (Number(g.cur) || 0) >= Number(g.target) : !!g.done;
+}
+
+// 이번 달 남은 날 (오늘 포함)
+function daysLeftInMonth() {
+  const n = new Date();
+  return new Date(n.getFullYear(), n.getMonth() + 1, 0).getDate() - n.getDate() + 1;
+}
+
+// 남은 날에 하루 몇 번씩 해야 하는지. 다 했으면 null.
+function goalPace(g) {
+  if (!goalHasCount(g)) return null;
+  const left = Number(g.target) - (Number(g.cur) || 0);
+  if (left <= 0) return null;
+  const days = Math.max(1, daysLeftInMonth());
+  return Math.ceil(left / days * 10) / 10;
+}
+
 function addMonthlyGoal() {
   const el = document.getElementById('mg-input');
   const text = (el?.value || '').trim();
   if (!text) { showToast('목표를 입력해주세요'); return; }
-  getMonthlyGoals().push({ id: Date.now() + Math.random(), text, done: false });
+
+  const target = Number(document.getElementById('mg-target')?.value) || 0;
+  const unit = (document.getElementById('mg-unit')?.value || '').trim();
+  const goal = { id: Date.now() + Math.random(), text, done: false };
+  if (target > 0) { goal.target = target; goal.unit = unit; goal.cur = 0; }
+
+  getMonthlyGoals().push(goal);
   if (el) el.value = '';
+  const tEl = document.getElementById('mg-target'); if (tEl) tEl.value = '';
+  const uEl = document.getElementById('mg-unit'); if (uEl) uEl.value = '';
+  saveData();
+  renderTodo();
+}
+
+// 숫자 목표를 한 칸 올리고 내린다
+function bumpMonthlyGoal(id, delta) {
+  const g = getMonthlyGoals().find(x => x.id === id);
+  if (!g || !goalHasCount(g)) return;
+  const before = goalDone(g);
+  g.cur = Math.max(0, (Number(g.cur) || 0) + delta);
+  g.done = goalDone(g);
+  if (!before && g.done) { haptic(); showToast(`🎉 ${g.text} 달성!`); }
   saveData();
   renderTodo();
 }
@@ -4660,16 +4714,44 @@ function carryOverGoals() {
 function renderMonthlyGoals() {
   const mKey = monthKeyOf();
   const list = getMonthlyGoals(mKey);
-  const done = list.filter(g => g.done).length;
+  const done = list.filter(goalDone).length;
   const pct = list.length ? Math.round(done / list.length * 100) : 0;
   const label = `${Number(mKey.slice(5))}월`;
+  const left = daysLeftInMonth();
 
-  const rows = list.map(g => `
-    <div style="display:flex; align-items:center; gap:9px; padding:9px 2px; border-bottom:0.5px solid var(--border-tertiary);">
-      <div onclick="toggleMonthlyGoal(${g.id})" style="width:20px; height:20px; flex-shrink:0; border-radius:6px; border:1.5px solid ${g.done ? 'var(--text-success)' : 'var(--border-secondary)'}; background:${g.done ? 'var(--text-success)' : 'transparent'}; color:white; font-size:11px; display:flex; align-items:center; justify-content:center; cursor:pointer;">${g.done ? '✓' : ''}</div>
-      <span style="flex:1; min-width:0; font-size:12.5px; ${g.done ? 'text-decoration:line-through; color:var(--text-tertiary);' : ''}">${escapeHTML(g.text)}</span>
-      <button onclick="deleteMonthlyGoal(${g.id})" style="flex:0 0 auto; border:none; background:transparent; color:var(--text-tertiary); font-size:13px; cursor:pointer; padding:2px 4px;">✕</button>
-    </div>`).join('');
+  const rows = list.map(g => {
+    const fin = goalDone(g);
+    if (!goalHasCount(g)) {
+      // 체크만 하는 목표 (예전 것 포함)
+      return `
+      <div style="display:flex; align-items:center; gap:9px; padding:9px 2px; border-bottom:0.5px solid var(--border-tertiary);">
+        <div onclick="toggleMonthlyGoal(${g.id})" style="width:20px; height:20px; flex-shrink:0; border-radius:6px; border:1.5px solid ${fin ? 'var(--text-success)' : 'var(--border-secondary)'}; background:${fin ? 'var(--text-success)' : 'transparent'}; color:white; font-size:11px; display:flex; align-items:center; justify-content:center; cursor:pointer;">${fin ? '✓' : ''}</div>
+        <span style="flex:1; min-width:0; font-size:12.5px; ${fin ? 'text-decoration:line-through; color:var(--text-tertiary);' : ''}">${escapeHTML(g.text)}</span>
+        <button onclick="deleteMonthlyGoal(${g.id})" style="flex:0 0 auto; border:none; background:transparent; color:var(--text-tertiary); font-size:13px; cursor:pointer; padding:2px 4px;">✕</button>
+      </div>`;
+    }
+
+    // 셀 수 있는 목표 — 지금 어디쯤인지와 남은 날 페이스를 보여준다
+    const gp = goalPct(g);
+    const pace = goalPace(g);
+    const unit = escapeHTML(g.unit || '회');
+    return `
+      <div style="padding:9px 2px; border-bottom:0.5px solid var(--border-tertiary);">
+        <div style="display:flex; align-items:center; gap:9px; margin-bottom:5px;">
+          <span style="flex:1; min-width:0; font-size:12.5px; font-weight:${fin ? '700' : '600'}; color:${fin ? 'var(--text-success)' : 'var(--text-primary)'};">
+            ${fin ? '✓ ' : ''}${escapeHTML(g.text)}
+          </span>
+          <button onclick="bumpMonthlyGoal(${g.id}, -1)" style="flex:none; width:26px; height:26px; padding:0; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:7px; font-size:14px; line-height:1; cursor:pointer; font-family:inherit;">−</button>
+          <span style="flex:none; min-width:58px; text-align:center; font-size:12px; font-weight:800;">${Number(g.cur) || 0}<span style="color:var(--text-tertiary); font-weight:600;">/${g.target}${unit}</span></span>
+          <button onclick="bumpMonthlyGoal(${g.id}, 1)" style="flex:none; width:26px; height:26px; padding:0; border:0.5px solid var(--accent-tab, #3D8168); background:var(--accent-tab, #3D8168); color:#fff; border-radius:7px; font-size:14px; line-height:1; cursor:pointer; font-family:inherit;">+</button>
+          <button onclick="deleteMonthlyGoal(${g.id})" style="flex:0 0 auto; border:none; background:transparent; color:var(--text-tertiary); font-size:13px; cursor:pointer; padding:2px 4px;">✕</button>
+        </div>
+        <div style="height:5px; background:var(--bg-tertiary); border-radius:3px; overflow:hidden;">
+          <div style="height:100%; width:${gp}%; background:${fin ? 'var(--text-success)' : 'var(--accent-tab, #3D8168)'};"></div>
+        </div>
+        ${pace != null ? `<div style="font-size:10px; color:var(--text-tertiary); margin-top:3px;">남은 ${left}일 · 하루 ${pace}${unit}씩이면 돼요</div>` : ''}
+      </div>`;
+  }).join('');
 
   return `
     <div class="card" style="margin-bottom:12px;">
@@ -4683,9 +4765,17 @@ function renderMonthlyGoals() {
         </div>
         ${rows}` : `<div style="font-size:11px; color:var(--text-tertiary); padding:6px 0 10px; line-height:1.6;">이번 달에 이루고 싶은 걸 적어보세요.<br><span style="opacity:0.8;">예: 코딩 공부하기 · 수영 계속하기</span></div>`}
       <div style="display:flex; gap:6px; margin-top:9px;">
-        <input id="mg-input" type="text" placeholder="예: 코딩 공부하기" onkeypress="if(event.key==='Enter') addMonthlyGoal()"
-          style="flex:1; padding:9px 11px; border:0.5px solid var(--border-tertiary); border-radius:9px; font-size:12px; font-family:inherit; background:var(--bg-primary);" />
+        <input id="mg-input" type="text" placeholder="예: 수영 가기" onkeypress="if(event.key==='Enter') addMonthlyGoal()"
+          style="flex:1; min-width:0; padding:9px 11px; border:0.5px solid var(--border-tertiary); border-radius:9px; font-size:12px; font-family:inherit; background:var(--bg-primary);" />
         <button onclick="addMonthlyGoal()" style="flex:0 0 auto; padding:9px 15px; border:none; background:var(--bg-info); color:var(--text-info); border-radius:9px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">추가</button>
+      </div>
+      <div style="display:flex; align-items:center; gap:6px; margin-top:6px;">
+        <span style="font-size:10.5px; color:var(--text-tertiary); flex:none;">몇 번?</span>
+        <input id="mg-target" type="number" min="1" inputmode="numeric" placeholder="8" onkeypress="if(event.key==='Enter') addMonthlyGoal()"
+          style="width:62px; padding:7px 9px; border:0.5px solid var(--border-tertiary); border-radius:8px; font-size:12px; font-family:inherit; background:var(--bg-primary);" />
+        <input id="mg-unit" type="text" maxlength="4" placeholder="회" onkeypress="if(event.key==='Enter') addMonthlyGoal()"
+          style="width:52px; padding:7px 9px; border:0.5px solid var(--border-tertiary); border-radius:8px; font-size:12px; font-family:inherit; background:var(--bg-primary);" />
+        <span style="font-size:10px; color:var(--text-tertiary); line-height:1.5;">비워두면 체크만 하는 목표가 돼요</span>
       </div>
     </div>`;
 }
