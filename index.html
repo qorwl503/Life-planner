@@ -20105,7 +20105,9 @@ function openTodoModal(forDateKey, editTodoObj) {
           <div style="font-size:11px; font-weight:700; margin-bottom:6px;">🔔 알림</div>
           <div style="display:flex; gap:4px; flex-wrap:wrap;" id="todo-alarm">
             ${ALARM_CHOICES.map(c => {
-              const cur = isEdit ? todoAlarmChoice(editTodoObj) : 0;
+              // 새 할일은 '안 함' 에서 시작한다 — 알림은 고른 것만 오는 게 맞다.
+              // 고칠 때는 그 할일에 저장된 값을 그대로 보여준다.
+              const cur = isEdit ? todoAlarmChoice(editTodoObj) : -1;
               const on = cur === c.v;
               return `<button type="button" class="chip${on ? ' active' : ''}" data-a="${c.v}"
                 onclick="document.querySelectorAll('#todo-alarm .chip').forEach(x=>x.classList.remove('active')); this.classList.add('active');"
@@ -20113,7 +20115,8 @@ function openTodoModal(forDateKey, editTodoObj) {
             }).join('')}
           </div>
           <div style="font-size:10px; color:var(--text-tertiary); margin-top:6px; line-height:1.6;">
-            시간을 넣어야 알림이 옵니다. <b>앱이 꺼져 있어도</b> 그때 알려드려요.
+            <b>고른 것만</b> 알림이 옵니다. 시간을 넣어야 울려요.
+            앱이 꺼져 있으면 알림으로, 켜져 있으면 팝업으로 알려드려요.
           </div>
         </div>
       </div>
