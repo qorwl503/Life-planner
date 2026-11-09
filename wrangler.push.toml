@@ -1,0 +1,19 @@
+# 알림·워치 중계 워커 전용 설정.
+#   wrangler.toml 은 토스 프록시 것이라 섞으면 안 된다 — 파일을 따로 둔다.
+#   배포:  npx wrangler deploy -c wrangler.push.toml --keep-vars
+#   --keep-vars 를 꼭 붙인다. 대시보드에서 넣은 값들을 지우지 않기 위해서다.
+#   (Secrets 7개: FIREBASE_API_KEY, FIREBASE_PROJECT_ID, INBOX_TOKEN, MY_UID,
+#    VAPID_PRIVATE, VAPID_PUBLIC, VAPID_SUBJECT — 이것들은 배포해도 그대로 남는다)
+
+name = "myplanner-push"
+main = "push-worker.js"
+compatibility_date = "2026-06-30"
+
+# 알림 구독·예약 요약·할일 알림이 여기 들어 있다. 끊기면 알림이 통째로 멈춘다.
+[[kv_namespaces]]
+binding = "PUSH_KV"
+id = "f642985c6f644620b806673f5b46003f"
+
+# 10분마다 돌며 아침 요약과 할일 시각 알림을 보낸다
+[triggers]
+crons = ["*/10 * * * *"]

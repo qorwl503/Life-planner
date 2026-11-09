@@ -7,3 +7,4 @@ wrangler.toml
 design/
 *.log
 UsersqorwlAppData*
+node_modules/
