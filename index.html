@@ -1792,6 +1792,42 @@ function subtaskStats(t) {
 // 🔁 반복 할일(루틴) — 이 할일이 그 날짜에 반복 발생하는지
 //    repeat: { type: 'daily'|'weekly'|'monthly', dows:[0~6], day:1~31, until:'YYYY-MM-DD'|null }
 //    원본 할일 1건만 저장하고, 각 날짜의 완료 여부는 doneDates에 날짜별로 기록 (데이터 폭증 없음)
+// 🔔 할일 알림 선택지. 값은 '몇 분 전에 알릴지' — -1 은 알리지 않음.
+const ALARM_CHOICES = [
+  { v: 0,    label: '정시' },
+  { v: 10,   label: '10분 전' },
+  { v: 30,   label: '30분 전' },
+  { v: 60,   label: '1시간 전' },
+  { v: 1440, label: '하루 전' },
+  { v: -1,   label: '안 함' },
+];
+
+// 이 할일을 몇 분 전에 알릴지. 예전에 만든 할일은 값이 없는데,
+// 그때는 '시간이 있으면 정시에 알린다' 로 돌았으므로 그대로 0 으로 본다.
+function todoAlarmChoice(t) {
+  if (!t) return 0;
+  const v = Number(t.alarmBefore);
+  return Number.isFinite(v) ? v : 0;
+}
+
+function todoAlarmOn(t) {
+  return !!(t && t.time) && todoAlarmChoice(t) >= 0;
+}
+
+// 알림이 실제로 울릴 날짜·시각 (미리 알림만큼 당긴다)
+function todoAlarmAt(t, dayK) {
+  if (!todoAlarmOn(t)) return null;
+  const [hh, mm] = String(t.time).split(':').map(Number);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+
+  let mins = hh * 60 + mm - todoAlarmChoice(t);
+  let on = dayK;
+  while (mins < 0) { mins += 1440; on = dayBefore(on, 1); }   // 하루 전 알림이 전날로 넘어간다
+  const h2 = Math.floor(mins / 60) % 24;
+  const m2 = mins % 60;
+  return { on, at: `${String(h2).padStart(2, '0')}:${String(m2).padStart(2, '0')}` };
+}
+
 function todoRepeatsOn(t, dayK) {
   const r = t && t.repeat;
   if (!r || !r.type || !t.dateKey) return false;
@@ -8123,8 +8159,12 @@ function dueTodosNow() {
   const nowMin = n.getHours() * 60 + n.getMinutes();
   return (todos || []).filter(t => {
     if (!t || !t.time || !/^\d{2}:\d{2}$/.test(String(t.time))) return false;
+    if (!todoAlarmOn(t)) return false;              // 알림 '안 함' 으로 둔 것
     if (!todoOnDay(t, tk) || todoDoneOn(t, tk)) return false;
-    const [hh, mm] = String(t.time).split(':').map(Number);
+    // 고른 '미리 알림' 만큼 당긴 시각에 띄운다 (서버 알림과 같은 기준)
+    const when = todoAlarmAt(t, tk);
+    if (!when || when.on !== tk) return false;
+    const [hh, mm] = String(when.at).split(':').map(Number);
     const diff = nowMin - (hh * 60 + mm);
     return diff >= 0 && diff <= 30;        // 지난 30분 안의 것까지
   });
@@ -20060,6 +20100,22 @@ function openTodoModal(forDateKey, editTodoObj) {
           <input type="time" id="todo-end-time" value="${isEdit && editTodoObj.endTime ? editTodoObj.endTime : (window._tlPrefill?.endTime || '')}" style="flex:1; min-width:0; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:var(--bg-primary); color:var(--text-primary); font-family:inherit;" />
         </div>
         <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px;">끝 시간은 안 넣어도 돼요. 넣으면 하루 뷰에서 구간으로 보여요.</div>
+
+        <div style="margin-top:9px; padding:9px 10px; background:var(--bg-secondary); border-radius:9px;">
+          <div style="font-size:11px; font-weight:700; margin-bottom:6px;">🔔 알림</div>
+          <div style="display:flex; gap:4px; flex-wrap:wrap;" id="todo-alarm">
+            ${ALARM_CHOICES.map(c => {
+              const cur = isEdit ? todoAlarmChoice(editTodoObj) : 0;
+              const on = cur === c.v;
+              return `<button type="button" class="chip${on ? ' active' : ''}" data-a="${c.v}"
+                onclick="document.querySelectorAll('#todo-alarm .chip').forEach(x=>x.classList.remove('active')); this.classList.add('active');"
+                style="font-size:11px;">${c.label}</button>`;
+            }).join('')}
+          </div>
+          <div style="font-size:10px; color:var(--text-tertiary); margin-top:6px; line-height:1.6;">
+            시간을 넣어야 알림이 옵니다. <b>앱이 꺼져 있어도</b> 그때 알려드려요.
+          </div>
+        </div>
       </div>
 
       <div class="field">
@@ -20258,6 +20314,7 @@ function saveTodo(editId) {
   const priority = Number(document.querySelector('#todo-priority .chip.active')?.dataset.p) || 3;
   const flag = priority === 1;
   const time = document.getElementById('todo-time')?.value || '';
+  const alarmBefore = Number(document.querySelector('#todo-alarm .chip.active')?.dataset.a ?? 0);
   const endTime = document.getElementById('todo-end-time')?.value || '';
   const memo = document.getElementById('todo-memo')?.value.trim() || '';
   // ☑️ 체크리스트 — 빈 항목은 버림
@@ -20305,6 +20362,7 @@ function saveTodo(editId) {
       t.subtasks = subtasks;
       t.time = time;
       if (endTime) t.endTime = endTime; else delete t.endTime;
+      t.alarmBefore = alarmBefore;
       t.memo = memo;
       if (endDateKeyVal) t.endDateKey = endDateKeyVal;
       else delete t.endDateKey; // 토글 끄면 일반 할일로
@@ -20332,6 +20390,7 @@ function saveTodo(editId) {
     };
     if (endTime) newTodo.endTime = endTime;
     if (endDateKeyVal) newTodo.endDateKey = endDateKeyVal;
+    newTodo.alarmBefore = alarmBefore;
     if (repeatVal) { newTodo.repeat = repeatVal; newTodo.doneDates = {}; }
     todos.unshift(newTodo);
     showToast(
@@ -29925,9 +29984,13 @@ function timedTodoAlerts() {
     const key = dayK + ' ' + t.id;
     if (seen.has(key)) return;
     seen.add(key);
+    // 고른 '미리 알림' 만큼 당겨서 올린다. '안 함' 이면 todoAlarmAt 이 null 을 준다
+    const when = todoAlarmAt(t, dayK);
+    if (!when) return;
+    if (when.on < tk) return;                       // 당겼더니 이미 지난 경우
     out.push({
-      on: dayK,
-      at: String(t.time),
+      on: when.on,
+      at: when.at,
       title: String(t.title || '할일').slice(0, 60),
       note: t.memo ? String(t.memo).slice(0, 80) : '',
     });
@@ -29935,6 +29998,7 @@ function timedTodoAlerts() {
 
   (todos || []).forEach(t => {
     if (!t || !t.time || !/^\d{2}:\d{2}$/.test(String(t.time))) return;
+    if (!todoAlarmOn(t)) return;                    // 알림 '안 함' 으로 둔 것
 
     if (t.repeat && t.repeat.type) {
       // 반복은 끝이 없을 수 있다 — 앞으로 2주치만 펼친다 (앱을 열 때마다 다시 채워진다)
