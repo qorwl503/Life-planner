@@ -3917,9 +3917,20 @@ function projectRows() {
     const next = r.rest.slice().sort((a, b) =>
       String(a.dateKey || '9999-99-99').localeCompare(String(b.dateKey || '9999-99-99'))
     )[0];
+    // 마감 = 남은 것 중 가장 늦은 날짜. 그게 이 프로젝트가 끝나는 때다.
+    const dated = r.rest.filter(x => x.dateKey).map(x => x.dateKey).sort();
+    const due = dated.length ? dated[dated.length - 1] : '';
+    const tk = todayKey();
+    // 지난 것 = 날짜가 이미 지났는데 안 끝난 할일
+    const overdue = r.rest.filter(x => x.dateKey && x.dateKey < tk).length;
+
     return {
       tag: r.tag, total: r.total, done: r.done,
       nextTitle: next ? (next.title || '') : '',
+      nextDate: next ? (next.dateKey || '') : '',
+      due,
+      dday: due ? Math.round((new Date(due + 'T00:00:00') - new Date(tk + 'T00:00:00')) / 86400000) : null,
+      overdue,
       left: r.total - r.done,
       pct: r.total > 0 ? Math.round((r.done / r.total) * 100) : 0,
     };
@@ -3947,8 +3958,18 @@ function renderProjectCard() {
           </span>
         </div>
         <div style="height:5px; background:var(--bg-primary); border-radius:999px; overflow:hidden;">
-          <div style="width:${r.pct}%; height:100%; background:${done ? 'var(--text-success)' : 'var(--accent-tab, #6B5B96)'}; border-radius:999px;"></div>
+          <div style="width:${r.pct}%; height:100%; background:${done ? 'var(--text-success)' : (r.overdue > 0 ? 'var(--text-danger)' : 'var(--accent-tab, #6B5B96)')}; border-radius:999px;"></div>
         </div>
+        ${done ? '' : `
+        <div style="display:flex; align-items:center; gap:6px; margin-top:4px; font-size:10px; line-height:1.5;">
+          ${r.dday != null ? `<span style="flex:none; font-weight:800; color:${r.dday < 0 ? 'var(--text-danger)' : r.dday <= 3 ? 'var(--text-warning)' : 'var(--text-tertiary)'};">
+            ${r.dday < 0 ? `D+${-r.dday}` : r.dday === 0 ? 'D-day' : `D-${r.dday}`}
+          </span>` : ''}
+          ${r.overdue > 0 ? `<span style="flex:none; color:var(--text-danger); font-weight:700;">밀린 ${r.overdue}개</span>` : ''}
+          ${r.nextTitle ? `<span style="flex:1; min-width:0; color:var(--text-tertiary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+            다음 · ${escapeHTML(r.nextTitle)}${r.nextDate ? ` (${r.nextDate.slice(5)})` : ''}
+          </span>` : ''}
+        </div>`}
         ${!done && r.nextTitle ? `<div style="font-size:10.5px; color:var(--text-tertiary); margin-top:4px;">다음 · ${escapeHTML(r.nextTitle)}</div>` : ''}
       </div>`;
   }).join('');
@@ -4853,6 +4874,41 @@ function routineOffReason(t, tk) {
   return '오늘은 쉬는 날';
 }
 
+const DOW_KO = ['일', '월', '화', '수', '목', '금', '토'];
+
+// 루틴은 '오늘 했나' 만으로는 힘이 안 난다. 며칠째 이어왔는지와
+// 이번 주 어느 날 했는지가 보여야 계속하게 된다.
+
+// 오늘(또는 어제)부터 거슬러 올라가며 이어진 날 수.
+//   오늘 아직 안 했어도 어제까지 이어왔으면 그 수를 보여준다 — 하루가 끝나기 전에
+//   연속이 0으로 보이면 맥이 빠진다.
+function routineStreak(t) {
+  if (!t || !t.repeat) return 0;
+  const tk = todayKey();
+  let n = 0;
+  let day = todoDoneOn(t, tk) ? tk : dayBefore(tk, 1);
+
+  for (let i = 0; i < 400; i++) {
+    if (t.dateKey && day < t.dateKey) break;          // 시작 전
+    if (!todoRepeatsOn(t, day)) { day = dayBefore(day, 1); continue; }   // 쉬는 날은 건너뛴다
+    if (todoDoneOn(t, day)) { n++; day = dayBefore(day, 1); continue; }
+    if (todoSkippedOn(t, day)) { day = dayBefore(day, 1); continue; }    // '안 함' 은 끊지 않는다
+    break;
+  }
+  return n;
+}
+
+// 이번 주 일~토 상태: 'done' | 'skip' | 'miss' | 'off'(쉬는 날) | 'future'
+function routineWeek(t) {
+  const tk = todayKey();
+  return weekKeysFull().map(dk => {
+    if (!todoRepeatsOn(t, dk)) return 'off';
+    if (todoDoneOn(t, dk)) return 'done';
+    if (todoSkippedOn(t, dk)) return 'skip';
+    return dk > tk ? 'future' : (dk === tk ? 'today' : 'miss');
+  });
+}
+
 function renderDailyRoutines() {
   const tk = todayKey();
   const all = todos.filter(t => t.repeat && t.repeat.type);
@@ -4884,14 +4940,38 @@ function renderDailyRoutines() {
     const isDone = todoDoneOn(t, tk);
     const isSkip = todoSkippedOn(t, tk);
     const m = todoTagMeta(t.tag);
+    const streak = routineStreak(t);
+    const week = routineWeek(t);
     return `
-      <div style="display:flex; align-items:center; gap:9px; padding:9px 2px; border-bottom:0.5px solid var(--border-tertiary); ${isSkip ? 'opacity:0.6;' : ''}">
+      <div style="display:flex; align-items:center; gap:9px; padding:9px 2px 5px; ${isSkip ? 'opacity:0.6;' : ''}">
         <div onclick="toggleTodo(${t.id}, event, '${tk}')" style="width:20px; height:20px; flex-shrink:0; border-radius:6px; border:1.5px solid ${isDone ? 'var(--text-success)' : 'var(--border-secondary)'}; background:${isDone ? 'var(--text-success)' : 'transparent'}; color:white; font-size:11px; display:flex; align-items:center; justify-content:center; cursor:pointer;">${isDone ? '✓' : ''}</div>
         <span onclick="editTodo(${t.id})" style="flex:1; min-width:0; font-size:12.5px; cursor:pointer; ${isDone || isSkip ? 'text-decoration:line-through; color:var(--text-tertiary);' : ''}">
           ${m.emoji} ${escapeHTML(t.title)}
           <span style="font-size:10px; color:var(--text-tertiary); margin-left:3px;">${repeatLabel(t)}</span>
         </span>
         ${isDone ? '' : `<button onclick="skipTodo(${t.id}, event, '${tk}')" style="flex:0 0 auto; padding:3px 8px; border:0.5px solid var(--border-tertiary); background:var(--bg-secondary); color:var(--text-tertiary); border-radius:7px; font-size:10px; cursor:pointer; font-family:inherit;">${isSkip ? '되돌리기' : '안 함'}</button>`}
+      </div>
+      <div style="display:flex; align-items:center; gap:7px; padding:0 2px 9px; border-bottom:0.5px solid var(--border-tertiary);">
+        <span style="flex:none; font-size:10.5px; font-weight:700; color:${streak > 0 ? 'var(--text-warning)' : 'var(--text-tertiary)'}; min-width:52px;">
+          ${streak > 0 ? `🔥 ${streak}일째` : '아직 0일'}
+        </span>
+        <div style="flex:1; display:flex; gap:3px;">
+          ${week.map((st, i) => {
+            const style = {
+              done:   'background:var(--accent-tab, #3D8168); color:#fff; border-color:var(--accent-tab, #3D8168);',
+              skip:   'background:var(--bg-secondary); color:var(--text-tertiary); border-color:var(--border-tertiary);',
+              miss:   'background:var(--bg-primary); color:var(--text-danger); border-color:var(--text-danger);',
+              today:  'background:var(--bg-primary); color:var(--text-secondary); border-color:var(--accent-tab, #3D8168);',
+              future: 'background:var(--bg-primary); color:var(--text-tertiary); border-color:var(--border-tertiary); opacity:0.4;',
+              off:    'background:transparent; color:var(--text-tertiary); border-color:transparent; opacity:0.35;',
+            }[st];
+            const mark = st === 'done' ? '✓' : st === 'skip' ? '–' : st === 'miss' ? '✕' : '';
+            return `<div title="${DOW_KO[i]}요일" style="flex:1; text-align:center; padding:3px 0; border:0.5px solid; border-radius:5px; font-size:9px; line-height:1.3; ${style}">
+              <div style="font-size:8px; opacity:0.75;">${DOW_KO[i]}</div>
+              <div style="font-weight:800; min-height:11px;">${mark}</div>
+            </div>`;
+          }).join('')}
+        </div>
       </div>`;
   }).join('');
 
@@ -5345,6 +5425,18 @@ function renderChallengeCard(c) {
   const tKey = dateKey(currentYear, currentMonth, today);
   const todayChecked = c.checks?.[tKey];
 
+  // 남은 날과 지금 페이스. '얼마나 했나' 만 보면 따라잡을 수 있는지를 모른다.
+  //   (아래에 daysLeft 가 따로 있어 이름을 달리 둔다 — 이쪽은 오늘을 포함해서 센다)
+  const paceDaysLeft = Math.max(0, totalDays - daysPassed + 1);
+  const challengePace = (needLeft) => {
+    if (needLeft <= 0) return '✨ 다 채웠어요';
+    if (paceDaysLeft <= 0) return '기간이 끝났어요';
+    const per = Math.ceil(needLeft / paceDaysLeft * 10) / 10;
+    if (per > 1) return `남은 ${paceDaysLeft}일 · 하루 ${per}회씩 — 빠듯해요`;
+    return `남은 ${paceDaysLeft}일 · ${needLeft}번만 더 하면 돼요`;
+  };
+  let paceText = '';
+
   // 진행률
   let progressPct = 0;
   let progressText = '';
@@ -5352,13 +5444,18 @@ function renderChallengeCard(c) {
   if (c.type === 'daily') {
     progressPct = Math.round(Math.min(100, (checkedDays / totalDays) * 100));
     progressText = `${checkedDays} / ${totalDays}일`;
+    paceText = challengePace(totalDays - checkedDays);
   } else if (c.type === 'forbidden') {
     const violations = Object.values(c.checks || {}).filter(v => v === 'fail').length;
     const successes = Object.values(c.checks || {}).filter(v => v === true).length;
     progressPct = Math.round(Math.min(100, (successes / totalDays) * 100));
     progressText = `${successes} / ${totalDays}일 성공`;
+    paceText = violations > 0
+      ? `${violations}번 어겼어요 · 남은 ${paceDaysLeft}일은 지켜봐요`
+      : `남은 ${paceDaysLeft}일 · 아직 한 번도 안 어겼어요 💪`;
   } else if (c.type === 'count') {
     progressPct = Math.round(Math.min(100, (checkedDays / Math.max(1, Number(c.targetCount) || 0)) * 100));
+    paceText = challengePace((Number(c.targetCount) || 0) - checkedDays);
     if (c.perWeek) {
       // 🔧 주 N회 챌린지 — 이번 주 달성 현황도 함께 표시
       const now = new Date();
@@ -5425,6 +5522,7 @@ function renderChallengeCard(c) {
         </div>
         <div style="font-size:14px; font-weight:800; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${c.icon ? c.icon + ' ' : ''}${escapeHTML(c.title)}</div>
         <div style="font-size:11px; color:var(--text-secondary); margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${daysPassed}일째 · ${progressText} · ${todayStatusText}</div>
+        ${paceText ? `<div style="font-size:10px; color:var(--text-tertiary); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${paceText}</div>` : ''}
         ${c.memo ? `<div style="font-size:10px; color:var(--text-tertiary); margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">💭 ${escapeHTML(c.memo)}</div>` : ''}
       </div>
       <button onclick="event.stopPropagation(); editChallenge(${c.id})" style="border:none; background:transparent; color:var(--text-tertiary); padding:2px; font-size:16px; cursor:pointer; font-family:inherit; flex-shrink:0;">⋮</button>
