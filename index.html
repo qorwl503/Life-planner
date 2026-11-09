@@ -3964,6 +3964,33 @@ function renderProjectCard() {
     </div>`;
 }
 
+// 접었다 펼 수 있는 섹션 틀. 접힘 상태는 기기에 남겨 다음에 열어도 그대로다.
+//   내용이 비어 있으면 아예 그리지 않는다 — 빈 칸만 늘어서 지저분해 보였다.
+function todoSectionOpen(key) {
+  if (!settings.todoSectionOpen || typeof settings.todoSectionOpen !== 'object') settings.todoSectionOpen = {};
+  return settings.todoSectionOpen[key] === true;
+}
+
+function toggleTodoSection(key) {
+  if (!settings.todoSectionOpen || typeof settings.todoSectionOpen !== 'object') settings.todoSectionOpen = {};
+  settings.todoSectionOpen[key] = !settings.todoSectionOpen[key];
+  saveData();
+  renderTodo();
+}
+
+function todoSection(key, title, inner) {
+  if (!inner || !String(inner).trim()) return '';
+  const open = todoSectionOpen(key);
+  return `
+    <div style="margin-bottom:8px;">
+      <button onclick="toggleTodoSection('${key}')" style="width:100%; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:11px 13px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); border-radius:${open ? '11px 11px 0 0' : '11px'}; cursor:pointer; font-family:inherit;">
+        <span style="font-size:12.5px; font-weight:700; color:var(--text-primary);">${title}</span>
+        <span style="font-size:11px; color:var(--text-tertiary); transform:rotate(${open ? '180' : '0'}deg); transition:transform 0.15s;">▾</span>
+      </button>
+      ${open ? `<div style="padding:10px 2px 2px; border:0.5px solid var(--border-tertiary); border-top:none; border-radius:0 0 11px 11px; padding:10px;">${inner}</div>` : ''}
+    </div>`;
+}
+
 function renderTodo() {
   // 주 이동 변수 초기화
   if (typeof window.todoWeekOffset === 'undefined') window.todoWeekOffset = 0;
@@ -3978,21 +4005,21 @@ function renderTodo() {
 
   let html = '';
 
-  // 📥 받은함 — 생각난 걸 먼저 담아두는 곳 (검색 중에는 숨긴다)
-  if (!(window.todoSearch || '').trim()) html += renderInbox();
-  if (!(window.todoSearch || '').trim()) html += renderProjectCard();
-
-  // 🔧 오늘의 추천 액션 카드 (가계부에서 옮김 — 미룬 할일·운동 등은 할일 도메인)
-  html += renderTodayActionsCard();
-
-  // 🎯 이달의 목표 · 🔁 데일리 루틴 (검색 중에는 숨김 — 결과에 집중)
+  // 📂 할일 아래에 붙일 것들. 예전에는 이 여섯 개가 목록 '위에' 쌓여 있어
+  //    내 할일을 보려면 한참 스크롤해야 했다. 플래너는 할 일이 먼저 보여야 한다.
+  //    → 목록을 위로 올리고, 나머지는 접었다 펼 수 있게 아래로 내린다.
+  let extras = '';
   if (!(window.todoSearch || '').trim()) {
-    html += renderMonthlyGoals();
-    html += renderDailyRoutines();
+    extras += todoSection('inbox',     '📥 받은함',        renderInbox());
+    extras += todoSection('project',   '📁 프로젝트',      renderProjectCard());
+    extras += todoSection('actions',   '💡 오늘의 추천',    renderTodayActionsCard());
+    extras += todoSection('goal',      '🎯 이달의 목표',    renderMonthlyGoals());
+    extras += todoSection('routine',   '🔁 데일리 루틴',    renderDailyRoutines());
+    extras += todoSection('challenge', '🚩 챌린지',        renderChallengeSection());
+  } else {
+    // 검색 중에는 결과에 집중 — 추천만 남긴다
+    extras += renderTodayActionsCard();
   }
-
-  // ★ 챌린지 섹션
-  html += renderChallengeSection();
 
   const total = todos.length;
   const done = todos.filter(t => t.done).length;
@@ -4034,7 +4061,7 @@ function renderTodo() {
   const flaggedTodos = todos.filter(t => !t.done && t.flag);
 
   html += `
-    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin: 18px 0 8px;">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin: 4px 0 8px;">
       <span class="sec-title" style="margin:0;">📋 할일</span>
       <button onclick="openTodoModal('${todayK}')" style="display:flex; align-items:center; gap:4px; border:none; background:var(--bg-info); color:var(--text-info); padding:5px 12px; border-radius:999px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">
         <i class="ti ti-plus" style="font-size:13px;"></i> 추가
@@ -4287,6 +4314,9 @@ function renderTodo() {
     }
     html += `</div>`;
   }
+
+  // 목록 아래에 붙인다 — 접어두면 할일만 깔끔하게 보인다
+  html += extras;
 
   screen.innerHTML = html;
   // 🔍 검색 입력 중이면 커서를 유지 (렌더될 때마다 포커스가 튀지 않게)
