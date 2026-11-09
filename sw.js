@@ -33,8 +33,12 @@ self.addEventListener('push', (event) => {
     tag: data.tag || 'myplanner',          // 같은 tag 면 덮어써서 알림이 쌓이지 않는다
     renotify: !!data.renotify,
     requireInteraction: !!data.requireInteraction,
-    // 손목에서도 알아채게 — 진동 패턴이 있으면 그대로 쓴다
+    // 손목에서도 알아채게 — 진동 패턴이 있으면 그대로 쓴다.
+    //   ⚠️ iOS 는 vibrate 를 무시한다. 아이폰에서는 '무음 모드가 아니고
+    //      집중 모드가 꺼져 있을 때' 기본 알림음·진동이 울린다.
     vibrate: Array.isArray(data.vibrate) ? data.vibrate : undefined,
+    // 소리를 끄지 않는다 — 기본값이지만, 조용히 뜨는 일이 없게 못 박아 둔다
+    silent: false,
     data: { url: data.url || APP_URL, kind: data.kind || '' },
   };
 

@@ -8117,9 +8117,41 @@ function markTodoAlertSeen(t, tk) {
   saveData();
 }
 
+// 앱을 보고 있을 때는 소리와 진동을 직접 낸다.
+//   푸시 알림은 앱이 떠 있으면 조용히 지나가기 쉽다. 알람처럼 들리게 한다.
+//   (소리는 브라우저가 막을 수 있다 — 막히면 조용히 넘어간다)
+function playAlarmSound() {
+  if (settings.alarmSound === false) return;
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = window._alarmCtx || (window._alarmCtx = new Ctx());
+    if (ctx.state === 'suspended') { try { ctx.resume(); } catch (e) {} }
+
+    // 삑 — 삑 — 삑. 짧게 세 번이면 알람처럼 들리고 거슬리지 않는다
+    [0, 0.45, 0.9].forEach(delay => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 880;
+      const t0 = ctx.currentTime + delay;
+      gain.gain.setValueAtTime(0, t0);
+      gain.gain.linearRampToValueAtTime(0.25, t0 + 0.02);
+      gain.gain.linearRampToValueAtTime(0, t0 + 0.3);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(t0); osc.stop(t0 + 0.32);
+    });
+  } catch (e) { /* 소리는 못 내도 팝업은 떠야 한다 */ }
+
+  try {
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
+  } catch (e) {}
+}
+
 function openTodoDuePopup(t) {
   const tk = todayKey();
   markTodoAlertSeen(t, tk);
+  playAlarmSound();
   modal.innerHTML = `
     <div class="modal">
       <div class="modal-handle"></div>
