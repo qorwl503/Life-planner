@@ -21311,6 +21311,52 @@ function removeDebt(id) {
   openDebtModal();
 }
 
+// 마지막으로 실제 보유와 맞춘 날. 자산마다 다를 수 있어 가장 오래된 것을 본다.
+//   (자동매수가 걸린 자산만 본다 — 추정이 쌓이는 건 그것들뿐이다)
+function lastReconcileDate() {
+  let oldest = null;
+  (assets || []).forEach(a => {
+    const hasAuto = (budget?.fixed || []).some(f => f && f.autoBuy && f.assetInfo &&
+      ((f.assetInfo.ticker && a.ticker && f.assetInfo.ticker.toUpperCase() === a.ticker.toUpperCase()) ||
+       (f.assetInfo.name && a.name && f.assetInfo.name === a.name)));
+    if (!hasAuto) return;
+    const d = a.assetBaseDate || (a.ocrSnapshot && a.ocrSnapshot.date) || '';
+    if (!d) { oldest = ''; return; }          // 한 번도 안 맞춘 자산이 있다
+    if (oldest === null || (oldest !== '' && d < oldest)) oldest = d;
+  });
+  return oldest;   // null = 자동매수 자산 없음, '' = 맞춘 적 없음
+}
+
+function daysSinceReconcile() {
+  const d = lastReconcileDate();
+  if (d === null) return null;
+  if (!d) return 999;
+  const [y, m, dd] = d.split('-').map(Number);
+  return Math.floor((Date.now() - new Date(y, m - 1, dd).getTime()) / 86400000);
+}
+
+function renderCaptureNudge() {
+  const days = daysSinceReconcile();
+  if (days === null || days < 7) return '';      // 자동매수가 없거나 아직 최근이다
+
+  const never = days >= 999;
+  return `
+    <div style="margin-bottom:12px; padding:12px 13px; background:var(--bg-warning); border:0.5px solid var(--text-warning); border-radius:12px;">
+      <div style="font-size:12px; font-weight:800; color:var(--text-warning); margin-bottom:4px;">
+        📸 실제 보유와 맞출 때예요
+      </div>
+      <div style="font-size:11px; color:var(--text-warning); opacity:0.9; line-height:1.7; margin-bottom:9px;">
+        ${never ? '아직 한 번도 안 맞췄어요.' : `맞춘 지 <b>${days}일</b> 됐어요.`}
+        자동매수는 체결가·환율을 <b>추정</b>해서 쌓기 때문에 주마다 조금씩 어긋나요.
+        토스 <b>투자 모아보기</b> 한 장이면 전부 맞춰집니다.
+      </div>
+      <input type="file" id="nudge-capture-input" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processAssetCapture(this)" />
+      <button onclick="document.getElementById('nudge-capture-input').click()" style="width:100%; padding:11px; border:none; background:var(--text-warning); color:#fff; border-radius:10px; font-size:12.5px; font-weight:800; cursor:pointer; font-family:inherit;">
+        📸 토스 캡처로 한 번에 맞추기
+      </button>
+    </div>`;
+}
+
 function renderAsset() {
   // 자동매수 점검: 가드 버전으로만 호출 (중복 실행·경합 방지, 시세 알면 정확히 처리)
   runAllAutoBuysSafe('asset-tab');
@@ -21411,6 +21457,11 @@ function renderAsset() {
   };
 
   let html = '';
+
+  // 📸 주간 보정 알림 — 자동매수는 체결가·환율을 '추정' 하므로 회차마다 조금씩
+  //    어긋난다. 해외 소수점 모으기는 반올림으로 상쇄되지도 않아 매주 벌어진다.
+  //    증권사 API 없이 없앨 수 없으니, 보정할 때가 되면 여기서 바로 하게 한다.
+  html += renderCaptureNudge();
 
   // 시장 지수 카드 (라이브)
   html += `<div id="market-indices" style="margin-bottom:8px;"></div>`;
