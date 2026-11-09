@@ -2169,6 +2169,7 @@ function render() {
   // 탭별 바탕색 전환 (CSS의 body[data-tab=...] 규칙이 받아간다)
   try { document.body.dataset.tab = currentTab; } catch (e) {}
   // 🔔 오늘 일정 알림 — 하루 한 번만 뜨도록 안에서 막고 있어 매번 불러도 안전
+  try { pruneAlertHits(); } catch (e) {}
   try { checkTodayScheduleAlert(); } catch (e) { console.warn('오늘 일정 알림 실패:', e); }
   if (currentTab === 'calendar') renderCalendar();
   if (currentTab === 'todo') renderTodo();
@@ -7462,12 +7463,37 @@ function renderWorkout() {
     </button>`;
   html += renderInbodyCard();
 
-  // 오늘 빠른 체크 (현재 월일 때만) - 세그먼트 컨트롤
+  // 오늘 빠른 체크 (현재 월일 때만)
+  //   ⚡ 빠른 기록으로 종목을 넣으면 recalcWorkoutDay 가 done 을 켜준다.
+  //   그런데도 '오늘 운동했어요?' 를 계속 물으면 같은 일을 두 번 누르게 된다.
+  //   기록이 이미 있으면 묻지 않고 무엇을 했는지만 보여준다.
   if (isWorkoutCurrentMonth()) {
     const todayLog = workoutLog[todayKey()];
     const isDone = todayLog?.done;
     const isMarkedX = todayLog && todayLog.done === false && todayLog.marked === true;
-    html += `
+    const todaySessions = workoutSessions(todayLog || {});
+
+    if (todaySessions.length > 0) {
+      // 기록이 있다 — O/X 를 묻지 않는다
+      html += `
+      <div style="margin-bottom:12px; padding:11px 13px; border-radius:11px; background:var(--bg-success); border:0.5px solid var(--text-success);">
+        <div style="display:flex; align-items:center; justify-content:space-between;">
+          <div style="flex:1; min-width:0;">
+            <div style="font-size:12px; font-weight:700; color:var(--text-success);">
+              💪 오늘 ${todaySessions.length}건 기록됨
+            </div>
+            <div style="font-size:11px; color:var(--text-success); opacity:0.85; margin-top:3px; line-height:1.5;">
+              ${escapeHTML(todaySessions.map(x => formatWorkoutNote(x.sport, x.dist, x.unit)).join(' · '))}
+              ${Number(todayLog.minutes) > 0 ? ` · ${todayLog.minutes}분` : ''}
+              ${Number(todayLog.kcal) > 0 ? ` · ${todayLog.kcal}kcal` : ''}
+            </div>
+          </div>
+          <button onclick="openWorkoutModal('${todayKey()}')" style="flex:none; border:none; background:var(--bg-primary); color:var(--text-info); padding:5px 11px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit; box-shadow:var(--shadow-card);">상세</button>
+        </div>
+      </div>`;
+    } else {
+      // 기록이 없을 때만 묻는다. '했음' 은 종목 없이 표시만 남기는 길이다.
+      html += `
       <div style="margin-bottom:12px; padding:11px 13px; border-radius:11px; background:${isDone ? 'var(--bg-success)' : 'var(--bg-secondary)'}; border:0.5px solid ${isDone ? 'var(--text-success)' : 'var(--border-tertiary)'};">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:7px;">
           <div style="font-size:12px; font-weight:600; color:${isDone ? 'var(--text-success)' : 'var(--text-primary)'};">
@@ -7483,9 +7509,11 @@ function renderWorkout() {
             😴 쉼
           </button>
         </div>
-        ${isDone && todayLog ? `<div style="margin-top:6px; font-size:11px; color:var(--text-success); opacity:0.85;">${todayLog.minutes || 0}분 · ${todayLog.kcal || 0} kcal${todayLog.note ? ' · ' + escapeHTML(todayLog.note) : ''}</div>` : ''}
-      </div>
-    `;
+        <div style="margin-top:6px; font-size:10.5px; color:var(--text-tertiary); line-height:1.6;">
+          위 <b>⚡ 빠른 기록</b> 에서 종목을 넣으면 <b>'했음' 은 자동</b>이에요. 따로 안 눌러도 됩니다.
+        </div>
+      </div>`;
+    }
   }
 
   // 월간 체크 그리드 — 가로 요일 / 세로 주차 (일반 달력 모양)
@@ -26021,6 +26049,7 @@ function recordAlertHits(hits, toastMsg) {
   if (!hits || hits.length === 0) return 0;
   if (!settings.alertHits) settings.alertHits = [];
   settings.alertHits = hits.concat(settings.alertHits).slice(0, 30); // 최근 30건만 보관
+  pruneAlertHits();                                                  // 지난 것은 털어낸다
   saveData();
   hits.forEach(h => sendSystemNotification(h));
   showToast(toastMsg || `🔔 목표 도달! ${hits.map(h => h.name).join(', ')}`);
@@ -26031,6 +26060,30 @@ function recordAlertHits(hits, toastMsg) {
 // ===== 🔔 오늘 일정 알림 =====
 //   앱을 연 시점에 오늘 할 일이 남아 있으면 하루 한 번만 알린다.
 //   (앱이 꺼져 있을 땐 코드가 돌지 않으므로 '열었을 때 알려주는' 방식이 한계이자 최선)
+// 알림 목록은 '지금 알아야 할 것' 이다. 지난 날짜 것이 남아 있으면
+// 25건씩 쌓여 정작 오늘 것을 못 찾는다.
+//   · 오늘 일정 알림: 그날 지나면 의미가 없다 → 오늘 것만 남긴다
+//   · 목표가 도달:    며칠은 볼 만하다 → 7일까지 남긴다
+const ALERT_KEEP_DAYS = 7;
+
+function pruneAlertHits() {
+  if (!Array.isArray(settings.alertHits)) { settings.alertHits = []; return 0; }
+  const tk = todayKey();
+  const cut = dayBefore(tk, ALERT_KEEP_DAYS);
+  const before = settings.alertHits.length;
+
+  settings.alertHits = settings.alertHits.filter(h => {
+    if (!h) return false;
+    const d = new Date(Number(h.at) || 0);
+    if (isNaN(d.getTime()) || !h.at) return false;
+    const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (h.kind === 'today') return k === tk;     // 오늘 일정은 오늘 것만
+    return k >= cut;                              // 나머지는 일주일까지
+  }).slice(0, 30);
+
+  return before - settings.alertHits.length;
+}
+
 function checkTodayScheduleAlert() {
   const tk = todayKey();
   if (settings.todayAlertOn === false) return 0;      // 설정에서 끌 수 있음
@@ -26057,6 +26110,7 @@ function checkTodayScheduleAlert() {
   settings.todayAlertShownOn = tk;
   if (!settings.alertHits) settings.alertHits = [];
   settings.alertHits = [hit].concat(settings.alertHits).slice(0, 30);
+  pruneAlertHits();            // 지난 날짜 것은 여기서 털어낸다
   saveData();
   sendSystemNotification(hit);
   showToast(`📅 ${hit.msg}`);
