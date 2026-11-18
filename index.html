@@ -3987,9 +3987,9 @@ function renderProjectCard() {
 
 // 접었다 펼 수 있는 섹션 틀. 접힘 상태는 기기에 남겨 다음에 열어도 그대로다.
 //   내용이 비어 있으면 아예 그리지 않는다 — 빈 칸만 늘어서 지저분해 보였다.
-// 목표·루틴은 매일 보는 것이라 펼친 채로 시작한다. 나머지는 접어둔다.
-//   (전부 접어뒀더니 목표 안에 넣은 비전보드를 찾지 못했다)
-const TODO_SECTION_DEFAULT_OPEN = ['goal', 'routine'];
+// 루틴은 매일 보는 것이라 펼친 채로 시작한다. 나머지는 접어둔다.
+//   (목표는 접이식에서 빼 맨 위로 올렸다 — 비전보드가 묻혀 보이지 않았다)
+const TODO_SECTION_DEFAULT_OPEN = ['routine'];
 
 function todoSectionOpen(key) {
   if (!settings.todoSectionOpen || typeof settings.todoSectionOpen !== 'object') settings.todoSectionOpen = {};
@@ -4037,12 +4037,15 @@ function renderTodo() {
   //    → 목록을 위로 올리고, 나머지는 접었다 펼 수 있게 아래로 내린다.
   let extras = '';
   if (!(window.todoSearch || '').trim()) {
-    extras += todoSection('inbox',     '📥 받은함',        renderInbox());
-    extras += todoSection('project',   '📁 프로젝트',      renderProjectCard());
-    extras += todoSection('actions',   '💡 오늘의 추천',    renderTodayActionsCard());
-    extras += todoSection('goal',      '🎯 이달의 목표',    renderMonthlyGoals());
+    // 🎯 목표(비전보드)는 맨 위에 둔다. 플래너는 '어디로 가는지' 가 먼저고
+    //    오늘 할 일이 그 아래다. 접이식 안에 묻어두니 보드를 찾지 못했다.
+    html += renderMonthlyGoals();
+
     extras += todoSection('routine',   '🔁 데일리 루틴',    renderDailyRoutines());
     extras += todoSection('challenge', '🚩 챌린지',        renderChallengeSection());
+    extras += todoSection('project',   '📁 프로젝트',      renderProjectCard());
+    extras += todoSection('inbox',     '📥 받은함',        renderInbox());
+    extras += todoSection('actions',   '💡 오늘의 추천',    renderTodayActionsCard());
   } else {
     // 검색 중에는 결과에 집중 — 추천만 남긴다
     extras += renderTodayActionsCard();
