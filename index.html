@@ -19680,7 +19680,13 @@ function openSmsSyncGuide() {
   const sample = `${base}?sms=`;
   const proj = (window._fbProjectId || 'life-planner-a03d2');
   const uid = currentUser ? currentUser.uid : '(로그인 필요)';
-  const inboxUrl = `https://firestore.googleapis.com/v1/projects/${proj}/databases/(default)/documents/users/${uid}/expenseInbox`;
+  // 알림 서버를 거치면 로그인 토큰이 필요 없다 — 워치 연동과 같은 길이다.
+  //   서버가 없으면 예전처럼 Firestore 직행 주소를 준다 (그 경우 토큰이 필요하다).
+  const relay = pushServerUrl();
+  const upKey = settings.uploadKey || '';
+  const inboxUrl = relay
+    ? `${relay.replace(/\/+$/, '')}/relay/expense?uid=${encodeURIComponent(uid)}&key=${encodeURIComponent(upKey)}`
+    : `https://firestore.googleapis.com/v1/projects/${proj}/databases/(default)/documents/users/${uid}/expenseInbox`;
 
   modal.innerHTML = `
     <div class="modal">
@@ -19718,10 +19724,19 @@ function openSmsSyncGuide() {
         같은 날짜·금액·가맹점이 이미 있으면 중복으로 보고 넣지 않아요.
       </div>
 
-      <div style="font-size:12px; font-weight:700; margin:16px 0 8px;">앱이 안 열리게 하려면</div>
-      <div style="font-size:11px; color:var(--text-secondary); line-height:1.8; padding:11px 12px; background:var(--bg-secondary); border-radius:10px;">
-        <b>URL 열기</b> 대신 <b>URL의 콘텐츠 가져오기</b>로 아래 주소에 보내면 조용히 쌓이고,
-        앱을 켤 때 자동으로 들어옵니다. (로그인 토큰이 필요해요 — 자세한 건 WATCH-SYNC 문서와 같은 방식)
+      <div style="font-size:12px; font-weight:700; margin:16px 0 8px;">앱이 안 열리게 하려면 ${relay ? '(권장)' : ''}</div>
+      <div style="font-size:11px; color:${relay ? 'var(--text-success)' : 'var(--text-secondary)'}; line-height:1.8; padding:11px 12px; background:var(--bg-secondary); border-radius:10px;">
+        ${relay ? `
+          🔔 <b>알림 서버를 거쳐 갑니다.</b> 로그인 토큰이 필요 없어요.<br>
+          단축어 마지막 동작을 <b>URL의 콘텐츠 가져오기</b> 로 바꾸고:<br>
+          · 메소드 <b>POST</b><br>
+          · 본문 요청 <b>JSON</b> → 키 <code>text</code>, 값에 <b>메시지 본문</b> 변수<br>
+          그러면 앱이 꺼져 있어도 들어오고, 들어온 순간 알림도 옵니다.
+        ` : `
+          <b>URL 열기</b> 대신 <b>URL의 콘텐츠 가져오기</b>로 아래 주소에 보내면 조용히 쌓여요.<br>
+          <span style="color:var(--text-danger);">지금은 알림 서버 주소가 없어 로그인 토큰이 필요합니다 —
+          설정 → 알림 에서 서버 주소를 넣으면 토큰 없이 됩니다.</span>
+        `}
       </div>
       <pre style="white-space:pre-wrap; word-break:break-all; font-size:9px; line-height:1.6; padding:11px; background:var(--bg-secondary); border-radius:10px; font-family:ui-monospace,monospace; margin-top:8px;">${escapeHTML(uid.length > 8 ? inboxUrl.replace(uid, uid.slice(0,4) + '●●●●●●●●') : inboxUrl)}</pre>
       <button onclick="navigator.clipboard?.writeText('${inboxUrl}').then(()=>showToast('📋 복사했어요')).catch(()=>showToast('복사 실패'))" style="width:100%; margin-top:8px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">📋 수신 주소 복사</button>

@@ -40,9 +40,9 @@
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
 // 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
-const WORKER_VERSION = '2026-11-19.1';
+const WORKER_VERSION = '2026-11-19.2';
 const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
-  '/push/plan', '/push/status', '/relay/workout', '/relay/ping', '/version'];
+  '/push/plan', '/push/status', '/relay/workout', '/relay/expense', '/relay/ping', '/version'];
 
 let ENV = null;
 
@@ -59,6 +59,7 @@ export default {
       if (url.pathname === '/push/send' && request.method === 'POST') return await handleSend(request, env);
       if (url.pathname === '/push/plan' && request.method === 'POST') return await handlePlan(request, env);
       if (url.pathname === '/relay/workout' && request.method === 'POST') return await handleRelayWorkout(request, env, url);
+      if (url.pathname === '/relay/expense' && request.method === 'POST') return await handleRelayExpense(request, env, url);
       // 주소창(GET)으로도 열 수 있게 둔다 — 배포가 됐는지 눈으로 확인하는 용도
       if (url.pathname === '/relay/ping') return await handleRelayPing(request, env);
       if (url.pathname === '/version') return json({ version: WORKER_VERSION, routes: ROUTE_LIST });
@@ -383,6 +384,68 @@ function jsonSlice(raw) {
   const text = String(raw || '').replace(/^﻿/, '');
   const a = text.indexOf('{'), b = text.lastIndexOf('}');
   return stripBreaks((a >= 0 && b > a) ? text.slice(a, b + 1) : text);
+}
+
+// 💳 카드 문자 중계 — 단축어가 '메시지 받았을 때' 로 보낸 문자를 수신함에 쌓는다.
+//   워치 중계와 같은 구조다. 로그인 토큰 없이 uid + 열쇠로 신분을 증명하고,
+//   Firestore 규칙이 그 열쇠를 uploadKeys 로 대조한다.
+async function handleRelayExpense(request, env, url) {
+  const raw = await request.text();
+  const parsed = looseJson(raw);
+
+  const uidFromUrl = (url && url.searchParams.get('uid')) || '';
+  const keyFromUrl = (url && url.searchParams.get('key')) || '';
+  let uid = uidFromUrl || env.MY_UID || '';
+  if (!uid) uid = await onlyRegisteredUid(env);
+  if (!uid) return json({ error: '주소에 uid 가 없어요. 앱에서 주소를 다시 복사해 넣어주세요' }, 400);
+
+  // 문자는 본문으로도, 주소(?text=)로도 올 수 있다 — 단축어 설정이 사람마다 다르다
+  let text = '';
+  if (parsed && parsed.fields && parsed.fields.text) text = String(parsed.fields.text.stringValue || '');
+  else if (parsed && typeof parsed.text === 'string') text = parsed.text;
+  else if (url && url.searchParams.get('text')) text = url.searchParams.get('text');
+  else text = stripBreaks(raw).slice(0, 2000);
+
+  text = String(text || '').trim().slice(0, 2000);
+  if (!text) return json({ error: '문자 내용이 비어 있어요' }, 400);
+
+  // ⚠️ 규칙의 hasOnly 목록에 없는 항목을 넣으면 저장이 통째로 거부된다.
+  const proj = env.FIREBASE_PROJECT_ID;
+  const apiKey = env.FIREBASE_API_KEY;
+  const body = JSON.stringify({
+    fields: {
+      key: { stringValue: keyFromUrl },
+      text: { stringValue: text },
+      at: { integerValue: String(Date.now()) },
+    },
+  });
+
+  const target = `https://firestore.googleapis.com/v1/projects/${proj}/databases/(default)/documents/users/${uid}/expenseInbox?key=${apiKey}`;
+  const res = await fetch(target, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    const why = res.status === 403
+      ? '열쇠가 등록돼 있지 않아요. 앱의 문자 연동 설정에서 주소를 다시 복사해 넣어주세요'
+      : 'Firestore 저장 실패';
+    return json({ error: why, status: res.status, detail: detail.slice(0, 400), uidFrom: uidFromUrl ? '주소' : 'MY_UID' }, 502);
+  }
+
+  // 저장됐으면 알림으로도 알려준다 — 앱을 안 열어도 들어온 걸 알 수 있게
+  let pushed = { sent: 0 };
+  try {
+    pushed = await sendToUser(env, uid, {
+      title: '💳 카드 내역 도착',
+      body: text.slice(0, 80),
+      tag: 'expense-' + kstNow().date,
+    });
+  } catch (e) {}
+
+  return json({ ok: true, chars: text.length, push: pushed });
 }
 
 async function handleRelayWorkout(request, env, url) {

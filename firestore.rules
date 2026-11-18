@@ -1,0 +1,57 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── 내 데이터는 나만 ──────────────────────────────────────
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+
+      match /{document=**} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+
+    // ── 워치 열쇠 ────────────────────────────────────────────
+    //  열쇠 하나가 계정 하나를 가리킨다. 단축어는 이 열쇠로 신분을 증명한다.
+    //  읽기는 아무에게도 열지 않는다 — 열어두면 남의 열쇠를 훑어볼 수 있다.
+    match /uploadKeys/{k} {
+      allow create: if request.auth != null
+        && request.resource.data.uid == request.auth.uid;
+
+      // 이미 있는 열쇠를 다시 등록할 때 (create 가 아니라 update 로 취급된다).
+      // 원래 주인만 고칠 수 있고, 남의 계정으로 넘길 수도 없다.
+      allow update: if request.auth != null
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == request.auth.uid;
+
+      allow delete: if request.auth != null
+        && resource.data.uid == request.auth.uid;
+    }
+
+    // ── 가계부 수신함 ──
+    //  카드 승인 문자를 단축어가 보낸다. 워치 수신함과 같은 방식으로 열쇠를 대조한다.
+    match /users/{userId}/expenseInbox/{docId} {
+      allow create: if request.resource.data.key is string
+        && get(/databases/$(database)/documents/uploadKeys/$(request.resource.data.key)).data.uid == userId
+        && request.resource.data.text is string
+        && request.resource.data.text.size() < 2000
+        && request.resource.data.keys().hasOnly(['key', 'text', 'at']);
+    }
+
+    // ── 워치 수신함 ──────────────────────────────────────────
+    //  단축어는 로그인 없이 쓴다. 대신 열쇠가 그 계정 것인지 대조한다.
+    //  항목 목록을 못 박아 둔다 — 여기 없는 항목이 하나라도 끼면 통째로 거부된다.
+    match /users/{userId}/workoutInbox/{docId} {
+      allow create: if request.resource.data.key is string
+        && get(/databases/$(database)/documents/uploadKeys/$(request.resource.data.key)).data.uid == userId
+        && request.resource.data.photo is string
+        && request.resource.data.photo.size() < 900000
+        && (!('photo2' in request.resource.data)
+            || (request.resource.data.photo2 is string
+                && request.resource.data.photo2.size() < 900000))
+        && request.resource.data.keys().hasOnly(
+             ['key', 'photo', 'photo2', 'photoMime', 'date', 'via', 'at']);
+    }
+  }
+}
