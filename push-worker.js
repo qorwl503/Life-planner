@@ -40,7 +40,7 @@
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
 // 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
-const WORKER_VERSION = '2026-11-05.2';
+const WORKER_VERSION = '2026-11-19.1';
 const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
   '/push/plan', '/push/status', '/relay/workout', '/relay/ping', '/version'];
 
@@ -632,6 +632,13 @@ async function handlePlan(request, env) {
   let old = null;
   try { old = prev ? JSON.parse(prev) : null; } catch (e) {}
 
+  // 📊 월말 결산 — 말일 저녁에 한 번. 매일 요약과 따로 둔다.
+  const m = body.monthly;
+  const monthly = (m && /^\d{4}-\d{2}-\d{2}$/.test(String(m.on || '')) &&
+                   /^\d{2}:\d{2}$/.test(String(m.at || '')) && typeof m.body === 'string')
+    ? { on: m.on, at: m.at, title: m.title || '📊 이번 달 정리', body: m.body }
+    : null;
+
   const plan = {
     at: body.at,                                  // 한국 시간 기준
     title: body.title || '📋 오늘 정리',
@@ -639,6 +646,8 @@ async function handlePlan(request, env) {
     builtFor: body.builtFor || '',
     days,
     todoAlerts,
+    monthly,
+    sentMonthly: (old && old.sentMonthly) || '',  // 보낸 달 (YYYY-MM)
     sentTodo: (old && old.sentTodo) || {},        // 이미 보낸 할일 알림 (중복 방지)
     tag: body.tag || 'daily-summary',
     savedAt: Date.now(),
@@ -677,6 +686,7 @@ async function runPlan(env) {
       // 한 사람이 실패해도 나머지는 보내야 한다
       try { await runPlanFor(env, uid); } catch (e) { /* 다음 사람으로 */ }
       try { await runTodoAlertsFor(env, uid); } catch (e) { console.log('할일 알림 실패', uid, e && e.message); }
+      try { await runMonthlyFor(env, uid); } catch (e) { console.log('월말 결산 실패', uid, e && e.message); }
     }
     cursor = page.list_complete ? null : page.cursor;
   } while (cursor);
@@ -720,6 +730,38 @@ async function runPlanFor(env, uid) {
   });
 
   plan.sentOn = now.date;
+  await env.PUSH_KV.put(planKey(uid), JSON.stringify(plan));
+}
+
+// 월말 결산. 말일 그 시각이 지나면 한 번 보낸다.
+async function runMonthlyFor(env, uid) {
+  const raw = await env.PUSH_KV.get(planKey(uid));
+  if (!raw) return;
+
+  let plan;
+  try { plan = JSON.parse(raw); } catch (e) { return; }
+  const m = plan && plan.monthly;
+  if (!m || !m.on) return;
+
+  const now = kstNow();
+  if (m.on !== now.date) return;                  // 말일이 아니다
+
+  const month = now.date.slice(0, 7);
+  if (plan.sentMonthly === month) return;         // 이번 달은 이미 보냈다
+
+  const [hh, mm] = String(m.at).split(':').map(Number);
+  const diff = now.minutes - (hh * 60 + mm);
+  if (diff < 0 || diff > 60) return;              // 아직이거나 너무 늦음
+
+  await sendToUser(env, uid, {
+    title: m.title || '📊 이번 달 정리',
+    body: m.body || '',
+    tag: 'monthly-' + month,
+    url: './index.html',
+    requireInteraction: true,
+  });
+
+  plan.sentMonthly = month;
   await env.PUSH_KV.put(planKey(uid), JSON.stringify(plan));
 }
 

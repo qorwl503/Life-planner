@@ -30315,6 +30315,93 @@ const SUMMARY_BUILDERS = {
   alert: summaryAlertLines,
 };
 
+// 📊 월말 결산 — 그 달에 무엇을 했는지 탭별로 한 줄씩.
+//   매일 요약은 '오늘 뭘 하나' 고, 이건 '한 달 어땠나' 다.
+function buildMonthlySummary(mKey) {
+  const key = mKey || monthKeyOf();
+  const [yy, mm] = key.split('-').map(Number);
+  const out = [`📊 ${mm}월 정리`];
+
+  // 할일 — 그 달에 끝낸 수
+  try {
+    let doneN = 0;
+    (todos || []).forEach(t => {
+      if (t.done && String(t.dateKey || '').startsWith(key)) doneN++;
+      Object.keys(t.doneDates || {}).forEach(d => { if (String(d).startsWith(key)) doneN++; });
+    });
+    if (doneN > 0) out.push(`✅ 할일 ${doneN}건 완료`);
+  } catch (e) {}
+
+  // 운동 — 한 날 수와 칼로리
+  try {
+    let days = 0, kcal = 0, mins = 0;
+    Object.keys(workoutLog || {}).forEach(d => {
+      if (!String(d).startsWith(key)) return;
+      const log = workoutLog[d];
+      if (!log || !log.done) return;
+      days++;
+      kcal += Number(log.kcal) || 0;
+      mins += Number(log.minutes) || 0;
+    });
+    if (days > 0) {
+      const bits = [`${days}일`];
+      if (mins > 0) bits.push(`${Math.round(mins / 60)}시간`);
+      if (kcal > 0) bits.push(`${kcal.toLocaleString()}kcal`);
+      out.push(`💪 운동 ${bits.join(' · ')}`);
+    }
+  } catch (e) {}
+
+  // 가계부 — 쓴 돈과 가장 많이 쓴 곳
+  try {
+    const rows = (budget?.expenses || []).filter(e => String(e.dateKey || '').startsWith(key));
+    // 투자는 쓴 돈이 아니라 옮긴 돈이다 — 따로 센다 (가계부 다른 화면과 같은 기준)
+    const spend = rows.filter(e => isSpendRow(e) && !isInvestCat(e.cat));
+    const spent = spend.reduce((n, e) => n + (Number(e.amt) || 0), 0);
+    const got = rows.filter(isDepositEntry).reduce((n, e) => n + (Number(e.amt) || 0), 0);
+    const invested = rows.filter(e => isSpendRow(e) && isInvestCat(e.cat))
+      .reduce((n, e) => n + (Number(e.amt) || 0), 0);
+
+    if (spent > 0) {
+      const byCat = {};
+      spend.forEach(e => { const c = e.cat || '기타'; byCat[c] = (byCat[c] || 0) + (Number(e.amt) || 0); });
+      const top = Object.entries(byCat).sort((a, b) => b[1] - a[1])[0];
+      out.push(`💰 ${Math.round((spent - got) / 10000).toLocaleString()}만원 씀` +
+        (top ? ` · 가장 많이 쓴 곳 ${top[0]} ${Math.round(top[1] / 10000)}만` : ''));
+    }
+    if (invested > 0) out.push(`💎 투자 ${Math.round(invested / 10000).toLocaleString()}만원`);
+  } catch (e) {}
+
+  // 목표 — 그 달 달성
+  try {
+    const goals = (settings.monthlyGoals || {})[key] || [];
+    if (goals.length > 0) out.push(`🎯 목표 ${goals.filter(goalDone).length}/${goals.length} 달성`);
+  } catch (e) {}
+
+  // 챌린지 — 그 달에 끝낸 것
+  try {
+    const fin = (challenges || []).filter(c => c && c.completed &&
+      String(c.completedAt || c.endDate || '').startsWith(key)).length;
+    if (fin > 0) out.push(`🚩 챌린지 ${fin}개 완주`);
+  } catch (e) {}
+
+  // 자산 — 지금 순자산
+  try {
+    const nw = netWorth();
+    if (nw && nw.net > 0) out.push(`📈 순자산 ${Math.round(nw.net / 10000).toLocaleString()}만원`);
+  } catch (e) {}
+
+  if (out.length === 1) out.push('이번 달 기록이 없어요');
+  return out.join('\n');
+}
+
+// 이번 달 말일 (YYYY-MM-DD)
+function lastDayOfMonth(mKey) {
+  const key = mKey || monthKeyOf();
+  const [y, m] = key.split('-').map(Number);
+  const d = new Date(y, m, 0);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function buildMorningSummary(dayK) {
   if (dayK && dayK !== todayKey()) return withDay(dayK, () => buildMorningSummary());
   const out = [];
@@ -30433,6 +30520,13 @@ async function pushSummaryToServer() {
         days: summaryDaysAhead(),
         // 시각을 정해둔 할일 — 서버가 그 시각에 알린다
         todoAlerts: timedTodoAlerts(),
+        // 📊 월말 결산 — 말일 저녁에 한 번
+        monthly: settings.monthlyWrap === false ? null : {
+          on: lastDayOfMonth(),
+          at: settings.monthlyWrapTime || '21:00',
+          title: '📊 이번 달 정리',
+          body: buildMonthlySummary(),
+        },
         tag: 'daily-summary',
       }),
     });
