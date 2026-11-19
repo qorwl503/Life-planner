@@ -40,7 +40,7 @@
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
 // 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
-const WORKER_VERSION = '2026-11-20.2';
+const WORKER_VERSION = '2026-11-20.3';
 const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
   '/push/plan', '/push/status', '/relay/workout', '/relay/expense', '/relay/ping', '/widget', '/version'];
 
@@ -95,8 +95,7 @@ export default {
 //   1. 인증 — 지금은 앱 열쇠(uploadKeys)를 Firestore 에서 읽어 확인한다.
 //      그러려면 uploadKeys 에 공개 읽기 권한을 열어야 하는데 그건 위험하다.
 //      로그인 토큰(Firebase ID token) 검증으로 바꿔야 한다.
-//      → POST https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=API_KEY
-//        본문 {"idToken":"..."} → users[0].localId 가 uid, emailVerified 도 같이 온다.
+//      → verifyIdToken (구글 공개 서명 키로 직접 검증) 을 쓰면 된다. emailVerified 도 같이 나온다.
 //   2. 가입 제한 — 지금은 이메일 인증 없이 누구나 가입할 수 있다.
 //      계정을 여러 개 만들면 상한이 무의미하므로 emailVerified 를 요구해야 한다.
 //   3. CORS — ALLOWED_ORIGIN 을 넣어 앱 주소로 좁히는 게 좋다.
@@ -181,51 +180,80 @@ async function handleAI(request, env, url) {
 
 // ===== 🔐 로그인한 사람이 누구인지 확인 =====
 // 열쇠 하나를 모두가 나눠 쓰면 남의 알림을 받아볼 수 있다. 그래서 로그인 토큰으로 사람을 가른다.
-// Worker 에는 관리자 SDK 가 없으므로 구글에게 토큰이 진짜인지 물어본다.
-//   POST identitytoolkit.../accounts:lookup  { idToken }  → users[0].localId 가 uid
-// 토큰은 한 시간짜리라 잠깐 캐시해 두고 매번 묻지는 않는다.
+// 토큰은 한 시간짜리라 잠깐 캐시해 두고 매번 검증하지는 않는다.
+
+// 🔐 Firebase 로그인 토큰을 서버에서 직접 검증한다.
+//   예전에는 구글 서버(Identity Toolkit)에 토큰을 물어봤는데, 그때 쓰는 웹 API 키에
+//   웹사이트 제한이 걸려 있어 늘 거절당했다. 그래서 uid+열쇠라는 우회로가 생겼다.
+//   토큰은 구글이 서명한 JWT 라서, 구글이 공개한 서명 키로 서명만 확인하면 된다.
+//   API 키가 필요 없고, 이게 Firebase 가 권하는 표준 방식이다.
+const FIREBASE_JWKS_URL = 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com';
+let JWKS_MEMO = null;   // { keys, until } — 같은 Worker 인스턴스 안에서만 재사용
+
+async function firebaseSigningKey(env, kid) {
+  const now = Date.now();
+  if (!JWKS_MEMO || JWKS_MEMO.until < now || !JWKS_MEMO.keys[kid]) {
+    const res = await fetch(FIREBASE_JWKS_URL);
+    if (!res.ok) throw new Error('구글 서명 키를 못 받았어요 (HTTP ' + res.status + ')');
+    const data = await res.json();
+    const keys = {};
+    for (const k of (data.keys || [])) if (k && k.kid) keys[k.kid] = k;
+    // 구글이 알려준 보관 기간만큼 기억한다 (없으면 1시간)
+    const cc = res.headers.get('Cache-Control') || '';
+    const m = cc.split(',').map(x => x.trim()).find(x => x.indexOf('max-age=') === 0);
+    const maxAge = m ? Number(m.slice(8)) : 3600;
+    JWKS_MEMO = { keys, until: now + Math.max(60, Math.min(maxAge, 6 * 3600)) * 1000 };
+  }
+  const jwk = JWKS_MEMO.keys[kid];
+  if (!jwk) throw new Error('모르는 서명 키예요');
+  return crypto.subtle.importKey('jwk', jwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
+}
 
 async function verifyIdToken(env, idToken) {
   if (!idToken) throw new Error('로그인이 필요합니다');
-  if (!env.FIREBASE_API_KEY) throw new Error('Worker 에 FIREBASE_API_KEY 가 없습니다');
+  const proj = env.FIREBASE_PROJECT_ID;
+  if (!proj) throw new Error('Worker 에 FIREBASE_PROJECT_ID 가 없습니다');
 
   // 토큰 원문을 키로 쓰지 않으려고 해시를 쓴다 (KV 목록에 토큰이 남지 않게)
   const digest = await crypto.subtle.digest('SHA-256', enc(idToken));
   const cacheKey = 'tok:' + b64url(new Uint8Array(digest));
-
   if (env.PUSH_KV) {
     const hit = await env.PUSH_KV.get(cacheKey);
     if (hit) return JSON.parse(hit);
   }
 
-  const res = await fetch(
-    'https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=' + env.FIREBASE_API_KEY,
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idToken }) }
+  const parts = String(idToken).split('.');
+  if (parts.length !== 3) throw new Error('로그인 토큰 모양이 이상해요');
+
+  let header, payload;
+  try {
+    header = JSON.parse(new TextDecoder().decode(b64urlDecode(parts[0])));
+    payload = JSON.parse(new TextDecoder().decode(b64urlDecode(parts[1])));
+  } catch (e) { throw new Error('로그인 토큰을 읽지 못했어요'); }
+
+  if (header.alg !== 'RS256' || !header.kid) throw new Error('로그인 토큰 서명 방식이 이상해요');
+
+  const key = await firebaseSigningKey(env, header.kid);
+  const ok = await crypto.subtle.verify(
+    'RSASSA-PKCS1-v1_5', key, b64urlDecode(parts[2]), enc(parts[0] + '.' + parts[1])
   );
-  if (!res.ok) {
-    // 구글이 왜 거절했는지 그대로 보여준다. 안 그러면 원인을 짐작만 하게 된다.
-    // (여기 담기는 건 'API key not valid' 같은 사유일 뿐, 키 값이 아니다)
-    let why = '';
-    try {
-      const d = await res.json();
-      why = (d && d.error && (d.error.message || d.error.status)) || '';
-    } catch (e) {
-      why = 'HTTP ' + res.status;
-    }
-    if (/API_KEY|API key|referer|blocked|PERMISSION_DENIED|SERVICE_DISABLED/i.test(why)) {
-      throw new Error('알림 서버의 FIREBASE_API_KEY 가 거절당했어요 (' + why + '). '
-        + '키가 맞는지, 그리고 그 키에 웹사이트 제한이 걸려 있지 않은지 확인해주세요');
-    }
-    throw new Error('로그인 확인 실패: ' + (why || 'HTTP ' + res.status));
-  }
+  if (!ok) throw new Error('로그인 토큰 서명이 맞지 않아요');
 
-  const data = await res.json();
-  const u = data && data.users && data.users[0];
-  if (!u || !u.localId) throw new Error('로그인 정보가 확인되지 않았어요');
+  // 서명이 맞아도 '우리 프로젝트가 발급했고, 아직 유효한' 토큰이어야 한다
+  const nowSec = Math.floor(Date.now() / 1000);
+  const SKEW = 300;   // 시계가 조금 어긋나도 봐준다 (5분)
+  if (payload.aud !== proj) throw new Error('다른 프로젝트의 로그인 토큰이에요');
+  if (payload.iss !== 'https://securetoken.google.com/' + proj) throw new Error('발급처가 맞지 않아요');
+  if (!(Number(payload.exp) > nowSec - SKEW)) throw new Error('로그인이 만료됐어요. 앱을 다시 열어주세요');
+  if (Number(payload.iat) > nowSec + SKEW) throw new Error('로그인 토큰 시각이 이상해요');
+  if (Number(payload.auth_time) > nowSec + SKEW) throw new Error('로그인 시각이 이상해요');
+  const uid = String(payload.sub || '');
+  if (!uid || uid.length > 128) throw new Error('로그인 정보가 확인되지 않았어요');
 
-  const who = { uid: u.localId, email: u.email || '', emailVerified: !!u.emailVerified };
-  // 5분만 캐시한다 — 계정을 지웠는데 한참 동안 통과되면 곤란하다
-  if (env.PUSH_KV) await env.PUSH_KV.put(cacheKey, JSON.stringify(who), { expirationTtl: 300 });
+  const who = { uid, email: payload.email || '', emailVerified: !!payload.email_verified, via: 'token' };
+  // 토큰이 끝날 때까지, 길어도 5분만 기억한다 — 계정을 지웠는데 한참 통과되면 곤란하다
+  const ttl = Math.max(60, Math.min(300, Number(payload.exp) - nowSec));
+  if (env.PUSH_KV) await env.PUSH_KV.put(cacheKey, JSON.stringify(who), { expirationTtl: ttl });
   return who;
 }
 
@@ -300,23 +328,38 @@ function legacyOwner(env, body) {
   return { uid: env.MY_UID, email: '', emailVerified: true, legacy: true };
 }
 
-async function requireUser(request, env, body) {
-  // 앱이 보낸 uid + 열쇠가 있으면 그걸 먼저 쓴다. 구글 API 를 안 거치므로 늘 된다.
-  const byBody = (await bodyIdentity(env, body)) || legacyOwner(env, body);
+// 어떤 길로 확인됐는지 사람별로 남긴다 — 토큰 검증이 실제로 되는지 보고 나서
+// 열쇠 길을 닫기 위해서다. 토큰·열쇠 원문은 남기지 않는다.
+async function noteAuth(env, uid, via, err) {
+  if (!env.PUSH_KV || !uid) return;
+  try {
+    await env.PUSH_KV.put('authlast:' + uid, JSON.stringify({ via, at: new Date().toISOString(), err: err || '' }),
+      { expirationTtl: 30 * 86400 });
+  } catch (e) {}
+}
 
+async function requireUser(request, env, body) {
   const auth = request.headers.get('Authorization') || '';
   const m = auth.match(/^Bearer\s+(.+)$/i);
+  let tokenErr = '';
   if (m) {
     try {
-      return await verifyIdToken(env, m[1].trim());
+      const who = await verifyIdToken(env, m[1].trim());
+      await noteAuth(env, who.uid, 'token');
+      return who;
     } catch (e) {
-      if (byBody) return byBody;
-      throw e;
+      tokenErr = String(e && e.message || e).slice(0, 120);
+      console.log('토큰 검증 실패:', tokenErr);
     }
   }
 
-  if (byBody) return byBody;
-  throw new Error('로그인이 필요합니다');
+  // 토큰이 없거나 실패하면 예전 방식(uid + 열쇠)으로 확인한다 — 옮겨가는 동안만
+  const byBody = (await bodyIdentity(env, body)) || legacyOwner(env, body);
+  if (byBody) {
+    await noteAuth(env, byBody.uid, byBody.legacy ? 'legacy' : 'key', tokenErr || (m ? '' : 'no-token'));
+    return byBody;
+  }
+  throw new Error(tokenErr || '로그인이 필요합니다');
 }
 
 // 사람마다 따로 담는다 — 남의 알림이 섞이지 않게
