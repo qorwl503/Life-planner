@@ -29706,7 +29706,23 @@ async function runDeleteAccount() {
     return;
   }
 
-  // 2) 알림 구독 해제 (계정이 사라진 뒤엔 손댈 수 없다)
+  // 2) 알림 서버에 남은 것 (기기 등록·예약·전용 주소) — 계정이 사라지면 로그인 토큰을 못 받으니 지금.
+  //    여기서 실패하면 아무것도 안 지운 채 멈춘다. 반쯤 지워진 계정이 남는 것보다 다시 누르는 게 낫다.
+  const pushUrl = pushServerUrl();
+  if (pushUrl) {
+    try {
+      const res = await fetch(pushUrl.replace(/\/+$/, '') + '/account/delete', {
+        method: 'POST',
+        headers: await pushAuthHeaders(),
+        body: JSON.stringify({ uid }),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+    } catch (e) {
+      showToast('알림 서버 기록을 못 지웠어요. 잠시 후 다시 눌러주세요 (' + String(e && e.message || e).slice(0, 30) + ')');
+      return;
+    }
+  }
+  // 이 기기의 알림 구독도 푼다 (서버 쪽은 위에서 이미 지웠다)
   try { await disablePush(); } catch (e) {}
 
   // 3) 워치 연동 열쇠 (uploadKeys 는 계정 밖에 있는 최상위 문서라 따로 지운다)

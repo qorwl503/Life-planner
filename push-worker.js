@@ -40,9 +40,9 @@
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
 // 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
-const WORKER_VERSION = '2026-11-20.7';
+const WORKER_VERSION = '2026-11-20.8';
 const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
-  '/push/plan', '/push/status', '/relay/workout', '/relay/expense', '/relay/ping', '/widget', '/version', '/keys/status', '/keys/issue', '/keys/revoke'];
+  '/push/plan', '/push/status', '/relay/workout', '/relay/expense', '/relay/ping', '/widget', '/version', '/keys/status', '/keys/issue', '/keys/revoke', '/account/delete'];
 
 let ENV = null;
 
@@ -62,6 +62,7 @@ export default {
       if (url.pathname === '/relay/expense' && request.method === 'POST') return await handleRelayExpense(request, env, url);
       // 주소창(GET)으로도 열 수 있게 둔다 — 배포가 됐는지 눈으로 확인하는 용도
       if (url.pathname === '/relay/ping') return await handleRelayPing(request, env);
+      if (url.pathname === '/account/delete' && request.method === 'POST') return await handleAccountDelete(request, env);
       if (url.pathname.startsWith('/keys/') && request.method === 'POST') return await handleKeys(request, env, url);
       if (url.pathname === '/version') return json({ version: WORKER_VERSION, routes: ROUTE_LIST, relayReady: !!env.FIREBASE_SA });
       if (url.pathname === '/widget' && request.method === 'GET') return await handleWidget(env, url);
@@ -457,6 +458,36 @@ async function handleKeys(request, env, url) {
   }
 
   return json({ error: 'not found' }, 404);
+}
+
+// ===== 🗑️ 계정 삭제 — 이 서버에 남은 그 사람의 흔적을 전부 지운다 =====
+// 앱이 Firestore 와 로그인 계정을 지우기 '전에' 부른다 (계정이 사라지면 토큰도 못 받는다).
+async function handleAccountDelete(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const who = await requireUser(request, env, body);
+  if (who.via !== 'token') return json({ error: '로그인이 필요해요. 앱을 껐다 켜주세요' }, 401);
+  if (!env.PUSH_KV) return json({ error: 'PUSH_KV 가 없습니다' }, 500);
+  const uid = who.uid;
+  const gone = [];
+  const del = async (k) => { await env.PUSH_KV.delete(k); gone.push(k.split(':')[0]); };
+
+  // 전용 주소: 해시 → 토큰 기록까지
+  for (const p of RELAY_PURPOSES) {
+    const slot = 'rtu:' + uid + ':' + p;
+    const h = await env.PUSH_KV.get(slot);
+    if (h) await del('rt:' + h);
+    await del(slot);
+  }
+  for (const k of [subsKey(uid), planKey(uid), 'ukey:' + uid, 'authlast:' + uid]) await del(k);
+  // 열쇠 확인 캐시 (앞부분이 uid 인 것만)
+  let cursor;
+  do {
+    const page = await env.PUSH_KV.list({ prefix: 'keyok:' + uid + ':', cursor });
+    for (const k of page.keys) await del(k.name);
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+
+  return json({ ok: true, removed: gone.length });
 }
 
 // ===== 🪪 서버 출입증 (Firebase 서비스 계정) =====
