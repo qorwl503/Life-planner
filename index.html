@@ -1533,7 +1533,55 @@ let watchlist = [];
 let priceCache = {};
 
 // ===== 🔒 화면 잠금 (PIN) =====
-// PIN은 이 기기(localStorage)에만 저장. 간단 해시로 보관.
+// PIN은 이 기기(localStorage)에만 저장.
+//   예전엔 32비트 간단 해시라 저장값만 보면 PIN 이 바로 나왔다.
+//   이제는 기기마다 다른 소금 + PBKDF2(15만 번) 로 보관하고, 틀리면 점점 길게 기다리게 한다.
+//   단, 숫자 4자리는 1만 가지뿐이라 '폰을 잠깐 집어든 사람' 을 막는 용도다 — 암호화는 아니다.
+const PIN_ITER = 150000;
+
+function _pinHex(buf) { return Array.from(new Uint8Array(buf), b => b.toString(16).padStart(2, '0')).join(''); }
+
+async function _pbkdf2Pin(pin, saltHex, iter) {
+  const salt = new Uint8Array(saltHex.match(/../g).map(h => parseInt(h, 16)));
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(String(pin)), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: iter }, base, 256);
+  return _pinHex(bits);
+}
+
+async function makePinRecord(pin) {
+  const saltHex = _pinHex(crypto.getRandomValues(new Uint8Array(16)));
+  return 'pbkdf2$' + PIN_ITER + '$' + saltHex + '$' + (await _pbkdf2Pin(pin, saltHex, PIN_ITER));
+}
+
+// 맞으면 true. 예전 방식으로 저장된 PIN 이 맞으면 그 자리에서 새 방식으로 바꿔 둔다.
+async function checkPin(pin) {
+  const rec = localStorage.getItem('app_lock_pin') || '';
+  if (rec.indexOf('pbkdf2$') === 0) {
+    const [, iter, saltHex, hash] = rec.split('$');
+    return (await _pbkdf2Pin(pin, saltHex, Number(iter))) === hash;
+  }
+  if (_hashPin(pin) !== rec) return false;
+  try { localStorage.setItem('app_lock_pin', await makePinRecord(pin)); } catch (e) {}
+  return true;
+}
+
+// 틀린 횟수 — 5번부터 30초, 그 뒤로 두 배씩 (최대 1시간). 앱을 껐다 켜도 이어진다.
+function pinLockState() {
+  try { return JSON.parse(localStorage.getItem('app_lock_fail') || '{}') || {}; } catch (e) { return {}; }
+}
+function pinWaitMs() {
+  const st = pinLockState();
+  return Math.max(0, (Number(st.until) || 0) - Date.now());
+}
+function notePinFail() {
+  const st = pinLockState();
+  const n = (Number(st.n) || 0) + 1;
+  const wait = n >= 5 ? Math.min(3600000, 30000 * Math.pow(2, n - 5)) : 0;
+  localStorage.setItem('app_lock_fail', JSON.stringify({ n, until: wait ? Date.now() + wait : 0 }));
+  return wait;
+}
+
+// 예전 방식 — 이미 저장된 PIN 을 확인할 때만 쓴다
 function _hashPin(pin) {
   let h = 0;
   const s = 'lp_' + pin + '_salt';
@@ -1565,23 +1613,38 @@ function showLockScreen() {
     dots.innerHTML = [0,1,2,3].map(i => `<div style="width:13px; height:13px; border-radius:50%; background:${i < entered.length ? 'var(--accent-primary, #6B5B96)' : 'var(--border-tertiary, #ccc)'};"></div>`).join('');
   }
   drawDots();
+  let checking = false;
+  function showWait() {
+    const ms = pinWaitMs();
+    if (!ms) return false;
+    err.textContent = Math.ceil(ms / 1000) + '초 뒤에 다시 입력할 수 있어요';
+    return true;
+  }
   function press(n) {
-    if (entered.length >= 4) return;
+    if (checking || entered.length >= 4) return;
+    if (showWait()) return;
     entered += n;
     drawDots();
     if (entered.length === 4) {
-      setTimeout(() => {
-        if (_hashPin(entered) === localStorage.getItem('app_lock_pin')) {
+      checking = true;
+      setTimeout(async () => {
+        let ok = false;
+        try { ok = await checkPin(entered); } catch (e) { ok = false; }
+        checking = false;
+        if (ok) {
+          localStorage.removeItem('app_lock_fail');
           ov.remove();
         } else {
-          err.textContent = 'PIN이 일치하지 않아요';
+          const wait = notePinFail();
+          err.textContent = wait ? Math.ceil(wait / 1000) + '초 뒤에 다시 입력할 수 있어요' : 'PIN이 일치하지 않아요';
           entered = '';
           drawDots();
-          setTimeout(() => { err.textContent = ''; }, 1500);
+          if (!wait) setTimeout(() => { if (!pinWaitMs()) err.textContent = ''; }, 1500);
         }
-      }, 120);
+      }, 60);
     }
   }
+  showWait();
   ['1','2','3','4','5','6','7','8','9','','0','⌫'].forEach(k => {
     const btn = document.createElement('button');
     btn.textContent = k;
@@ -1635,11 +1698,11 @@ function setupAppLock() {
   });
 }
 
-function openAppLockSetup() {
+async function openAppLockSetup() {
   if (hasAppLock()) {
     // 이미 설정됨 → 해제 여부
     const ok = confirm('화면 잠금을 해제할까요?');
-    if (ok) { localStorage.removeItem('app_lock_pin'); showToast('화면 잠금 해제됨'); render(); }
+    if (ok) { localStorage.removeItem('app_lock_pin'); localStorage.removeItem('app_lock_fail'); showToast('화면 잠금 해제됨'); render(); }
     return;
   }
   const pin1 = prompt('설정할 4자리 PIN을 입력하세요');
@@ -1647,7 +1710,10 @@ function openAppLockSetup() {
   if (!/^\d{4}$/.test(pin1)) { showToast('숫자 4자리로 입력해주세요'); return; }
   const pin2 = prompt('확인을 위해 다시 입력하세요');
   if (pin1 !== pin2) { showToast('PIN이 일치하지 않아요'); return; }
-  localStorage.setItem('app_lock_pin', _hashPin(pin1));
+  try {
+    localStorage.setItem('app_lock_pin', await makePinRecord(pin1));
+  } catch (e) { showToast('잠금 설정에 실패했어요'); return; }
+  localStorage.removeItem('app_lock_fail');
   showToast('🔒 화면 잠금 설정됨');
   render();
 }
