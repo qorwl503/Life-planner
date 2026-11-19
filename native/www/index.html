@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MyPlanner</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+         background: #F4F4EE; color: #1A1A1A; font-family: -apple-system, system-ui, sans-serif; }
+  .box { text-align: center; padding: 24px; line-height: 1.7; }
+  button { margin-top: 14px; padding: 11px 20px; border: none; border-radius: 10px;
+           background: #3D8168; color: #fff; font-size: 14px; font-weight: 700; }
+</style>
+</head>
+<body>
+  <!-- 앱은 원래 GitHub Pages 사이트를 그대로 불러온다 (capacitor.config.json 의 server.url).
+       이 화면은 인터넷이 안 될 때만 보인다. -->
+  <div class="box">
+    <div style="font-size:34px;">📋</div>
+    <div style="font-weight:800; margin-top:6px;">MyPlanner</div>
+    <div style="font-size:13px; color:#6B6B6B; margin-top:4px;">인터넷 연결을 확인해주세요</div>
+    <button onclick="location.href='https://qorwl503.github.io/Life-planner/'">다시 시도</button>
+  </div>
+</body>
+</html>

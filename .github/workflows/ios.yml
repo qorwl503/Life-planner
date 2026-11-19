@@ -1,0 +1,81 @@
+# 📱 MyPlanner 아이폰 앱 빌드
+#
+# 맥이 없어서 GitHub 의 맥 빌드 서버에서 앱 파일(.ipa)을 만든다.
+# 서명은 하지 않는다 — 사용자가 윈도우 PC 의 AltStore 로 '무료 애플 ID' 서명을 해서 폰에 깐다.
+# (무료 서명은 7일짜리라 AltStore 가 와이파이로 알아서 다시 서명한다)
+#
+# 결과물은 GitHub Release 에 올라가고, 폰의 사파리에서 바로 받을 수 있다:
+#   https://github.com/qorwl503/Life-planner/releases/latest/download/MyPlanner.ipa
+#
+# 앱 화면은 GitHub Pages 사이트를 그대로 불러오므로(index.html 수정은 앱 재설치 없이 반영),
+# 이 빌드는 native/ 나 이 파일이 바뀔 때만 다시 돈다.
+
+name: iOS 앱 빌드
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'native/**'
+      - '.github/workflows/ios.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 앱 껍데기 만들기 (Capacitor)
+        working-directory: native
+        run: |
+          npm install
+          npx cap add ios
+          npx cap sync ios
+
+      - name: 서명 없이 빌드
+        working-directory: native/ios/App
+        run: |
+          set -eo pipefail
+          # Capacitor 버전에 따라 CocoaPods(workspace) 또는 SPM(project) 구조가 나온다
+          if [ -d App.xcworkspace ]; then
+            TARGET=(-workspace App.xcworkspace)
+          else
+            TARGET=(-project App.xcodeproj)
+          fi
+          xcodebuild "${TARGET[@]}" \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build | tail -40
+
+          APP=$(find build/Build/Products -maxdepth 2 -name 'App.app' -type d | head -1)
+          if [ -z "$APP" ]; then echo "App.app 을 찾지 못했습니다"; exit 1; fi
+          rm -rf Payload && mkdir Payload
+          cp -R "$APP" Payload/
+          zip -qry MyPlanner.ipa Payload
+          ls -la MyPlanner.ipa
+
+      - name: 릴리스에 올리기
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ios-${{ github.run_number }}
+          name: MyPlanner 앱 ${{ github.run_number }}
+          make_latest: true
+          body: |
+            폰의 사파리에서 아래 MyPlanner.ipa 를 받은 뒤 AltStore 에서 + 로 설치하세요.
+            (화면 내용은 사이트에서 불러오므로, 사이트가 바뀌어도 앱을 다시 깔 필요는 없습니다)
+          files: native/ios/App/MyPlanner.ipa

@@ -8,3 +8,6 @@ design/
 *.log
 UsersqorwlAppData*
 node_modules/
+# 앱 껍데기 — ios 폴더는 빌드 서버에서 매번 새로 만든다
+native/node_modules/
+native/ios/

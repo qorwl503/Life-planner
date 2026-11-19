@@ -1,0 +1,12 @@
+{
+  "appId": "com.qorwl503.myplanner",
+  "appName": "MyPlanner",
+  "webDir": "www",
+  "server": {
+    "url": "https://qorwl503.github.io/Life-planner/",
+    "cleartext": false
+  },
+  "ios": {
+    "backgroundColor": "#F4F4EE"
+  }
+}
