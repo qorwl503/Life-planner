@@ -9452,6 +9452,95 @@ async function openWatchPhotoSetup(regenerate = false) {
   modal.classList.add('show');
 }
 
+// ❤️ 아이폰 앱에서 건강 앱의 운동 기록을 직접 읽는다 (시험 단계).
+//   이게 되면 워치 캡처 → 단축어 → 사진 글자 읽기가 통째로 필요 없어진다.
+//   웹(사파리·홈 화면)에서는 건강 앱에 접근할 길이 없어 버튼이 안 보인다.
+function isNativeApp() {
+  const C = window.Capacitor;
+  return !!(C && typeof C.isNativePlatform === 'function' && C.isNativePlatform());
+}
+
+function nativeHealth() {
+  if (!isNativeApp()) return null;
+  const C = window.Capacitor;
+  try { return (C.Plugins && C.Plugins.Health) || (C.registerPlugin ? C.registerPlugin('Health') : null); }
+  catch (e) { return null; }
+}
+
+function healthTestBlock() {
+  if (!isNativeApp()) return '';
+  return `
+        <div style="margin-top:12px; padding:11px 12px; background:var(--bg-info); border-radius:10px; font-size:11.5px; color:var(--text-info); line-height:1.8;">
+          <b>❤️ 건강 앱에서 바로 가져오기 (시험)</b><br>
+          이게 되면 캡처도 단축어도 필요 없어져요. 눌러서 최근 2주 운동이 보이는지 확인해 주세요.
+          <button onclick="testHealthWorkouts()" style="width:100%; margin-top:8px; padding:10px; border:none; background:var(--accent-tab, #6B5B96); color:#fff; border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">❤️ 건강 앱 운동 기록 읽어보기</button>
+        </div>`;
+}
+
+function healthTestReport(title, lines, tone) {
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="openHealthSyncGuide()">뒤로</button>
+        <h2 style="font-size:15px;">❤️ 건강 앱 시험 결과</h2>
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+      </div>
+      <div style="padding:0 16px 20px;">
+        <div style="padding:11px 12px; background:var(--bg-${tone}); color:var(--text-${tone}); border-radius:10px; font-size:12px; line-height:1.8; font-weight:700;">${escapeHTML(title)}</div>
+        <div style="margin-top:10px; font-size:11.5px; color:var(--text-secondary); line-height:1.9;">${lines.map(l => escapeHTML(l)).join('<br>')}</div>
+      </div>
+    </div>`;
+  modal.classList.add('show');
+}
+
+async function testHealthWorkouts() {
+  const H = nativeHealth();
+  if (!H) { showToast('아이폰 앱에서만 할 수 있어요'); return; }
+  const step = { now: '확인 시작' };
+  try {
+    step.now = '건강 앱 사용 가능 여부';
+    const av = await H.isAvailable();
+    if (!av || !av.available) {
+      healthTestReport('이 기기에서는 건강 앱을 쓸 수 없어요', [String((av && av.reason) || '')], 'warning');
+      return;
+    }
+    step.now = '권한 요청';
+    await H.requestAuthorization({ read: ['workouts', 'calories', 'distance'], write: [] });
+    step.now = '운동 기록 읽기';
+    const end = new Date(), start = new Date(Date.now() - 14 * 86400000);
+    const r = await H.queryWorkouts({ startDate: start.toISOString(), endDate: end.toISOString(), limit: 20 });
+    const list = (r && r.workouts) || [];
+    if (!list.length) {
+      healthTestReport('연결은 됐는데 운동 기록이 0개예요', [
+        '아이폰은 읽기를 거절해도 "0개" 로만 알려줘요.',
+        '설정 → 건강 → 데이터 접근 및 기기 → MyPlanner 에서 "운동" 읽기가 켜져 있는지 확인한 뒤 다시 눌러주세요.',
+        '켜져 있는데도 0개라면, 최근 2주에 워치 운동 기록이 있는지 건강 앱에서 확인해주세요.',
+      ], 'warning');
+      return;
+    }
+    const lines = list.slice(0, 10).map(w => {
+      const d = new Date(w.startDate);
+      const md = (d.getMonth() + 1) + '/' + d.getDate() + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+      const bits = [md, String(w.workoutType || '운동'), Math.round((Number(w.duration) || 0) / 60) + '분'];
+      if (w.totalEnergyBurned) bits.push(Math.round(w.totalEnergyBurned) + 'kcal');
+      if (w.totalDistance) bits.push((w.totalDistance / 1000).toFixed(2) + 'km');
+      return bits.join(' · ');
+    });
+    healthTestReport('✅ 된다! 건강 앱에서 운동 ' + list.length + '개를 읽었어요', lines.concat(['', '이 화면을 캡처해서 보내주시면 자동으로 넣는 기능을 이어서 만들게요.']), 'success');
+  } catch (e) {
+    const msg = String((e && (e.message || e.code)) || e);
+    const noEnt = /entitlement|not authorized|권한|missing/i.test(msg);
+    healthTestReport(noEnt ? '건강 앱 권한이 없는 앱으로 설치됐어요' : '중간에 막혔어요 (' + step.now + ')', [
+      msg.slice(0, 200),
+      '',
+      noEnt
+        ? 'MyPlanner-health.ipa 로 설치했는지 확인해 주세요. 그 판으로도 이렇게 나오면 무료 애플 계정에서는 건강 앱 권한이 안 되는 거예요.'
+        : '이 화면을 캡처해서 보내주세요.',
+    ], 'danger');
+  }
+}
+
 function openHealthSyncGuide() {
   modal.innerHTML = `
     <div class="modal">
@@ -9473,6 +9562,7 @@ function openHealthSyncGuide() {
           · 설정은 <b>한 번만</b> 하면 됩니다<br>
           · 런데이·나이키런·삼성헬스 화면을 캡처해도 똑같이 읽습니다
         </div>
+        ${healthTestBlock()}
 
         ${pushServerUrl() ? `
         <div style="margin-top:12px; padding:11px 12px; background:var(--bg-success); border-radius:10px; font-size:11.5px; color:var(--text-success); line-height:1.8;">

@@ -32,7 +32,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: 앱 껍데기 만들기 (Capacitor)
         working-directory: native
@@ -40,6 +40,13 @@ jobs:
           npm install
           npx cap add ios
           npx cap sync ios
+
+      # ❤️ 건강 앱(운동 기록) 읽기 — 아이폰이 '왜 필요한지' 문구를 반드시 요구한다
+      - name: 건강 앱 권한 문구 넣기
+        working-directory: native/ios/App/App
+        run: |
+          /usr/libexec/PlistBuddy -c "Add :NSHealthShareUsageDescription string '워치로 한 운동 기록(종목·시간·칼로리·거리)을 플래너 운동 탭에 자동으로 넣기 위해 읽습니다.'" Info.plist
+          /usr/libexec/PlistBuddy -c "Add :NSHealthUpdateUsageDescription string '플래너는 건강 앱에 아무것도 쓰지 않습니다.'" Info.plist
 
       - name: 서명 없이 빌드
         working-directory: native/ios/App
@@ -67,7 +74,23 @@ jobs:
           rm -rf Payload && mkdir Payload
           cp -R "$APP" Payload/
           zip -qry MyPlanner.ipa Payload
-          ls -la MyPlanner.ipa
+
+          # 건강 앱 권한을 붙인 판 — 무료 애플 ID 로 이 권한이 허용되는지 시험한다.
+          # 서명은 하지 않고 '권한 목록' 만 실어 둔다. AltStore 가 설치할 때 이걸 보고 권한을 요청한다.
+          brew install ldid >/dev/null
+          cat > health.entitlements <<'XML'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>com.apple.developer.healthkit</key><true/>
+            <key>com.apple.developer.healthkit.access</key><array/>
+          </dict></plist>
+          XML
+          sed -i '' 's/^          //' health.entitlements
+          ldid -Shealth.entitlements Payload/App.app/App
+          ldid -e Payload/App.app/App | grep -q healthkit
+          zip -qry MyPlanner-health.ipa Payload
+          ls -la MyPlanner.ipa MyPlanner-health.ipa
 
       - name: 릴리스에 올리기
         uses: softprops/action-gh-release@v2
@@ -76,6 +99,9 @@ jobs:
           name: MyPlanner 앱 ${{ github.run_number }}
           make_latest: true
           body: |
-            폰의 사파리에서 아래 MyPlanner.ipa 를 받은 뒤 AltStore 에서 + 로 설치하세요.
+            먼저 MyPlanner-health.ipa 를 AltStore 에서 + 로 설치해 보세요 (건강 앱 운동 기록 읽기 포함).
+            AltStore 가 권한 오류로 설치를 거부하면 MyPlanner.ipa 를 설치하세요 (건강 앱 연동만 빠짐).
             (화면 내용은 사이트에서 불러오므로, 사이트가 바뀌어도 앱을 다시 깔 필요는 없습니다)
-          files: native/ios/App/MyPlanner.ipa
+          files: |
+            native/ios/App/MyPlanner.ipa
+            native/ios/App/MyPlanner-health.ipa

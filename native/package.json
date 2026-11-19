@@ -1,13 +1,14 @@
 {
   "name": "myplanner-native",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MyPlanner 아이폰·아이패드 앱 껍데기 (Capacitor). 화면은 GitHub Pages 사이트를 그대로 불러온다.",
   "dependencies": {
-    "@capacitor/core": "^7.0.0",
-    "@capacitor/ios": "^7.0.0"
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/ios": "^8.0.0",
+    "@capgo/capacitor-health": "^8.13.0"
   },
   "devDependencies": {
-    "@capacitor/cli": "^7.0.0"
+    "@capacitor/cli": "^8.0.0"
   }
 }
