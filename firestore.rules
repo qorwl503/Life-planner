@@ -16,6 +16,11 @@ service cloud.firestore {
     //  열쇠 하나가 계정 하나를 가리킨다. 단축어는 이 열쇠로 신분을 증명한다.
     //  읽기는 아무에게도 열지 않는다 — 열어두면 남의 열쇠를 훑어볼 수 있다.
     match /uploadKeys/{k} {
+      // 알림 서버가 '이 열쇠가 정말 이 사람 것인지' 대조할 때 쓴다.
+      // get(아이디로 하나 읽기)만 연다 — 열쇠를 이미 아는 사람만 읽을 수 있고,
+      // list 는 닫혀 있어 남의 열쇠를 훑어볼 수는 없다.
+      allow get: if true;
+
       allow create: if request.auth != null
         && request.resource.data.uid == request.auth.uid;
 

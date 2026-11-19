@@ -40,7 +40,7 @@
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
 // 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
-const WORKER_VERSION = '2026-11-20.1';
+const WORKER_VERSION = '2026-11-20.2';
 const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
   '/push/plan', '/push/status', '/relay/workout', '/relay/expense', '/relay/ping', '/widget', '/version'];
 
@@ -240,15 +240,56 @@ async function verifyIdToken(env, idToken) {
 //   ('FIREBASE_API_KEY 가 거절당했어요'). 그러면 알림 등록 자체가 안 돼서
 //   기록이 들어와도 보낼 대상이 없다 — 알림이 영영 안 온다.
 //   그래서 앱이 알려준 uid 를 쓴다. 열쇠는 워치 연동에 쓰는 그 값이다.
-//   ⚠️ uid 와 열쇠를 둘 다 아는 사람은 내 알림을 받아볼 수 있다.
-//      다만 그 둘을 알면 이미 내 수신함에 글을 쓸 수 있으므로 새로 열리는 위험은 아니다.
-function bodyIdentity(env, body) {
+//
+//   ⚠️ 예전에는 열쇠의 '모양' 만 보고 통과시켰다. 그러면 uid 만 알면 아무 숫자나
+//      열쇠 자리에 넣어 남의 알림을 받아보거나 예약을 덮어쓸 수 있었다.
+//      이제는 그 열쇠가 정말 그 uid 의 것인지 Firestore 의 uploadKeys 에서 대조한다.
+//      (uploadKeys/{열쇠} 는 '아이디로 하나 읽기' 만 열려 있다 — 열쇠를 아는 사람만
+//       그 문서를 읽을 수 있고, 목록을 훑어볼 수는 없다)
+async function keyBelongsTo(env, uid, key) {
+  // 같은 짝을 매번 Firestore 에 묻지 않게 한 시간 기억한다 (열쇠 원문은 KV 키로 안 쓴다)
+  const tag = 'keyok:' + uid + ':' + key.slice(0, 6) + key.length;
+  try {
+    const hit = env.PUSH_KV && await env.PUSH_KV.get(tag);
+    if (hit === key) return 'ok';
+  } catch (e) {}
+
+  const proj = env.FIREBASE_PROJECT_ID;
+  const apiKey = env.FIREBASE_API_KEY;
+  if (!proj || !apiKey) return 'unknown';
+
+  let res;
+  try {
+    res = await fetch(`https://firestore.googleapis.com/v1/projects/${proj}/databases/(default)/documents/uploadKeys/${encodeURIComponent(key)}?key=${apiKey}`);
+  } catch (e) { return 'unknown'; }
+
+  if (res.status === 404) return 'no';             // 그런 열쇠 없음
+  if (res.status === 403) return 'unknown';        // 규칙이 아직 '읽기' 를 안 열어줬다
+  if (!res.ok) return 'unknown';
+
+  const doc = await res.json().catch(() => null);
+  const owner = doc && doc.fields && doc.fields.uid && doc.fields.uid.stringValue;
+  if (owner !== uid) return 'no';                  // 남의 열쇠
+
+  try { env.PUSH_KV && await env.PUSH_KV.put(tag, key, { expirationTtl: 3600 }); } catch (e) {}
+  return 'ok';
+}
+
+async function bodyIdentity(env, body) {
   const uid = String((body && body.uid) || '').trim();
   const key = String((body && body.key) || '').trim();
   if (!uid || !key) return null;
   if (!/^[A-Za-z0-9_-]{8,128}$/.test(uid)) return null;
   if (!/^[0-9a-f]{16,128}$/.test(key)) return null;
-  return { uid, email: '', emailVerified: true, viaKey: true };
+
+  const v = await keyBelongsTo(env, uid, key);
+  if (v === 'no') return null;
+  if (v === 'unknown') {
+    // Firestore 규칙을 아직 안 바꿨으면 대조를 못 한다. 그동안은 예전처럼 통과시켜
+    // 멀쩡한 알림이 끊기지 않게 한다 — 규칙을 올리는 순간 자동으로 엄격해진다.
+    console.log('열쇠 대조 못 함 (규칙 확인 필요):', uid);
+  }
+  return { uid, email: '', emailVerified: true, viaKey: true, keyChecked: v === 'ok' };
 }
 
 // 본문의 key 가 INBOX_TOKEN 과 같으면 주인으로 본다. 아니면 null.
@@ -261,7 +302,7 @@ function legacyOwner(env, body) {
 
 async function requireUser(request, env, body) {
   // 앱이 보낸 uid + 열쇠가 있으면 그걸 먼저 쓴다. 구글 API 를 안 거치므로 늘 된다.
-  const byBody = bodyIdentity(env, body) || legacyOwner(env, body);
+  const byBody = (await bodyIdentity(env, body)) || legacyOwner(env, body);
 
   const auth = request.headers.get('Authorization') || '';
   const m = auth.match(/^Bearer\s+(.+)$/i);
