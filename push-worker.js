@@ -40,7 +40,7 @@
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
 // 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
-const WORKER_VERSION = '2026-11-20.5';
+const WORKER_VERSION = '2026-11-20.6';
 const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
   '/push/plan', '/push/status', '/relay/workout', '/relay/expense', '/relay/ping', '/widget', '/version'];
 
@@ -846,14 +846,6 @@ function kstNow() {
 async function runPlan(env) {
   if (!env.PUSH_KV) return;
 
-  // 아주 예전 예약은 'daily-plan' 한 칸에 있었다. 있으면 주인 것으로 옮겨서 계속 보낸다.
-  try {
-    const legacy = await env.PUSH_KV.get('daily-plan');
-    if (legacy && env.MY_UID && !(await env.PUSH_KV.get(planKey(env.MY_UID)))) {
-      await env.PUSH_KV.put(planKey(env.MY_UID), legacy);
-    }
-  } catch (e) { /* 없으면 그만 */ }
-
   let cursor;
   do {
     const page = await env.PUSH_KV.list({ prefix: 'plan:', cursor });
@@ -1000,16 +992,9 @@ async function loadSubs(env, uid) {
     try { return JSON.parse(raw) || []; } catch (e) { return []; }
   }
 
-  // 아주 예전에는 구독을 'subscriptions' 한 칸에 모아 뒀다.
-  // 그때 켜둔 알림이 새 코드로 올린다고 끊기면 안 되므로, 있으면 옮겨서 계속 쓴다.
-  const legacy = await env.PUSH_KV.get('subscriptions');
-  if (!legacy) return [];
-  let list;
-  try { list = JSON.parse(legacy) || []; } catch (e) { return []; }
-  if (!Array.isArray(list) || list.length === 0) return [];
-
-  await env.PUSH_KV.put(subsKey(uid), JSON.stringify(list));
-  return list;
+  // 예전엔 옛 공용 칸('subscriptions')을 여기로 옮겨 왔는데, 기기가 없는 사람 누구에게나
+  // 주인의 기기를 붙여줄 수 있어 뺐다. 주인 기기는 이미 옮겨졌다 (2026-11-19 확인).
+  return [];
 }
 
 // ── 실제 발송 ──
