@@ -11731,6 +11731,18 @@ function renderMoney() {
   // ★ AI 분석 카드
   html += renderMoneyAI(variableSpent, projectedTotal);
 
+  // 📥 내역 넣는 두 가지 길 — 지금까지 화면에서 닿을 수가 없었다
+  html += `
+    <input type="file" id="exp-list-capture" accept="image/jpeg,image/png,image/heic,image/webp" multiple style="display:none;" onchange="processExpenseListCapture(this)" />
+    <div style="display:flex; gap:7px; margin-bottom:12px;">
+      <button onclick="document.getElementById('exp-list-capture').click()" style="flex:1; padding:10px; border:1px dashed var(--text-info); background:rgba(69,110,158,0.05); color:var(--text-info); border-radius:10px; font-size:11.5px; font-weight:700; cursor:pointer; font-family:inherit;">
+        📸 내역 캡처로 넣기
+      </button>
+      <button onclick="openSmsSyncGuide()" style="flex:1; padding:10px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:11.5px; font-weight:700; cursor:pointer; font-family:inherit;">
+        💬 문자 자동 연동
+      </button>
+    </div>`;
+
   if (typeof window.fixedExpanded === 'undefined') window.fixedExpanded = false;
 
   html += `<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
@@ -19563,6 +19575,161 @@ function isDuplicateExpense(item) {
     Number(e.amt) === Number(item.amount) &&
     String(e.memo || '') === String(item.store || '')
   );
+}
+
+// ===== 📸 소비내역 캡처 → 여러 건 한 번에 =====
+//   아이폰은 단축어가 '앱 알림' 을 못 읽는다 (문자만 읽힌다). 카드사 알림을
+//   앱 푸시로 받으시면 자동 연동이 안 된다 — 대신 카드 앱·토스의 '이용내역'
+//   화면을 한 장 찍으면 그 안의 여러 건을 한꺼번에 넣는다.
+
+function expenseCaptureItems() {
+  return Array.isArray(window._expCapture) ? window._expCapture : [];
+}
+
+async function processExpenseListCapture(input) {
+  const files = Array.isArray(input) ? input : Array.from(input?.files || []);
+  if (files.length === 0) return;
+  if (!hasAI()) { showToast('AI 키 먼저 설정해주세요'); return; }
+
+  showToast('내역 읽는 중…');
+  const found = [];
+  let lastErr = '';
+  const thisYear = new Date().getFullYear();
+
+  for (const file of files) {
+    try {
+      const base64 = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result).split(',')[1]);
+        r.onerror = reject;
+        r.readAsDataURL(file);
+      });
+
+      const prompt = `카드 이용내역·가계부 앱 화면에서 결제 건을 모두 뽑아 JSON 으로만 답하라.
+
+{"items":[{"date":"${thisYear}-11-05","store":"스타벅스","amount":5600,"isIncome":false}]}
+
+규칙:
+- date: YYYY-MM-DD. 화면에 연도가 없으면 ${thisYear} 로 채운다
+- store: 가맹점/내용 그대로
+- amount: 숫자만 (쉼표·원 제거)
+- isIncome: 입금·환불·취소면 true, 결제면 false
+- 합계·잔액·카드이름 줄은 넣지 마라. 실제 거래 건만
+- 못 읽으면 {"items":[],"error":"이유"}`;
+
+      const req = aiRequest('gemini-2.0-flash');
+      const res = await fetch(req.url, {
+        method: 'POST',
+        headers: req.headers,
+        body: JSON.stringify({
+          contents: [{ parts: [
+            { text: prompt },
+            { inline_data: { mime_type: file.type || 'image/jpeg', data: base64 } },
+          ] }],
+          generationConfig: { temperature: 0, responseMimeType: 'application/json' },
+        }),
+      });
+      if (!res.ok) { lastErr = 'AI 응답 ' + res.status; continue; }
+
+      const data = await res.json();
+      const txt = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      let parsed = null;
+      try { parsed = JSON.parse(txt); } catch (e) {
+        const m = txt.match(/\{[\s\S]*\}/);
+        if (m) { try { parsed = JSON.parse(m[0]); } catch (e2) {} }
+      }
+      if (!parsed) { lastErr = '읽은 내용을 해석하지 못했어요'; continue; }
+      if (parsed.error) lastErr = String(parsed.error);
+      (parsed.items || []).forEach(it => {
+        if (!it || !(Number(it.amount) > 0)) return;
+        found.push({
+          dateKey: /^\d{4}-\d{2}-\d{2}$/.test(String(it.date)) ? it.date : todayKey(),
+          store: String(it.store || '').trim().slice(0, 40),
+          amount: Math.round(Number(it.amount)),
+          isIncome: !!it.isIncome,
+        });
+      });
+    } catch (e) {
+      lastErr = String(e && e.message || e);
+    }
+  }
+
+  if (found.length === 0) {
+    alert('읽어낼 내역이 없었어요\n\n' + (lastErr || '화면에 결제 건이 안 보였을 수 있어요')
+      + '\n\n이용내역 목록이 잘 보이게 다시 찍어주세요.');
+    return;
+  }
+
+  // 이미 있는 건은 기본 해제 — 같은 화면을 두 번 찍어도 겹치지 않는다
+  found.forEach(it => {
+    it.cat = guessExpenseCategoryFromText(it.store);
+    it._dup = isDuplicateExpense(it);
+    it._checked = !it._dup;
+  });
+  found.sort((a, b) => String(b.dateKey).localeCompare(String(a.dateKey)));
+  window._expCapture = found;
+  renderExpenseCapturePreview();
+}
+
+function toggleExpCaptureItem(i) {
+  const list = expenseCaptureItems();
+  if (!list[i]) return;
+  list[i]._checked = !list[i]._checked;
+  renderExpenseCapturePreview();
+}
+
+function renderExpenseCapturePreview() {
+  const list = expenseCaptureItems();
+  const on = list.filter(x => x._checked);
+  const sum = on.filter(x => !x.isIncome).reduce((n, x) => n + x.amount, 0);
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">취소</button>
+        <h2 style="font-size:15px;">📸 읽은 내역 ${list.length}건</h2>
+        <span></span>
+      </div>
+      <div style="padding:0 16px 20px;">
+        <div style="padding:10px 12px; background:var(--bg-secondary); border-radius:10px; font-size:11.5px; color:var(--text-secondary); line-height:1.7; margin-bottom:12px;">
+          넣을 것만 체크하세요. <b>이미 있는 건은 자동으로 꺼둡니다.</b><br>
+          <span style="opacity:0.85;">카테고리는 가맹점 이름으로 짐작한 것이라, 넣은 뒤 고치셔도 됩니다.</span>
+        </div>
+
+        ${list.map((it, i) => `
+          <label style="display:flex; align-items:center; gap:9px; padding:9px 10px; border:0.5px solid ${it._checked ? 'var(--accent-tab, #3D8168)' : 'var(--border-tertiary)'}; border-radius:10px; margin-bottom:6px; cursor:pointer; ${it._dup ? 'opacity:0.55;' : ''}">
+            <input type="checkbox" ${it._checked ? 'checked' : ''} onchange="toggleExpCaptureItem(${i})" style="width:17px; height:17px; flex:none;" />
+            <div style="flex:1; min-width:0;">
+              <div style="font-size:12px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                ${escapeHTML(it.store || '내용 없음')}${it._dup ? ' <span style="font-size:10px; color:var(--text-tertiary); font-weight:500;">이미 있음</span>' : ''}
+              </div>
+              <div style="font-size:10.5px; color:var(--text-tertiary); margin-top:2px;">${escapeHTML(it.dateKey)} · ${escapeHTML(it.cat)}</div>
+            </div>
+            <div style="flex:none; font-size:12.5px; font-weight:800; color:${it.isIncome ? 'var(--text-success)' : 'var(--text-primary)'};">
+              ${it.isIncome ? '+' : ''}${it.amount.toLocaleString()}
+            </div>
+          </label>`).join('')}
+
+        <button onclick="applyExpenseCapture()" style="width:100%; margin-top:10px; padding:13px; border:none; background:var(--accent-tab, #3D8168); color:#fff; border-radius:11px; font-size:13.5px; font-weight:800; cursor:pointer; font-family:inherit;">
+          ${on.length}건 넣기${sum > 0 ? ` · ${sum.toLocaleString()}원` : ''}
+        </button>
+      </div>
+    </div>`;
+  modal.classList.add('show');
+}
+
+function applyExpenseCapture() {
+  const list = expenseCaptureItems().filter(x => x._checked);
+  if (list.length === 0) { showToast('넣을 것을 골라주세요'); return; }
+
+  let n = 0;
+  list.forEach(it => { if (addParsedExpense(it)) n++; });
+  window._expCapture = [];
+  saveData();
+  closeModal();
+  showToast(n > 0 ? `✅ ${n}건 넣었어요` : '이미 다 들어 있어요');
+  try { renderMoney(); } catch (e) {}
 }
 
 function addParsedExpense(item) {
