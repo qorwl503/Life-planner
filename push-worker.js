@@ -40,7 +40,7 @@
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
 // 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
-const WORKER_VERSION = '2026-11-20.8';
+const WORKER_VERSION = '2026-11-20.9';
 const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
   '/push/plan', '/push/status', '/relay/workout', '/relay/expense', '/relay/ping', '/widget', '/version', '/keys/status', '/keys/issue', '/keys/revoke', '/account/delete'];
 
@@ -108,23 +108,10 @@ export default {
 // 주인(MY_UID)은 자기 할당량이므로 상한을 걸지 않는다.
 
 const AI_DAILY_LIMIT = 30;          // 손님 1인당 하루 호출 수
-const AI_ALLOWED_MODELS = /^[a-zA-Z0-9.\-]+$/;   // 모델명에 경로가 섞여 들어오는 걸 막는다
+// 앱이 실제로 쓰는 모델만 허용한다 (모양만 보면 비싼 모델도 부를 수 있다)
+const AI_ALLOWED_MODELS = ['gemini-flash-latest', 'gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-2.0-flash'];
 
 // 앱 열쇠(uploadKeys/{key}) 로 누구인지 알아낸다. 없는 열쇠면 null.
-async function uidFromAppKey(env, key) {
-  if (!key || !/^[0-9a-f]{16,128}$/.test(key)) return null;
-  if (!env.FIREBASE_PROJECT_ID || !env.FIREBASE_API_KEY) {
-    throw new Error('FIREBASE_PROJECT_ID / FIREBASE_API_KEY 를 Secrets 에 넣어주세요');
-  }
-  const url = 'https://firestore.googleapis.com/v1/projects/' + env.FIREBASE_PROJECT_ID
-    + '/databases/(default)/documents/uploadKeys/' + encodeURIComponent(key)
-    + '?key=' + env.FIREBASE_API_KEY;
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  const doc = await res.json();
-  return doc?.fields?.uid?.stringValue || null;
-}
-
 // 오늘 몇 번 썼나 (자정은 한국 시간 기준)
 function todayKeyKST() {
   const kst = new Date(Date.now() + 9 * 3600 * 1000);
@@ -146,14 +133,18 @@ async function handleAI(request, env, url) {
   }
 
   const model = decodeURIComponent(url.pathname.slice('/ai/'.length));
-  if (!AI_ALLOWED_MODELS.test(model)) return json({ error: '모델 이름이 이상합니다' }, 400);
+  if (!AI_ALLOWED_MODELS.includes(model)) return json({ error: '허용되지 않은 모델입니다' }, 400);
 
-  const appKey = request.headers.get('X-App-Key') || '';
-  const uid = await uidFromAppKey(env, appKey);
-  if (!uid) return json({ error: '앱 열쇠가 확인되지 않았어요. 로그인 후 다시 시도해주세요' }, 401);
+  // 로그인 토큰으로만 받는다. 예전 앱 열쇠 방식은 열쇠 목록을 공개로 열어야 해서 뺐다.
+  let who;
+  try { who = await requireUser(request, env, {}); } catch (e) { who = null; }
+  if (!who || who.via !== 'token') return json({ error: '로그인이 확인되지 않았어요. 앱을 껐다 켜주세요' }, 401);
+  const uid = who.uid;
 
   // 주인은 무제한, 손님은 하루 상한
   const isOwner = !!env.MY_UID && uid === env.MY_UID;
+  // 손님은 이메일 인증을 마쳐야 한다 — 계정을 여러 개 만들어 상한을 피하지 못하게
+  if (!isOwner && !who.emailVerified) return json({ error: '이메일 인증을 마친 뒤 쓸 수 있어요' }, 403);
   if (!isOwner) {
     const quota = await bumpAIUsage(env, uid);
     if (!quota.ok) {

@@ -1474,7 +1474,10 @@ function aiRequest(model) {
   }
   return {
     url: `${aiServerUrl()}/ai/${encodeURIComponent(model)}`,
-    headers: { 'Content-Type': 'application/json', 'X-App-Key': settings.uploadKey || '' },
+    // 로그인 토큰을 붙인다 (서버가 토큰만 받는다). 이 함수는 기다릴 수 없어 최근 받아둔 것을 쓴다.
+    headers: Object.assign({ 'Content-Type': 'application/json' },
+      (window._idTokenCache && Date.now() - window._idTokenCache.at < 50 * 60000)
+        ? { Authorization: 'Bearer ' + window._idTokenCache.token } : {}),
     shared: true,
   };
 }
@@ -30126,6 +30129,7 @@ async function pushAuthHeaders() {
     try { token = await u.getIdToken(true); } catch (e2) { token = ''; }
   }
   if (!token) return { 'Content-Type': 'application/json' };
+  window._idTokenCache = { token, at: Date.now() };
   return { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token };
 }
 
