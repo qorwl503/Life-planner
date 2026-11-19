@@ -8709,10 +8709,11 @@ async function testRelayPush() {
   if (!url) { showToast('알림 서버 주소가 없어요 (설정 → 알림)'); return; }
   showToast('서버에 보내는 중…');
   try {
+    // 서버가 '누구에게' 보낼지 알아야 한다 — 로그인 토큰을 같이 보낸다 (남의 폰으로 안 가게)
     const res = await fetch(url.replace(/\/+$/, '') + '/relay/ping', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{}',
+      headers: await pushAuthHeaders(),
+      body: JSON.stringify({ uid: (currentUser && currentUser.uid) || '', key: settings.uploadKey || '' }),
     });
     const d = await res.json().catch(() => ({}));
     if (!res.ok) { showToast('서버 오류: ' + String(d.error || res.status).slice(0, 70)); return; }

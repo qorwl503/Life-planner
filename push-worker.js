@@ -40,7 +40,7 @@
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
 // 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
-const WORKER_VERSION = '2026-11-20.3';
+const WORKER_VERSION = '2026-11-20.4';
 const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
   '/push/plan', '/push/status', '/relay/workout', '/relay/expense', '/relay/ping', '/widget', '/version'];
 
@@ -481,7 +481,6 @@ async function handleRelayExpense(request, env, url) {
   const uidFromUrl = (url && url.searchParams.get('uid')) || '';
   const keyFromUrl = (url && url.searchParams.get('key')) || '';
   let uid = uidFromUrl || env.MY_UID || '';
-  if (!uid) uid = await onlyRegisteredUid(env);
   if (!uid) return json({ error: '주소에 uid 가 없어요. 앱에서 주소를 다시 복사해 넣어주세요' }, 400);
 
   // 문자는 본문으로도, 주소(?text=)로도 올 수 있다 — 단축어 설정이 사람마다 다르다
@@ -545,11 +544,11 @@ async function handleRelayWorkout(request, env, url) {
   //   전에는 Secrets 의 MY_UID 로 정했는데, 그 값이 실제 로그인 UID 와 다르면
   //   엉뚱한 곳에 저장돼 앱이 영영 못 봤다. 앱은 자기 UID 를 아니까 앱이 알려주는 게 맞다.
   //   UID 는 비밀이 아니다 — 예전 Firestore 직행 주소에도 그대로 들어 있었다.
-  // 주소에 없으면 Secrets 의 MY_UID, 그것도 없거나 틀리면 알림을 켜둔 사람에게서 찾는다.
-  // 단축어 주소를 다시 복사하지 않아도 되게 하려는 것.
+  // 주소에 없으면 Secrets 의 MY_UID (아주 옛날 단축어용).
+  //   예전엔 '알림을 켠 사람이 한 명뿐이면 그 사람' 으로 추측했는데, 사용자가 여럿이 되면
+  //   남의 수신함·남의 폰으로 갈 수 있어 뺐다.
   const uidFromUrl = (url && url.searchParams.get('uid')) || '';
   let uid = uidFromUrl || env.MY_UID || '';
-  if (!uid) uid = await onlyRegisteredUid(env);
   if (!uid) {
     return json({ error: '누구의 기록인지 알 수 없어요. 앱에서 알림을 한 번 켜주시거나, 워치 연동 설정에서 주소를 다시 복사해주세요' }, 400);
   }
@@ -619,25 +618,11 @@ async function handleRelayWorkout(request, env, url) {
     } catch (e) { /* 못 고치면 벗긴 원본 그대로 보낸다 */ }
   }
 
-  let res = await fetch(endpoint, {
+  const res = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: outBody,
   });
-
-  // 계정이 틀려서 거부된 것일 수 있다 — 알림을 켜둔 사람이 한 명뿐이면 그쪽으로 한 번 더.
-  if (!res.ok && (res.status === 403 || res.status === 400)) {
-    const alt = await onlyRegisteredUid(env);
-    if (alt && alt !== uid) {
-      const altEndpoint = 'https://firestore.googleapis.com/v1/projects/' + env.FIREBASE_PROJECT_ID
-        + '/databases/(default)/documents/users/' + encodeURIComponent(alt) + '/workoutInbox'
-        + '?key=' + env.FIREBASE_API_KEY;
-      const retry = await fetch(altEndpoint, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: outBody,
-      });
-      if (retry.ok) { res = retry; uid = alt; }
-    }
-  }
 
   if (!res.ok) {
     const detail = await res.text();
@@ -671,18 +656,14 @@ async function handleRelayWorkout(request, env, url) {
     // 저장이 안 됐어도 알림은 보낸다.
     //   알림과 저장은 별개다 — 알림은 여기서 바로 쏘고, Firestore 는 앱이 나중에 읽을 기록용이다.
     //   저장이 막혔다고 알림까지 막으면 '운동 끝난 줄도 모르는' 상태가 된다.
+    //   단, 열쇠가 정말 그 사람 것일 때만 — 아니면 uid 만 아는 누구나 알림을 쏠 수 있다.
     let sos = { sent: 0 };
     try {
-      sos = await sendToUser(env, uid, {
+      if (usedKey && (await keyBelongsTo(env, uid, usedKey)) === 'ok') sos = await sendToUser(env, uid, {
         title: '⌚ 운동 기록 도착',
         body: tooBig
           ? '사진이 너무 커서 저장은 못 했어요. 앱에서 직접 넣어주세요.'
           : '들어왔지만 저장에 실패했어요. 앱을 열어 확인해주세요.',
-        tag: 'workout-' + kstNow().date,
-      });
-      if (!sos.sent) sos = await sendToOwner(env, {
-        title: '⌚ 운동 기록 도착',
-        body: '저장에 실패했어요. 앱을 열어 확인해주세요.',
         tag: 'workout-' + kstNow().date,
       });
     } catch (e) { /* 알림까지 실패해도 아래 응답은 돌려준다 */ }
@@ -736,9 +717,8 @@ async function handleRelayWorkout(request, env, url) {
     body,
     tag: 'workout-' + kstNow().date,   // 같은 날 것은 하나로 덮는다 (매번 다르면 알림이 쌓인다)
   };
-  // 저장한 그 사람에게 보낸다. 없으면 예전처럼 주인을 찾아본다.
-  let pushed = await sendToUser(env, uid, payload);
-  if (!pushed.sent) pushed = await sendToOwner(env, payload);
+  // 저장한 그 사람에게만 보낸다 (저장이 됐다는 건 규칙이 열쇠를 확인했다는 뜻이다).
+  const pushed = await sendToUser(env, uid, payload);
 
   // 알림이 갔는지까지 알려준다. ok 만 돌려주면 '저장은 됐는데 알림이 안 온다'를 못 가린다.
   return json({
@@ -1036,46 +1016,17 @@ async function loadSubs(env, uid) {
 // 단축어가 쓰는 길 그대로 알림만 보내본다 (Firestore 는 안 건드린다).
 // '저장은 되는데 알림이 안 온다'를 앱에서 한 번에 가려내기 위한 것.
 async function handleRelayPing(request, env) {
-  const pushed = await sendToOwner(env, {
+  // 예전엔 아무나 부를 수 있었고 주인 폰으로 갔다 — 이제는 로그인한 본인에게만.
+  const body = await request.json().catch(() => ({}));
+  let who;
+  try { who = await requireUser(request, env, body); }
+  catch (e) { return json({ error: String(e.message || e) }, 401); }
+  const pushed = await sendToUser(env, who.uid, {
     title: '⌚ 서버 알림 시험',
     body: '이 알림이 보이면 앱이 꺼져 있어도 알림이 옵니다.',
     tag: 'relay-ping',
   });
-  return json({ ok: true, push: pushed, myUid: env.MY_UID ? '설정됨' : '없음' });
-}
-
-// 알림을 켜둔 사람이 딱 한 명이면 그 사람의 uid. 여러 명이거나 없으면 빈 값.
-async function onlyRegisteredUid(env) {
-  if (!env.PUSH_KV) return '';
-  try {
-    const page = await env.PUSH_KV.list({ prefix: 'subs:' });
-    const uids = page.keys.map(k => k.name.slice('subs:'.length));
-    return uids.length === 1 ? uids[0] : '';
-  } catch (e) { return ''; }
-}
-
-// 주인에게 보낸다. MY_UID 로 저장된 구독이 없으면 — 흔한 경우가 Secret 의 UID 가
-// 실제 로그인 UID 와 다른 것 — 등록된 사람이 딱 한 명일 때 그 사람에게 보낸다.
-// 여러 명이면 누구인지 알 수 없으므로 보내지 않는다 (남의 폰에 뜨면 안 된다).
-async function sendToOwner(env, payload) {
-  if (env.MY_UID) {
-    const r = await sendToUser(env, env.MY_UID, payload);
-    if (r.sent > 0) return { ...r, target: 'MY_UID' };
-  }
-
-  if (!env.PUSH_KV) return { sent: 0, note: 'PUSH_KV 없음' };
-  const page = await env.PUSH_KV.list({ prefix: 'subs:' });
-  const uids = page.keys.map(k => k.name.slice('subs:'.length));
-
-  if (uids.length === 0) {
-    return { sent: 0, note: '알림을 켠 기기가 하나도 없어요. 앱에서 알림을 먼저 켜주세요' };
-  }
-  if (uids.length > 1) {
-    return { sent: 0, note: 'MY_UID 가 등록된 사람과 안 맞습니다. Secrets 의 MY_UID 를 확인해주세요' };
-  }
-
-  const r = await sendToUser(env, uids[0], payload);
-  return { ...r, target: 'only-user', note: 'MY_UID 가 안 맞아 등록된 한 명에게 보냈습니다' };
+  return json({ ok: true, push: pushed });
 }
 
 async function sendToUser(env, uid, payload) {
