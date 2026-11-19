@@ -40,9 +40,9 @@
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
 // 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
-const WORKER_VERSION = '2026-11-20.6';
+const WORKER_VERSION = '2026-11-20.7';
 const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
-  '/push/plan', '/push/status', '/relay/workout', '/relay/expense', '/relay/ping', '/widget', '/version'];
+  '/push/plan', '/push/status', '/relay/workout', '/relay/expense', '/relay/ping', '/widget', '/version', '/keys/status', '/keys/issue', '/keys/revoke'];
 
 let ENV = null;
 
@@ -62,7 +62,8 @@ export default {
       if (url.pathname === '/relay/expense' && request.method === 'POST') return await handleRelayExpense(request, env, url);
       // 주소창(GET)으로도 열 수 있게 둔다 — 배포가 됐는지 눈으로 확인하는 용도
       if (url.pathname === '/relay/ping') return await handleRelayPing(request, env);
-      if (url.pathname === '/version') return json({ version: WORKER_VERSION, routes: ROUTE_LIST });
+      if (url.pathname.startsWith('/keys/') && request.method === 'POST') return await handleKeys(request, env, url);
+      if (url.pathname === '/version') return json({ version: WORKER_VERSION, routes: ROUTE_LIST, relayReady: !!env.FIREBASE_SA });
       if (url.pathname === '/widget' && request.method === 'GET') return await handleWidget(env, url);
       if (url.pathname.startsWith('/ai/') && request.method === 'POST') return await handleAI(request, env, url);
       if (url.pathname === '/push/status') return await handleStatus(request, env, url);
@@ -276,10 +277,15 @@ async function verifyIdToken(env, idToken) {
 //       그 문서를 읽을 수 있고, 목록을 훑어볼 수는 없다)
 async function keyBelongsTo(env, uid, key) {
   // 같은 짝을 매번 Firestore 에 묻지 않게 한 시간 기억한다 (열쇠 원문은 KV 키로 안 쓴다)
-  const tag = 'keyok:' + uid + ':' + key.slice(0, 6) + key.length;
+  const h = await hashTok(key);
+  try {
+    // 로그인한 앱이 '이게 내 열쇠' 라고 알려준 것과 같으면 바로 통과
+    if (env.PUSH_KV && (await env.PUSH_KV.get('ukey:' + uid)) === h) return 'ok';
+  } catch (e) {}
+  const tag = 'keyok:' + uid + ':' + h.slice(0, 16);
   try {
     const hit = env.PUSH_KV && await env.PUSH_KV.get(tag);
-    if (hit === key) return 'ok';
+    if (hit === h) return 'ok';
   } catch (e) {}
 
   const proj = env.FIREBASE_PROJECT_ID;
@@ -299,7 +305,7 @@ async function keyBelongsTo(env, uid, key) {
   const owner = doc && doc.fields && doc.fields.uid && doc.fields.uid.stringValue;
   if (owner !== uid) return 'no';                  // 남의 열쇠
 
-  try { env.PUSH_KV && await env.PUSH_KV.put(tag, key, { expirationTtl: 3600 }); } catch (e) {}
+  try { env.PUSH_KV && await env.PUSH_KV.put(tag, h, { expirationTtl: 3600 }); } catch (e) {}
   return 'ok';
 }
 
@@ -347,6 +353,7 @@ async function requireUser(request, env, body) {
     try {
       const who = await verifyIdToken(env, m[1].trim());
       await noteAuth(env, who.uid, 'token');
+      if (body && body.key) await registerUploadKey(env, who.uid, body.key);
       return who;
     } catch (e) {
       tokenErr = String(e && e.message || e).slice(0, 120);
@@ -361,6 +368,152 @@ async function requireUser(request, env, body) {
     return byBody;
   }
   throw new Error(tokenErr || '로그인이 필요합니다');
+}
+
+// ===== 🎫 단축어 전용 주소 (용도별 토큰) =====
+// 예전 단축어 주소에는 uid 와 '만능 열쇠' 가 같이 들어 있었다. 하나가 새면 전부 바꿔야 했고,
+// 어느 단축어에서 샜는지도 알 수 없었다.
+// 이제는 워치용·카드용 주소를 따로 발급한다.
+//   · 서버에는 토큰의 해시만 남는다 (KV 를 들여다봐도 토큰 원문은 없다)
+//   · 새로 받으면 그 용도의 옛 주소는 바로 끊긴다
+//   · 주소에 uid 가 없다 — 토큰이 누구 것인지는 서버만 안다
+// 이 주소로 들어온 기록은 서버가 자기 출입증(서비스 계정)으로 Firestore 에 쓴다.
+// 그래서 Firestore 규칙에서 '로그인 없이 쓰기' 를 닫을 수 있게 된다.
+const RELAY_PURPOSES = ['workout', 'expense'];
+
+async function hashTok(s) {
+  const d = await crypto.subtle.digest('SHA-256', enc(String(s)));
+  return b64url(new Uint8Array(d));
+}
+
+// 로그인한 앱이 보낸 '예전 열쇠' 가 누구 것인지 기억한다 (해시만).
+//   Firestore 의 열쇠 목록을 공개로 열지 않고도 예전 주소의 열쇠를 확인할 수 있다.
+async function registerUploadKey(env, uid, key) {
+  if (!env.PUSH_KV || !uid || !/^[0-9a-f]{16,128}$/.test(String(key || ''))) return;
+  try {
+    const h = await hashTok(key);
+    const slot = 'ukey:' + uid;
+    if ((await env.PUSH_KV.get(slot)) !== h) await env.PUSH_KV.put(slot, h);
+  } catch (e) {}
+}
+
+async function resolveRelayToken(env, token, purpose) {
+  if (!env.PUSH_KV || !/^[0-9a-f]{40,128}$/.test(String(token || ''))) return null;
+  const h = await hashTok(token);
+  const raw = await env.PUSH_KV.get('rt:' + h);
+  if (!raw) return null;
+  let rec;
+  try { rec = JSON.parse(raw); } catch (e) { return null; }
+  if (!rec || !rec.uid || rec.purpose !== purpose) return null;
+  // 마지막으로 쓴 날 — 하루 한 번만 고쳐 쓴다 (KV 쓰기 한도)
+  const today = kstNow().date;
+  if (rec.lastUsed !== today) {
+    rec.lastUsed = today;
+    try { await env.PUSH_KV.put('rt:' + h, JSON.stringify(rec)); } catch (e) {}
+  }
+  return rec;
+}
+
+// /keys/status · /keys/issue · /keys/revoke — 로그인 토큰으로만 부를 수 있다
+async function handleKeys(request, env, url) {
+  const body = await request.json().catch(() => ({}));
+  const who = await requireUser(request, env, body);
+  if (who.via !== 'token') return json({ error: '로그인이 필요해요. 앱을 껐다 켜주세요' }, 401);
+  if (!env.PUSH_KV) return json({ error: 'PUSH_KV 가 없습니다' }, 500);
+  const uid = who.uid;
+  const op = url.pathname.slice('/keys/'.length);
+
+  if (op === 'status') {
+    const purposes = {};
+    for (const p of RELAY_PURPOSES) {
+      const h = await env.PUSH_KV.get('rtu:' + uid + ':' + p);
+      let rec = null;
+      if (h) { try { rec = JSON.parse((await env.PUSH_KV.get('rt:' + h)) || 'null'); } catch (e) {} }
+      purposes[p] = rec ? { at: rec.at, lastUsed: rec.lastUsed || '' } : null;
+    }
+    return json({ ok: true, ready: !!env.FIREBASE_SA, purposes });
+  }
+
+  const purpose = String(body.purpose || '');
+  if (!RELAY_PURPOSES.includes(purpose)) return json({ error: '어디에 쓸 주소인지 알 수 없어요' }, 400);
+  const slot = 'rtu:' + uid + ':' + purpose;
+  const old = await env.PUSH_KV.get(slot);
+
+  if (op === 'revoke') {
+    if (old) await env.PUSH_KV.delete('rt:' + old);
+    await env.PUSH_KV.delete(slot);
+    return json({ ok: true });
+  }
+
+  if (op === 'issue') {
+    if (!env.FIREBASE_SA) return json({ error: '서버 준비가 아직 안 됐어요' }, 503);
+    const bytes = crypto.getRandomValues(new Uint8Array(24));
+    const token = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    const h = await hashTok(token);
+    await env.PUSH_KV.put('rt:' + h, JSON.stringify({ uid, purpose, at: new Date().toISOString() }));
+    await env.PUSH_KV.put(slot, h);
+    if (old && old !== h) await env.PUSH_KV.delete('rt:' + old);   // 새로 받으면 옛 주소는 끊긴다
+    return json({ ok: true, token });
+  }
+
+  return json({ error: 'not found' }, 404);
+}
+
+// ===== 🪪 서버 출입증 (Firebase 서비스 계정) =====
+// FIREBASE_SA Secret 에 서비스 계정 JSON 이 통째로 들어 있다. 코드·GitHub 에는 없다.
+// 그걸로 구글에서 한 시간짜리 출입증을 받아 Firestore 에 쓴다.
+let SA_TOKEN = null;   // { token, until } — 같은 Worker 인스턴스 안에서만
+
+function pemToDer(pem) {
+  const b = String(pem || '').replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
+  const bin = atob(b);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function adminAccessToken(env) {
+  if (SA_TOKEN && SA_TOKEN.until > Date.now() + 60000) return SA_TOKEN.token;
+  let sa;
+  try { sa = JSON.parse(env.FIREBASE_SA); } catch (e) { throw new Error('FIREBASE_SA 를 읽지 못했어요'); }
+  if (!sa || !sa.client_email || !sa.private_key) throw new Error('FIREBASE_SA 에 필요한 값이 없어요');
+  if (sa.project_id && env.FIREBASE_PROJECT_ID && sa.project_id !== env.FIREBASE_PROJECT_ID) {
+    throw new Error('FIREBASE_SA 가 다른 프로젝트 것이에요');
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const head = b64url(enc(JSON.stringify({ alg: 'RS256', typ: 'JWT' })));
+  const claim = b64url(enc(JSON.stringify({
+    iss: sa.client_email,
+    scope: 'https://www.googleapis.com/auth/datastore',
+    aud: 'https://oauth2.googleapis.com/token',
+    iat: now, exp: now + 3600,
+  })));
+  const key = await crypto.subtle.importKey('pkcs8', pemToDer(sa.private_key),
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign']);
+  const sig = new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, enc(head + '.' + claim)));
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'grant_type=' + encodeURIComponent('urn:ietf:params:oauth:grant-type:jwt-bearer')
+      + '&assertion=' + head + '.' + claim + '.' + b64url(sig),
+  });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok || !d.access_token) throw new Error('서버 출입증 발급 실패 (HTTP ' + res.status + ')');
+  SA_TOKEN = { token: d.access_token, until: Date.now() + (Number(d.expires_in) || 3600) * 1000 };
+  return SA_TOKEN.token;
+}
+
+// 전용 주소로 들어온 기록을 '그 토큰 주인의' 수신함에 쓴다. 경로는 여기서만 만든다.
+async function adminInboxWrite(env, uid, coll, bodyJson) {
+  if (!/^[A-Za-z0-9_-]{8,128}$/.test(String(uid))) throw new Error('uid 가 이상해요');
+  if (!['workoutInbox', 'expenseInbox'].includes(coll)) throw new Error('쓸 수 없는 곳이에요');
+  const token = await adminAccessToken(env);
+  return fetch('https://firestore.googleapis.com/v1/projects/' + env.FIREBASE_PROJECT_ID
+    + '/databases/(default)/documents/users/' + encodeURIComponent(uid) + '/' + coll, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: bodyJson,
+  });
 }
 
 // 사람마다 따로 담는다 — 남의 알림이 섞이지 않게
@@ -479,8 +632,14 @@ async function handleRelayExpense(request, env, url) {
   const raw = await request.text();
   const parsed = looseJson(raw);
 
-  const uidFromUrl = (url && url.searchParams.get('uid')) || '';
-  const keyFromUrl = (url && url.searchParams.get('key')) || '';
+  const relayTok = (url && url.searchParams.get('t')) || request.headers.get('X-Relay-Token') || '';
+  let viaToken = null;
+  if (relayTok) {
+    viaToken = await resolveRelayToken(env, relayTok, 'expense');
+    if (!viaToken) return json({ error: '이 주소는 폐기됐거나 틀렸어요. 앱의 문자 연동 설정에서 주소를 다시 복사해주세요' }, 401);
+  }
+  const uidFromUrl = viaToken ? viaToken.uid : ((url && url.searchParams.get('uid')) || '');
+  const keyFromUrl = viaToken ? 'relay' : ((url && url.searchParams.get('key')) || '');
   let uid = uidFromUrl || env.MY_UID || '';
   if (!uid) return json({ error: '주소에 uid 가 없어요. 앱에서 주소를 다시 복사해 넣어주세요' }, 400);
 
@@ -506,11 +665,13 @@ async function handleRelayExpense(request, env, url) {
   });
 
   const target = `https://firestore.googleapis.com/v1/projects/${proj}/databases/(default)/documents/users/${uid}/expenseInbox?key=${apiKey}`;
-  const res = await fetch(target, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body,
-  });
+  const res = viaToken
+    ? await adminInboxWrite(env, uid, 'expenseInbox', body)
+    : await fetch(target, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
 
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
@@ -548,7 +709,14 @@ async function handleRelayWorkout(request, env, url) {
   // 주소에 없으면 Secrets 의 MY_UID (아주 옛날 단축어용).
   //   예전엔 '알림을 켠 사람이 한 명뿐이면 그 사람' 으로 추측했는데, 사용자가 여럿이 되면
   //   남의 수신함·남의 폰으로 갈 수 있어 뺐다.
-  const uidFromUrl = (url && url.searchParams.get('uid')) || '';
+  // 🎫 전용 주소(?t=)면 토큰이 누구 것인지로 정한다. 주소의 uid·열쇠는 보지 않는다.
+  const relayTok = (url && url.searchParams.get('t')) || request.headers.get('X-Relay-Token') || '';
+  let viaToken = null;
+  if (relayTok) {
+    viaToken = await resolveRelayToken(env, relayTok, 'workout');
+    if (!viaToken) return json({ error: '이 주소는 폐기됐거나 틀렸어요. 앱의 워치 연동 설정에서 주소를 다시 복사해주세요' }, 401);
+  }
+  const uidFromUrl = viaToken ? viaToken.uid : ((url && url.searchParams.get('uid')) || '');
   let uid = uidFromUrl || env.MY_UID || '';
   if (!uid) {
     return json({ error: '누구의 기록인지 알 수 없어요. 앱에서 알림을 한 번 켜주시거나, 워치 연동 설정에서 주소를 다시 복사해주세요' }, 400);
@@ -587,6 +755,13 @@ async function handleRelayWorkout(request, env, url) {
       //   주소 하나만 다시 복사하면 되도록 여기서 갈아 끼운다.
       const keyFromUrl = (url && url.searchParams.get('key')) || '';
       if (keyFromUrl) parsed.fields.key = { stringValue: keyFromUrl };
+      if (viaToken) {
+        // 서버 출입증으로 쓰면 규칙의 허용 목록이 적용되지 않는다 — 여기서 똑같이 걸러낸다
+        parsed.fields.key = { stringValue: 'relay' };
+        for (const k of Object.keys(parsed.fields)) {
+          if (!['key', 'photo', 'photo2', 'photoMime', 'date', 'via', 'at'].includes(k)) delete parsed.fields[k];
+        }
+      }
 
       // 사진 값 안에 남은 공백·줄바꿈을 걷어낸다 (base64 는 그런 문자를 쓰지 않는다)
       for (const k of ['photo', 'photo2']) {
@@ -619,11 +794,14 @@ async function handleRelayWorkout(request, env, url) {
     } catch (e) { /* 못 고치면 벗긴 원본 그대로 보낸다 */ }
   }
 
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: outBody,
-  });
+  if (viaToken && !parsed) return json({ error: '보낸 내용을 읽지 못했어요. 단축어 본문을 확인해주세요' }, 400);
+  const res = viaToken
+    ? await adminInboxWrite(env, uid, 'workoutInbox', outBody)
+    : await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: outBody,
+    });
 
   if (!res.ok) {
     const detail = await res.text();
@@ -660,7 +838,7 @@ async function handleRelayWorkout(request, env, url) {
     //   단, 열쇠가 정말 그 사람 것일 때만 — 아니면 uid 만 아는 누구나 알림을 쏠 수 있다.
     let sos = { sent: 0 };
     try {
-      if (usedKey && (await keyBelongsTo(env, uid, usedKey)) === 'ok') sos = await sendToUser(env, uid, {
+      if (viaToken || (usedKey && (await keyBelongsTo(env, uid, usedKey)) === 'ok')) sos = await sendToUser(env, uid, {
         title: '⌚ 운동 기록 도착',
         body: tooBig
           ? '사진이 너무 커서 저장은 못 했어요. 앱에서 직접 넣어주세요.'
@@ -1164,7 +1342,7 @@ function cors(env) {
   return {
     'Access-Control-Allow-Origin': allow || '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-App-Key',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-App-Key, X-Relay-Token',
     'Vary': 'Origin',
   };
 }
