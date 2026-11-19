@@ -9099,6 +9099,65 @@ async function repairUploadKey() {
   openWatchPhotoSetup();
 }
 
+// 🔐 단축어 전용 주소 — 워치용·카드용을 따로 받는다.
+//   예전 주소(uid + 만능 열쇠)는 하나가 새면 전부 바꿔야 했다.
+//   전용 주소는 용도별로 따로라서, 새로 받으면 그 용도의 옛 주소만 끊긴다.
+//   서버 준비(출입증)가 끝나야 버튼이 보인다.
+function relayToken(purpose) {
+  return (settings.relayTokens && settings.relayTokens[purpose]) || '';
+}
+
+async function checkRelayReady() {
+  const url = pushServerUrl();
+  if (!url) return false;
+  if (window._relayReady !== undefined) return window._relayReady;
+  try {
+    const d = await fetch(url.replace(/\/+$/, '') + '/version').then(r => r.json());
+    window._relayReady = !!d.relayReady;
+  } catch (e) { window._relayReady = false; }
+  return window._relayReady;
+}
+
+async function issueRelayAddress(purpose, reopen) {
+  const url = pushServerUrl();
+  if (!url) { showToast('알림 서버 주소가 없어요'); return; }
+  if (relayToken(purpose) && !confirm('새 주소를 받으면 지금 단축어에 넣은 주소는 바로 끊겨요.\n단축어의 주소를 새것으로 바꿔 넣으실 거죠?')) return;
+  showToast('새 주소 받는 중…');
+  try {
+    const res = await fetch(url.replace(/\/+$/, '') + '/keys/issue', {
+      method: 'POST',
+      headers: await pushAuthHeaders(),
+      body: JSON.stringify({ purpose }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || !d.token) { showToast('못 받았어요: ' + String(d.error || res.status).slice(0, 60)); return; }
+    settings.relayTokens = Object.assign({}, settings.relayTokens || {}, { [purpose]: d.token });
+    saveData();
+    showToast('✅ 전용 주소를 받았어요. 아래 주소를 복사해 단축어에 넣어주세요');
+    if (typeof reopen === 'function') reopen();
+  } catch (e) {
+    showToast('서버에 못 닿았어요: ' + String(e && e.message || e).slice(0, 50));
+  }
+}
+
+function relayAddressBlock(purpose, reopenName) {
+  if (!window._relayReady) return '';
+  const has = !!relayToken(purpose);
+  const btn = (label, tone) => `<button onclick="issueRelayAddress('${purpose}', ${reopenName})" style="width:100%; margin-top:8px; padding:10px; border:${tone ? 'none' : '0.5px solid var(--border-tertiary)'}; background:${tone ? 'var(--accent-tab, #6B5B96)' : 'var(--bg-primary)'}; color:${tone ? '#fff' : 'var(--text-secondary)'}; border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">${label}</button>`;
+  return has ? `
+        <div style="padding:11px 12px; background:var(--bg-success); border-radius:10px; font-size:11px; color:var(--text-success); line-height:1.8; margin-bottom:14px;">
+          🔐 <b>전용 주소를 쓰고 있어요.</b> 아래 주소에는 계정 번호도 만능 열쇠도 없어요.<br>
+          <span style="opacity:0.85;">주소가 남에게 보였다면 새로 받으세요 — 옛 주소는 바로 끊깁니다.</span>
+          ${btn('🔄 주소 새로 받기', false)}
+        </div>` : `
+        <div style="padding:11px 12px; background:var(--bg-info); border-radius:10px; font-size:11px; color:var(--text-info); line-height:1.8; margin-bottom:14px;">
+          🔐 <b>더 안전한 전용 주소로 바꿀 수 있어요 (권장)</b><br>
+          지금 주소에는 계정 번호와 만능 열쇠가 들어 있어요. 전용 주소는 이 연동에만 쓰이고, 새면 따로 끊을 수 있어요.<br>
+          <span style="opacity:0.85;">받은 뒤 단축어의 주소만 새것으로 바꿔 넣으면 됩니다. 바꾸기 전까지 지금 주소도 계속 됩니다.</span>
+          ${btn('🔐 전용 주소 받기', true)}
+        </div>`;
+}
+
 // 단축어에 붙여넣을 주소와 본문을 만든다
 function watchUploadRecipe(key) {
   const proj = window._fbProjectId || '';
@@ -9113,8 +9172,11 @@ function watchUploadRecipe(key) {
   // 열쇠를 주소에 같이 싣는다.
   //   본문 앞부분에도 열쇠가 있지만, 본문은 변수를 사이에 끼고 세 조각으로 붙이는 구조라
   //   하나만 옛것이어도 저장이 거부된다. 주소 하나만 다시 복사하면 되게 한다.
+  const tok = relayToken('workout');
   const url = server
-    ? `${server.replace(/\/+$/, '')}/relay/workout?uid=${encodeURIComponent(uid)}&key=${encodeURIComponent(key)}`
+    ? (tok
+      ? `${server.replace(/\/+$/, '')}/relay/workout?t=${encodeURIComponent(tok)}`
+      : `${server.replace(/\/+$/, '')}/relay/workout?uid=${encodeURIComponent(uid)}&key=${encodeURIComponent(key)}`)
     : `https://firestore.googleapis.com/v1/projects/${proj}/databases/(default)/documents/users/${uid}/workoutInbox?key=${apiKey}`;
   // 사진(base64)이 들어갈 자리를 표시해 둔다. 단축어에서 이 자리에 변수를 끼운다.
   const bodyHead = `{"fields":{"key":{"stringValue":"${key}"},"photoMime":{"stringValue":"image/jpeg"},"photo":{"stringValue":"`;
@@ -9162,13 +9224,18 @@ async function testWatchUpload() {
 async function openWatchPhotoSetup(regenerate = false) {
   const key = await ensureUploadKey(regenerate);
   if (!key) return;
+  await checkRelayReady();
   const r = watchUploadRecipe(key);
 
   const copyBtn = (label, text) =>
     `<button onclick="navigator.clipboard?.writeText(${jsString(text)}).then(()=>showToast('📋 복사했어요')).catch(()=>showToast('복사 실패'))" style="width:100%; margin-top:7px; padding:10px; border:none; background:var(--accent-tab, #6B5B96); color:white; border-radius:10px; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">${label}</button>`;
 
   // 열쇠는 화면에 그대로 띄우지 않는다. 캡처를 남에게 보여줘도 새지 않도록.
-  const maskKey = (text) => text.split(key).join('●'.repeat(12));
+  const maskKey = (text) => {
+    let out = text.split(key).join('●'.repeat(12));
+    const tok = relayToken('workout');
+    return tok ? out.split(tok).join('●'.repeat(12)) : out;
+  };
 
   const box = (text) =>
     `<pre style="white-space:pre-wrap; word-break:break-all; font-size:9.5px; line-height:1.6; padding:10px; background:var(--bg-secondary); border-radius:10px; font-family:ui-monospace,monospace; margin:0;">${escapeHTML(text)}</pre>`;
@@ -9200,6 +9267,7 @@ async function openWatchPhotoSetup(regenerate = false) {
           기록은 들어오지만 <b>앱을 열어야</b> 확인됩니다.<br>
           <span style="opacity:0.85;">설정 → 알림 에서 서버 주소를 넣으면, 도착하는 순간 알림이 오게 바뀝니다.</span>
         </div>`}
+        ${r.viaServer ? relayAddressBlock('workout', 'openWatchPhotoSetup') : ''}
 
         <div style="display:flex; gap:6px; margin-bottom:8px;">
           <button onclick="testWatchUpload()" style="flex:1; padding:12px; border:none; background:var(--accent-tab, #6B5B96); color:#fff; border-radius:10px; font-size:12.5px; font-weight:800; cursor:pointer; font-family:inherit;">🧪 연동 점검</button>
@@ -19844,7 +19912,8 @@ async function drainExpenseInbox(silent = true) {
 }
 
 // 문자 연동 안내
-function openSmsSyncGuide() {
+async function openSmsSyncGuide() {
+  await checkRelayReady();
   const base = location.origin + location.pathname;
   const sample = `${base}?sms=`;
   const proj = (window._fbProjectId || 'life-planner-a03d2');
@@ -19853,8 +19922,11 @@ function openSmsSyncGuide() {
   //   서버가 없으면 예전처럼 Firestore 직행 주소를 준다 (그 경우 토큰이 필요하다).
   const relay = pushServerUrl();
   const upKey = settings.uploadKey || '';
+  const smsTok = relayToken('expense');
   const inboxUrl = relay
-    ? `${relay.replace(/\/+$/, '')}/relay/expense?uid=${encodeURIComponent(uid)}&key=${encodeURIComponent(upKey)}`
+    ? (smsTok
+      ? `${relay.replace(/\/+$/, '')}/relay/expense?t=${encodeURIComponent(smsTok)}`
+      : `${relay.replace(/\/+$/, '')}/relay/expense?uid=${encodeURIComponent(uid)}&key=${encodeURIComponent(upKey)}`)
     : `https://firestore.googleapis.com/v1/projects/${proj}/databases/(default)/documents/users/${uid}/expenseInbox`;
 
   modal.innerHTML = `
@@ -19894,6 +19966,7 @@ function openSmsSyncGuide() {
       </div>
 
       <div style="font-size:12px; font-weight:700; margin:16px 0 8px;">앱이 안 열리게 하려면 ${relay ? '(권장)' : ''}</div>
+      ${relay ? relayAddressBlock('expense', 'openSmsSyncGuide') : ''}
       <div style="font-size:11px; color:${relay ? 'var(--text-success)' : 'var(--text-secondary)'}; line-height:1.8; padding:11px 12px; background:var(--bg-secondary); border-radius:10px;">
         ${relay ? `
           🔔 <b>알림 서버를 거쳐 갑니다.</b> 로그인 토큰이 필요 없어요.<br>
