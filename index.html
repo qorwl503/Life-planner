@@ -8783,6 +8783,7 @@ function openInboxReport() {
         </div>
 
         <button onclick="testRelayPush()" style="width:100%; padding:12px; border:none; background:var(--accent-tab, #3D8168); color:#fff; border-radius:10px; font-size:12.5px; font-weight:800; cursor:pointer; font-family:inherit; margin-bottom:7px;">🔔 서버 알림 시험</button>
+        <button onclick="openWidgetGuide()" style="width:100%; padding:12px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:10px; font-size:12.5px; font-weight:800; cursor:pointer; font-family:inherit; margin-bottom:7px;">📱 홈 화면 · 잠금화면 위젯</button>
         <div style="font-size:10.5px; color:var(--text-tertiary); text-align:center; margin-bottom:10px; line-height:1.6;">
           이 알림이 오면 앱이 꺼져 있어도 알림이 옵니다.
         </div>
@@ -30622,6 +30623,99 @@ function dayAfter(dateK, n) {
   return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
 }
 
+// 📱 위젯용 일정 — 오늘·내일의 시간 정한 할일. 알림 여부와 상관없이 다 담는다
+//   (알림은 고른 것만 오지만, 위젯은 오늘 뭐가 있는지 보는 곳이다)
+function widgetAgenda() {
+  const out = {};
+  const tk = todayKey();
+  [tk, dayAfter(tk, 1)].forEach(dayK => {
+    out[dayK] = (todos || [])
+      .filter(t => t && t.time && todoOnDay(t, dayK) && !todoDoneOn(t, dayK))
+      .sort((a, b) => String(a.time).localeCompare(String(b.time)))
+      .slice(0, 12)
+      .map(t => ({ at: String(t.time), title: String(t.title || '할일').slice(0, 30) }));
+  });
+  return out;
+}
+
+// 📱 홈 화면·잠금화면 위젯 안내.
+//   웹 앱은 iOS 위젯을 직접 못 만든다 (네이티브 앱만 된다). 그래서 Scriptable 이라는
+//   무료 앱에 스크립트를 넣고, 그 스크립트가 알림 서버에서 오늘 정리를 읽어 그린다.
+function widgetUrl() {
+  const relay = pushServerUrl();
+  const uid = (currentUser && currentUser.uid) || '';
+  const key = settings.uploadKey || '';
+  if (!relay || !uid || !key) return '';
+  return `${relay.replace(/[/]+$/, '')}/widget?uid=${encodeURIComponent(uid)}&key=${encodeURIComponent(key)}`;
+}
+
+function widgetScriptText() {
+  const src = document.getElementById('widget-script-src');
+  const url = widgetUrl();
+  if (!src || !url) return '';
+  return String(src.textContent || '').trim().replace('__WIDGET_URL__', url);
+}
+
+function openWidgetGuide() {
+  const url = widgetUrl();
+  // 서버에 일정이 올라가 있어야 위젯이 읽는다 — 열 때 한 번 올려둔다
+  try { forcePlanPush('위젯 안내'); } catch (e) {}
+
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+        <h2 style="font-size:15px;">📱 홈 화면 · 잠금화면 위젯</h2>
+        <span></span>
+      </div>
+      <div style="padding:0 16px 20px;">
+        <div style="padding:11px 12px; background:var(--bg-info); border-radius:10px; font-size:11.5px; color:var(--text-info); line-height:1.8; margin-bottom:12px;">
+          홈 화면과 잠금화면에 <b>오늘 할일 · 목표 · 다음 일정</b>이 떠요.<br>
+          <span style="opacity:0.85;">아이폰은 웹 앱에 위젯을 허용하지 않아서, 무료 앱 <b>Scriptable</b> 을 거칩니다.</span>
+        </div>
+
+        ${!url ? `
+          <div style="padding:11px 12px; background:var(--bg-danger); border-radius:10px; font-size:11.5px; color:var(--text-danger); line-height:1.7;">
+            알림 서버 주소나 열쇠가 없어요. <b>설정 → 알림</b> 에서 서버 주소를 넣고,
+            <b>워치 연동</b> 에서 열쇠를 만든 뒤 다시 열어주세요.
+          </div>` : `
+          <div style="font-size:12px; font-weight:800; margin:4px 0 8px;">1. Scriptable 설치</div>
+          <div style="font-size:11.5px; color:var(--text-secondary); line-height:1.8; margin-bottom:12px;">
+            App Store 에서 <b>Scriptable</b> 을 받으세요 (무료, 광고 없음).
+          </div>
+
+          <div style="font-size:12px; font-weight:800; margin:4px 0 8px;">2. 스크립트 붙여넣기</div>
+          <button onclick="navigator.clipboard?.writeText(widgetScriptText()).then(()=>showToast('📋 스크립트를 복사했어요')).catch(()=>showToast('복사 실패'))"
+            style="width:100%; padding:12px; border:none; background:var(--accent-tab, #3D8168); color:#fff; border-radius:10px; font-size:13px; font-weight:800; cursor:pointer; font-family:inherit; margin-bottom:8px;">
+            📋 위젯 스크립트 복사
+          </button>
+          <div style="font-size:11.5px; color:var(--text-secondary); line-height:1.8; margin-bottom:12px;">
+            Scriptable 열기 → 오른쪽 위 <b>+</b> → 붙여넣기 → 위쪽 이름을 <b>MyPlanner</b> 로 → <b>완료</b>
+          </div>
+
+          <div style="font-size:12px; font-weight:800; margin:4px 0 8px;">3. 홈 화면에 놓기</div>
+          <div style="font-size:11.5px; color:var(--text-secondary); line-height:1.8; margin-bottom:12px;">
+            홈 화면 빈 곳 길게 누르기 → 왼쪽 위 <b>+</b> → <b>Scriptable</b> → 크기 고르기 →
+            놓인 위젯을 길게 눌러 <b>위젯 편집</b> → Script 에서 <b>MyPlanner</b>
+          </div>
+
+          <div style="font-size:12px; font-weight:800; margin:4px 0 8px;">4. 잠금화면에 놓기</div>
+          <div style="font-size:11.5px; color:var(--text-secondary); line-height:1.8; margin-bottom:12px;">
+            잠금화면 길게 누르기 → <b>사용자화</b> → <b>잠금 화면</b> → 시계 아래 칸 →
+            <b>Scriptable</b> → 넓은 칸 고르기 → 눌러서 Script 에서 <b>MyPlanner</b>
+          </div>
+
+          <div style="padding:10px 12px; background:var(--bg-secondary); border-radius:10px; font-size:10.5px; color:var(--text-tertiary); line-height:1.7;">
+            위젯은 <b>30분마다</b> 새로 그려요 (iOS 가 정한 간격이라 조금 늦을 수 있어요).
+            내용은 <b>앱을 열 때</b> 갱신되고, 하루 앞서 만들어 두기 때문에 아침에 앱을 안 열어도 오늘 것이 나와요.<br>
+            스크립트에는 내 열쇠가 들어 있으니 남에게 보내지 마세요.
+          </div>`}
+      </div>
+    </div>`;
+  modal.classList.add('show');
+}
+
 // 시각을 정해둔 할일 → 서버가 그 시각에 알린다 (앱이 꺼져 있어도 온다).
 //   앞으로 2주치를 한꺼번에 올려둔다. 오늘·내일 것만 올리면 며칠 뒤 할일은
 //   그날까지 앱을 열지 않는 한 서버가 아예 모른다 — 그래서 아무 알림도 안 왔다.
@@ -30702,6 +30796,8 @@ async function pushSummaryToServer() {
         days: summaryDaysAhead(),
         // 시각을 정해둔 할일 — 서버가 그 시각에 알린다
         todoAlerts: timedTodoAlerts(),
+        // 위젯에 띄울 오늘·내일 시간 일정 (알림을 안 건 것도 포함)
+        agenda: widgetAgenda(),
         // 📊 월말 결산 — 말일 저녁에 한 번
         monthly: settings.monthlyWrap === false ? null : {
           on: lastDayOfMonth(),
@@ -33759,5 +33855,80 @@ function confirmTossSync() {
 
 </script>
 
+<!-- 📱 Scriptable 위젯 스크립트 원본. 실행되지 않는다 — '위젯 스크립트 복사' 가
+     __WIDGET_URL__ 을 내 주소로 바꿔 클립보드에 넣는다. -->
+<script type="text/plain" id="widget-script-src">
+// MyPlanner 위젯 — Scriptable 앱에 붙여넣어 쓰세요
+// 홈 화면(작게·중간·크게)과 잠금화면(넓은 칸·한 줄) 모두 됩니다.
+const URL = "__WIDGET_URL__";
+const APP = "https://qorwl503.github.io/Life-planner/";
+const fam = config.widgetFamily || "medium";
+
+let data = null;
+try {
+  const r = new Request(URL);
+  r.timeoutInterval = 10;
+  data = await r.loadJSON();
+} catch (e) {}
+
+const w = new ListWidget();
+w.url = APP;
+w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
+
+if (!data || data.error) {
+  const t = w.addText(data && data.error ? data.error : "불러오지 못했어요");
+  t.font = Font.systemFont(11);
+} else if (fam === "accessoryInline") {
+  // 잠금화면 시계 위 한 줄
+  w.addText(data.next ? "⏰ " + data.next : (data.lines[0] || "오늘 일정 없음"));
+} else if (fam.indexOf("accessory") === 0) {
+  // 잠금화면 시계 아래 칸
+  const head = w.addText(data.next ? "⏰ " + data.next : "📋 오늘");
+  head.font = Font.boldSystemFont(13);
+  head.lineLimit = 1;
+  const rest = data.agenda && data.agenda.length > 1
+    ? data.agenda.slice(1, 3).map(a => a.at + " " + a.title)
+    : data.lines.slice(0, 2);
+  for (const l of rest) {
+    const t = w.addText(l);
+    t.font = Font.systemFont(11);
+    t.lineLimit = 1;
+  }
+} else {
+  w.backgroundColor = Color.dynamic(new Color("#F4F4EE"), new Color("#1C1C1E"));
+  const ink = Color.dynamic(new Color("#1A1A1A"), new Color("#F2F2F2"));
+  const soft = Color.dynamic(new Color("#6B6B6B"), new Color("#A0A0A0"));
+
+  const title = w.addText(data.title || "📋 오늘");
+  title.font = Font.boldSystemFont(fam === "small" ? 13 : 15);
+  title.textColor = ink;
+
+  if (data.next) {
+    w.addSpacer(3);
+    const nx = w.addText("⏰ " + data.next);
+    nx.font = Font.boldSystemFont(fam === "small" ? 11 : 12);
+    nx.textColor = new Color("#3D8168");
+    nx.lineLimit = 1;
+  }
+
+  w.addSpacer(4);
+  const max = fam === "small" ? 4 : fam === "medium" ? 6 : 16;
+  for (const l of data.lines.slice(0, max)) {
+    const t = w.addText(l);
+    t.font = Font.systemFont(fam === "small" ? 10 : 11);
+    t.textColor = ink;
+    t.lineLimit = 1;
+  }
+
+  w.addSpacer();
+  const foot = w.addText("업데이트 " + (data.updated || ""));
+  foot.font = Font.systemFont(8);
+  foot.textColor = soft;
+}
+
+if (config.runsInWidget) Script.setWidget(w);
+else await w.presentMedium();
+Script.complete();
+</script>
 </body>
 </html>

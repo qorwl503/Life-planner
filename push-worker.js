@@ -40,9 +40,9 @@
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
 // 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
-const WORKER_VERSION = '2026-11-19.2';
+const WORKER_VERSION = '2026-11-20.1';
 const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
-  '/push/plan', '/push/status', '/relay/workout', '/relay/expense', '/relay/ping', '/version'];
+  '/push/plan', '/push/status', '/relay/workout', '/relay/expense', '/relay/ping', '/widget', '/version'];
 
 let ENV = null;
 
@@ -63,6 +63,7 @@ export default {
       // 주소창(GET)으로도 열 수 있게 둔다 — 배포가 됐는지 눈으로 확인하는 용도
       if (url.pathname === '/relay/ping') return await handleRelayPing(request, env);
       if (url.pathname === '/version') return json({ version: WORKER_VERSION, routes: ROUTE_LIST });
+      if (url.pathname === '/widget' && request.method === 'GET') return await handleWidget(env, url);
       if (url.pathname.startsWith('/ai/') && request.method === 'POST') return await handleAI(request, env, url);
       if (url.pathname === '/push/status') return await handleStatus(request, env, url);
     } catch (e) {
@@ -665,6 +666,48 @@ async function handleRelayWorkout(request, env, url) {
 
 
 // 앱이 '언제 무슨 내용으로 보낼지'를 넣어둔다
+// 📱 홈 화면·잠금화면 위젯이 읽는 곳 (Scriptable 앱의 스크립트가 부른다).
+//   앱이 올려둔 '오늘 정리' 와 시간 일정을 짧게 내준다.
+//   웹 앱은 iOS 위젯을 직접 못 만들어서, 위젯 앱이 이 주소를 읽어 그린다.
+async function handleWidget(env, url) {
+  const uid = String(url.searchParams.get('uid') || '');
+  const key = String(url.searchParams.get('key') || '');
+  if (!/^[A-Za-z0-9_-]{8,128}$/.test(uid) || !key) return json({ error: '주소가 올바르지 않아요' }, 400);
+  if (!env.PUSH_KV) return json({ error: '서버 저장소가 없어요' }, 500);
+
+  const raw = await env.PUSH_KV.get(planKey(uid));
+  if (!raw) return json({ error: '앱을 한 번 열어주세요' }, 404);
+  let plan;
+  try { plan = JSON.parse(raw); } catch (e) { return json({ error: '저장된 내용이 깨졌어요' }, 500); }
+
+  // 열쇠가 다르면 아무것도 안 준다 (내용이 개인 일정이다)
+  if (!plan.widgetKey || plan.widgetKey !== key) return json({ error: '열쇠가 맞지 않아요. 앱에서 위젯 스크립트를 다시 복사해주세요' }, 403);
+
+  const now = kstNow();
+  const forToday = (plan.days || []).find(d => d && d.builtFor === now.date);
+  const body = forToday ? forToday.body
+    : (String(plan.builtFor || '') === now.date ? plan.body : '');
+  const lines = String(body || '').split('\n').map(x => x.trim()).filter(Boolean);
+
+  // 다음 일정 — 지금 이후로 가장 이른 것
+  const hhmm = `${String(Math.floor(now.minutes / 60)).padStart(2, '0')}:${String(now.minutes % 60).padStart(2, '0')}`;
+  const today = ((plan.agenda || {})[now.date] || []).filter(a => a && a.at && a.title);
+  const upcoming = today.filter(a => String(a.at) >= hhmm).sort((a, b) => String(a.at).localeCompare(String(b.at)));
+
+  const saved = Number(plan.savedAt) || 0;
+  const t = new Date(saved + 9 * 60 * 60 * 1000);
+  const updated = saved ? `${t.getUTCMonth() + 1}/${t.getUTCDate()} ${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}` : '';
+
+  return json({
+    date: now.date,
+    title: '📋 오늘',
+    lines: lines.length ? lines : ['앱을 열면 오늘 내용이 채워져요'],
+    next: upcoming.length ? `${upcoming[0].at} ${upcoming[0].title}` : '',
+    agenda: today.slice(0, 8),
+    updated,
+  });
+}
+
 async function handlePlan(request, env) {
   const body = await request.json().catch(() => ({}));
   const who = await requireUser(request, env, body);
@@ -711,6 +754,11 @@ async function handlePlan(request, env) {
     todoAlerts,
     monthly,
     sentMonthly: (old && old.sentMonthly) || '',  // 보낸 달 (YYYY-MM)
+    // 📱 위젯이 읽을 때 대조할 열쇠. 위젯 주소는 내용을 그대로 내주므로,
+    //    uid 만 안다고 남의 할일을 볼 수 있으면 안 된다 — 앱이 쓴 열쇠와 맞아야 준다.
+    widgetKey: /^[0-9a-f]{16,128}$/.test(String(body.key || '')) ? String(body.key) : ((old && old.widgetKey) || ''),
+    // 위젯에 띄울 날짜별 시간 일정 { 'YYYY-MM-DD': [{at, title}] }
+    agenda: (body.agenda && typeof body.agenda === 'object') ? body.agenda : {},
     sentTodo: (old && old.sentTodo) || {},        // 이미 보낸 할일 알림 (중복 방지)
     tag: body.tag || 'daily-summary',
     savedAt: Date.now(),
