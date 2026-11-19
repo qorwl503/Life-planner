@@ -40,7 +40,7 @@
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
 // 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
-const WORKER_VERSION = '2026-11-20.4';
+const WORKER_VERSION = '2026-11-20.5';
 const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
   '/push/plan', '/push/status', '/relay/workout', '/relay/expense', '/relay/ping', '/widget', '/version'];
 
@@ -310,14 +310,15 @@ async function bodyIdentity(env, body) {
   if (!/^[A-Za-z0-9_-]{8,128}$/.test(uid)) return null;
   if (!/^[0-9a-f]{16,128}$/.test(key)) return null;
 
+  // 열쇠가 정말 그 사람 것으로 확인될 때만 통과한다. 확인을 못 하면(규칙·네트워크) 거절.
+  //   예전엔 확인 못 해도 통과시켰는데, 그러면 uid 만 알면 남의 알림을 조작할 수 있었다.
+  //   앱은 이제 로그인 토큰으로 들어오므로(2026-11-19 확인) 이 길이 막혀도 알림은 안 끊긴다.
   const v = await keyBelongsTo(env, uid, key);
-  if (v === 'no') return null;
-  if (v === 'unknown') {
-    // Firestore 규칙을 아직 안 바꿨으면 대조를 못 한다. 그동안은 예전처럼 통과시켜
-    // 멀쩡한 알림이 끊기지 않게 한다 — 규칙을 올리는 순간 자동으로 엄격해진다.
-    console.log('열쇠 대조 못 함 (규칙 확인 필요):', uid);
+  if (v !== 'ok') {
+    if (v === 'unknown') console.log('열쇠 대조 못 해서 거절:', uid.slice(0, 6));
+    return null;
   }
-  return { uid, email: '', emailVerified: true, viaKey: true, keyChecked: v === 'ok' };
+  return { uid, email: '', emailVerified: true, viaKey: true, keyChecked: true };
 }
 
 // 본문의 key 가 INBOX_TOKEN 과 같으면 주인으로 본다. 아니면 null.
