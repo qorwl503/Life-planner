@@ -9220,10 +9220,9 @@ function relayAddressBlock(purpose, reopenName) {
           ${btn('🔄 주소 새로 받기', false)}
         </div>` : `
         <div style="padding:11px 12px; background:var(--bg-info); border-radius:10px; font-size:11px; color:var(--text-info); line-height:1.8; margin-bottom:14px;">
-          🔐 <b>더 안전한 전용 주소로 바꿀 수 있어요 (권장)</b><br>
-          지금 주소에는 계정 번호와 만능 열쇠가 들어 있어요. 전용 주소는 이 연동에만 쓰이고, 새면 따로 끊을 수 있어요.<br>
-          <span style="opacity:0.85;">받은 뒤 단축어의 주소만 새것으로 바꿔 넣으면 됩니다. 바꾸기 전까지 지금 주소도 계속 됩니다.</span>
-          ${btn('🔐 전용 주소 받기', true)}
+          🔐 <b>지금 주소 그대로 쓰셔도 돼요.</b> 서버가 열쇠를 확인한 뒤 저장합니다.<br>
+          <span style="opacity:0.85;">혹시 주소가 남에게 보였다면 전용 주소로 바꾸세요 — 이 연동에만 쓰이고, 새면 따로 끊을 수 있어요.</span>
+          ${btn('🔐 전용 주소로 바꾸기 (선택)', false)}
         </div>`;
 }
 

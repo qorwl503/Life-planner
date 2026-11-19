@@ -40,7 +40,7 @@
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
 // 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
-const WORKER_VERSION = '2026-11-20.9';
+const WORKER_VERSION = '2026-11-20.10';
 const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
   '/push/plan', '/push/status', '/relay/workout', '/relay/expense', '/relay/ping', '/widget', '/version', '/keys/status', '/keys/issue', '/keys/revoke', '/account/delete'];
 
@@ -469,7 +469,8 @@ async function handleAccountDelete(request, env) {
     if (h) await del('rt:' + h);
     await del(slot);
   }
-  for (const k of [subsKey(uid), planKey(uid), 'ukey:' + uid, 'authlast:' + uid]) await del(k);
+  for (const k of [subsKey(uid), planKey(uid), 'ukey:' + uid, 'authlast:' + uid,
+    'relaylast:' + uid + ':workout', 'relaylast:' + uid + ':expense']) await del(k);
   // 열쇠 확인 캐시 (앞부분이 uid 인 것만)
   let cursor;
   do {
@@ -647,6 +648,23 @@ function jsonSlice(raw) {
   return stripBreaks((a >= 0 && b > a) ? text.slice(a, b + 1) : text);
 }
 
+// 예전 주소(uid + 열쇠)로 왔어도, 그 열쇠가 그 사람 것으로 확인되면 서버 출입증으로 쓴다.
+//   이러면 단축어를 하나도 안 바꿔도 Firestore 의 '로그인 없이 쓰기' 를 닫을 수 있다.
+//   확인이 안 되면 예전처럼 규칙에 맡긴다 (규칙을 닫은 뒤엔 그대로 거부된다).
+async function legacyKeyOk(env, uid, key) {
+  if (!env.FIREBASE_SA || !uid || !key) return false;
+  try { return (await keyBelongsTo(env, uid, key)) === 'ok'; } catch (e) { return false; }
+}
+
+// 어느 길로 저장됐는지 사람·용도별로 남긴다 — 규칙을 닫아도 되는지 확인하려고
+async function noteRelay(env, uid, purpose, via, ok) {
+  if (!env.PUSH_KV || !uid) return;
+  try {
+    await env.PUSH_KV.put('relaylast:' + uid + ':' + purpose,
+      JSON.stringify({ via, ok: !!ok, at: new Date().toISOString() }), { expirationTtl: 60 * 86400 });
+  } catch (e) {}
+}
+
 // 💳 카드 문자 중계 — 단축어가 '메시지 받았을 때' 로 보낸 문자를 수신함에 쌓는다.
 //   워치 중계와 같은 구조다. 로그인 토큰 없이 uid + 열쇠로 신분을 증명하고,
 //   Firestore 규칙이 그 열쇠를 uploadKeys 로 대조한다.
@@ -664,6 +682,7 @@ async function handleRelayExpense(request, env, url) {
   const keyFromUrl = viaToken ? 'relay' : ((url && url.searchParams.get('key')) || '');
   let uid = uidFromUrl || env.MY_UID || '';
   if (!uid) return json({ error: '주소에 uid 가 없어요. 앱에서 주소를 다시 복사해 넣어주세요' }, 400);
+  const useAdmin = !!viaToken || (await legacyKeyOk(env, uid, keyFromUrl));
 
   // 문자는 본문으로도, 주소(?text=)로도 올 수 있다 — 단축어 설정이 사람마다 다르다
   let text = '';
@@ -687,7 +706,7 @@ async function handleRelayExpense(request, env, url) {
   });
 
   const target = `https://firestore.googleapis.com/v1/projects/${proj}/databases/(default)/documents/users/${uid}/expenseInbox?key=${apiKey}`;
-  const res = viaToken
+  const res = useAdmin
     ? await adminInboxWrite(env, uid, 'expenseInbox', body)
     : await fetch(target, {
       method: 'POST',
@@ -695,6 +714,7 @@ async function handleRelayExpense(request, env, url) {
       body,
     });
 
+  await noteRelay(env, uid, 'expense', viaToken ? 'token' : (useAdmin ? 'key-admin' : 'rules'), res.ok);
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
     const why = res.status === 403
@@ -740,6 +760,9 @@ async function handleRelayWorkout(request, env, url) {
   }
   const uidFromUrl = viaToken ? viaToken.uid : ((url && url.searchParams.get('uid')) || '');
   let uid = uidFromUrl || env.MY_UID || '';
+  const legacyKey = (url && url.searchParams.get('key'))
+    || (parsed && parsed.fields && parsed.fields.key && parsed.fields.key.stringValue) || '';
+  let useAdmin = !!viaToken || (await legacyKeyOk(env, uid, legacyKey));
   if (!uid) {
     return json({ error: '누구의 기록인지 알 수 없어요. 앱에서 알림을 한 번 켜주시거나, 워치 연동 설정에서 주소를 다시 복사해주세요' }, 400);
   }
@@ -777,7 +800,7 @@ async function handleRelayWorkout(request, env, url) {
       //   주소 하나만 다시 복사하면 되도록 여기서 갈아 끼운다.
       const keyFromUrl = (url && url.searchParams.get('key')) || '';
       if (keyFromUrl) parsed.fields.key = { stringValue: keyFromUrl };
-      if (viaToken) {
+      if (useAdmin) {
         // 서버 출입증으로 쓰면 규칙의 허용 목록이 적용되지 않는다 — 여기서 똑같이 걸러낸다
         parsed.fields.key = { stringValue: 'relay' };
         for (const k of Object.keys(parsed.fields)) {
@@ -816,8 +839,11 @@ async function handleRelayWorkout(request, env, url) {
     } catch (e) { /* 못 고치면 벗긴 원본 그대로 보낸다 */ }
   }
 
-  if (viaToken && !parsed) return json({ error: '보낸 내용을 읽지 못했어요. 단축어 본문을 확인해주세요' }, 400);
-  const res = viaToken
+  if (useAdmin && !parsed) {
+    if (viaToken) return json({ error: '보낸 내용을 읽지 못했어요. 단축어 본문을 확인해주세요' }, 400);
+    useAdmin = false;   // 예전 주소면 예전처럼 규칙에 맡긴다
+  }
+  const res = useAdmin
     ? await adminInboxWrite(env, uid, 'workoutInbox', outBody)
     : await fetch(endpoint, {
       method: 'POST',
@@ -825,6 +851,7 @@ async function handleRelayWorkout(request, env, url) {
       body: outBody,
     });
 
+  await noteRelay(env, uid, 'workout', viaToken ? 'token' : (useAdmin ? 'key-admin' : 'rules'), res.ok);
   if (!res.ok) {
     const detail = await res.text();
     // 왜 거부됐는지 짐작할 수 있게 실제로 쓴 값들을 같이 돌려준다
@@ -860,7 +887,7 @@ async function handleRelayWorkout(request, env, url) {
     //   단, 열쇠가 정말 그 사람 것일 때만 — 아니면 uid 만 아는 누구나 알림을 쏠 수 있다.
     let sos = { sent: 0 };
     try {
-      if (viaToken || (usedKey && (await keyBelongsTo(env, uid, usedKey)) === 'ok')) sos = await sendToUser(env, uid, {
+      if (useAdmin || (usedKey && (await keyBelongsTo(env, uid, usedKey)) === 'ok')) sos = await sendToUser(env, uid, {
         title: '⌚ 운동 기록 도착',
         body: tooBig
           ? '사진이 너무 커서 저장은 못 했어요. 앱에서 직접 넣어주세요.'
