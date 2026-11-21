@@ -2107,7 +2107,16 @@ function videoSkeleton(n = 3) {
 }
 
 // ===== 디버그/진단/점검 도구 =====
-const APP_VERSION = '2026.06.17';
+// 앱 버전 — 예전엔 손으로 적어서 6월에 멈춰 있었다.
+//   GitHub Pages 가 알려주는 '파일이 올라간 시각' 을 쓴다. 새로 올릴 때마다 저절로 바뀐다.
+const APP_VERSION = (() => {
+  try {
+    const d = new Date(document.lastModified);
+    if (isNaN(d) || d.getFullYear() < 2024) return '2026.11.21';
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  } catch (e) { return '2026.11.21'; }
+})();
 const DEBUG_MODE = (() => { try { return localStorage.getItem('lp_debug') === '1'; } catch (e) { return false; } })();
 function debugLog(...args) { if (DEBUG_MODE) console.log('[LP]', ...args); }
 function debugWarn(...args) { if (DEBUG_MODE) console.warn('[LP]', ...args); }
@@ -31293,6 +31302,18 @@ function openSettingsModal() {
           <div style="flex:1;">
             <div style="font-size:13px; font-weight:600;">알림</div>
             <div style="font-size:11px; color:var(--text-tertiary); margin-top:1px;">${pushStatusText()}</div>
+          </div>
+          <i class="ti ti-chevron-right" style="color:var(--text-tertiary);"></i>
+        </div>
+      </button>
+
+      <!-- 📱 위젯 -->
+      <button onclick="closeModal(); setTimeout(()=>openWidgetGuide(),100);" style="width:100%; padding:14px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); border-radius:var(--radius-md); cursor:pointer; font-family:inherit; text-align:left; margin-bottom:10px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-size:20px;">📱</span>
+          <div style="flex:1;">
+            <div style="font-size:13px; font-weight:600;">위젯</div>
+            <div style="font-size:11px; color:var(--text-tertiary); margin-top:1px;">홈 화면·잠금화면에 오늘 할 일 · 눌러서 체크</div>
           </div>
           <i class="ti ti-chevron-right" style="color:var(--text-tertiary);"></i>
         </div>
