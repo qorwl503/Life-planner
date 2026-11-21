@@ -8571,7 +8571,39 @@ function widgetData() {
     const rows = (budget?.expenses || []).filter(e => e.dateKey === tk && countsAsLiving(e));
     out.spent = Math.max(0, rows.reduce((n, e) => n + livingAmount(e), 0));
     const b = livingBudgetNow();
-    if (b && b.total > 0) out.living = { left: b.left, perDay: b.perDay, daysLeft: b.daysLeft };
+    if (b && b.total > 0) out.living = { left: b.left, perDay: b.perDay, daysLeft: b.daysLeft, total: b.total, spent: b.spent };
+  } catch (e) {}
+  // 📅 이번 주 일정 — 내일부터 7일. 반복 루틴은 매일 떠서 목록을 덮으므로 뺀다.
+  try {
+    const DOW = ['일', '월', '화', '수', '목', '금', '토'];
+    const up = [];
+    for (let i = 1; i <= 7 && up.length < 10; i++) {
+      const dk = dayAfter(tk, i);
+      const d = new Date(dk + 'T00:00:00');
+      (todos || [])
+        .filter(t => t && !(t.repeat && t.repeat.type) && todoOnDay(t, dk) && !todoDoneOn(t, dk) && !todoSkippedOn(t, dk))
+        // 기간 일정은 첫날에만
+        .filter(t => !t.endDateKey || t.dateKey === dk || i === 1)
+        .sort((a, b) => String(a.time || '99').localeCompare(String(b.time || '99')))
+        .forEach(t => {
+          if (up.length >= 10) return;
+          up.push({ d: (d.getMonth() + 1) + '/' + d.getDate(), w: DOW[d.getDay()], at: t.time ? String(t.time) : '', t: String(t.title || '할일').slice(0, 40), n: i });
+        });
+    }
+    out.upcoming = up;
+  } catch (e) {}
+  // 📈 자산 — 순자산과 지난달 대비
+  try {
+    const nw = netWorth();
+    if (nw && (nw.total > 0 || nw.debt > 0)) {
+      const snaps = settings.assetSnapshots || {};
+      const now = new Date();
+      const pd = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const prev = snaps[`${pd.getFullYear()}-${String(pd.getMonth() + 1).padStart(2, '0')}`];
+      const prevNet = prev ? (prev.net != null ? Number(prev.net) : Number(prev.total || 0)) : null;
+      out.asset = { net: Math.round(nw.net), total: Math.round(nw.total), debt: Math.round(nw.debt),
+        diff: (prevNet != null && isFinite(prevNet)) ? Math.round(nw.net - prevNet) : null };
+    }
   } catch (e) {}
   try {
     const g = getMonthlyGoals() || [];
@@ -34298,14 +34330,40 @@ const won = (n) => Math.round(Number(n) || 0).toLocaleString() + "원";
 const runUrl = (q) => "scriptable:///run/" + ME + (q ? "?" + q : "");
 const todosOf = (d) => (d && Array.isArray(d.todos)) ? d.todos : null;
 
+// 1만 원이 넘으면 '만' 단위로 (위젯 칸이 좁다)
+function man(n) {
+  const v = Math.abs(Number(n) || 0);
+  return v >= 10000 ? Math.round(v / 10000).toLocaleString() + "만" : Math.round(v).toLocaleString() + "원";
+}
+
 function stats(d) {
   const out = [];
   if (d.count && d.count.total) out.push("✅ " + d.count.done + "/" + d.count.total);
   if (d.workout) out.push(d.workout.done ? "💪 " + (d.workout.min ? d.workout.min + "분" : "함") : "💪 아직");
-  if (d.living) out.push("💰 하루 " + won(d.living.perDay));
-  else if (d.spent) out.push("💰 오늘 " + won(d.spent));
   if (d.goals && d.goals.total) out.push("🎯 " + d.goals.done + "/" + d.goals.total);
   return out.join("  ");
+}
+
+function moneyLine(d, short) {
+  const L = d.living;
+  if (L && L.total) {
+    if (L.left >= 0) return short ? "💰 " + man(L.left) + " 남음" : "💰 남은 생활비 " + man(L.left) + " · 하루 " + man(L.perDay);
+    return short ? "💰 " + man(-L.left) + " 초과" : "💰 생활비 " + man(-L.left) + " 초과 (" + L.daysLeft + "일 남음)";
+  }
+  if (d.spent) return "💰 오늘 " + man(d.spent) + " 씀";
+  return "";
+}
+
+function assetLine(d, short) {
+  const A = d.asset;
+  if (!A) return "";
+  let s = (short ? "📈 " : "📈 순자산 ") + (A.net < 0 ? "−" : "") + man(A.net);
+  if (!short && A.diff != null && Math.abs(A.diff) >= 10000) s += " (지난달 " + (A.diff > 0 ? "+" : "−") + man(A.diff) + ")";
+  return s;
+}
+
+function upLine(u) {
+  return (u.n === 1 ? "내일" : u.w + " " + u.d) + " " + (u.at ? u.at + " " : "") + u.t;
 }
 
 function todoLine(t) {
@@ -34373,7 +34431,7 @@ function buildWidget(d, fam) {
     nx.textColor = green;
     nx.lineLimit = 1;
   }
-  if (list && !small) {
+  if (list && fam === "large" && stats(d)) {
     w.addSpacer(2);
     const st = w.addText(stats(d));
     st.font = Font.systemFont(10);
@@ -34391,12 +34449,14 @@ function buildWidget(d, fam) {
       t.lineLimit = 1;
     }
   } else {
-    const max = small ? 4 : fam === "medium" ? 4 : 12;
+    // 아래에 일정·생활비·자산 줄이 들어가므로 할 일은 크기별로 몇 줄만
+    const max = small ? 2 : fam === "medium" ? (d.next ? 2 : 3) : 6;
     const show = fam === "large" ? list.slice(0, max) : left.slice(0, max);
     if (!show.length) {
       const t = w.addText(list.length ? "오늘 할 일 다 했어요 🎉" : "오늘 할 일이 없어요");
-      t.font = Font.systemFont(12);
+      t.font = Font.systemFont(small ? 10.5 : 12);
       t.textColor = soft;
+      w.addSpacer(small ? 2 : 4);
     }
     for (const it of show) {
       const row = w.addStack();
@@ -34416,12 +34476,38 @@ function buildWidget(d, fam) {
       m.font = Font.systemFont(9);
       m.textColor = soft;
     }
+
+    // 📅 이번 주 · 💰 생활비 · 📈 자산
+    const ups = d.upcoming || [];
+    const extra = [];
+    if (fam === "large") {
+      if (ups.length) extra.push({ text: "📅 이번 주", bold: true });
+      for (const u of ups.slice(0, 5)) extra.push({ text: "  " + upLine(u) });
+    } else if (fam === "medium" && ups.length) {
+      extra.push({ text: "📅 " + upLine(ups[0]) });
+    }
+    const money = moneyLine(d, small);
+    if (money) extra.push({ text: money, warn: d.living && d.living.left < 0 });
+    const asset = assetLine(d, small);
+    if (asset) extra.push({ text: asset });
+    if (fam === "large" && d.goals && d.goals.total) extra.push({ text: "🎯 이달 목표 " + d.goals.done + "/" + d.goals.total });
+
+    if (extra.length) w.addSpacer(small ? 3 : 5);
+    for (const x of extra) {
+      const t = w.addText(x.text);
+      t.font = x.bold ? Font.boldSystemFont(small ? 10 : 11) : Font.systemFont(small ? 10 : 11);
+      t.textColor = x.warn ? new Color("#C0392B") : ink;
+      t.lineLimit = 1;
+      w.addSpacer(small ? 1 : 2);
+    }
   }
 
   w.addSpacer();
-  const foot = w.addText(small ? "누르면 열려요" : "줄을 누르면 체크 · 업데이트 " + (d.updated || ""));
-  foot.font = Font.systemFont(8);
-  foot.textColor = soft;
+  if (fam !== "medium") {
+    const foot = w.addText(small ? "누르면 열려요" : "줄을 누르면 체크 · 업데이트 " + (d.updated || ""));
+    foot.font = Font.systemFont(8);
+    foot.textColor = soft;
+  }
   return w;
 }
 
@@ -34505,6 +34591,47 @@ async function showApp(d, banner) {
       render();
     };
     table.addRow(add);
+
+    const section = (title) => {
+      const r = new UITableRow();
+      r.isHeader = true;
+      r.height = 38;
+      const c = r.addText(title);
+      c.titleFont = Font.boldSystemFont(15);
+      table.addRow(r);
+    };
+    const ups = d.upcoming || [];
+    if (ups.length) {
+      section("📅 이번 주");
+      for (const u of ups) {
+        const r = new UITableRow();
+        r.height = 44;
+        const c = r.addText(u.t, (u.n === 1 ? "내일" : u.w + "요일 " + u.d) + (u.at ? " · " + u.at : ""));
+        c.subtitleColor = soft;
+        table.addRow(r);
+      }
+    }
+    const money = moneyLine(d, false), asset = assetLine(d, false);
+    if (money || asset) {
+      section("💰 돈");
+      if (money) {
+        const r = new UITableRow();
+        r.height = 50;
+        const L = d.living;
+        const c = r.addText(money.replace("💰 ", ""), L && L.total ? "이번 달 목표 " + man(L.total) + " · 쓴 돈 " + man(L.spent) + " · " + L.daysLeft + "일 남음" : "");
+        if (L && L.left < 0) c.titleColor = new Color("#C0392B");
+        c.subtitleColor = soft;
+        table.addRow(r);
+      }
+      if (asset) {
+        const r = new UITableRow();
+        r.height = 50;
+        const A = d.asset;
+        const c = r.addText(asset.replace("📈 ", ""), "자산 " + man(A.total) + (A.debt ? " · 부채 " + man(A.debt) : ""));
+        c.subtitleColor = soft;
+        table.addRow(r);
+      }
+    }
 
     if (d.goals && d.goals.items && d.goals.items.length) {
       const g = new UITableRow();
