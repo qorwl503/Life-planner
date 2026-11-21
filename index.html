@@ -2222,6 +2222,7 @@ function render() {
       window._lastInboxCheck = Date.now();
       try { drainWorkoutInbox(true); } catch (e) { console.warn('운동 수신함 처리 실패:', e); }
       try { drainExpenseInbox(true); } catch (e) { console.warn('가계부 수신함 처리 실패:', e); }
+      try { drainTodoInbox(); } catch (e) { console.warn('위젯 수신함 처리 실패:', e); }
       try { setupInboxWatch(); } catch (e) {}
       try { clearSeenNotifications(); } catch (e) {}
       try { setupTodoAlarmWatch(); } catch (e) {}
@@ -5420,6 +5421,7 @@ function toggleTodo(id, e, dayK) {
         showToast(`"${t.title}" 완료! 🔁`);
       }
       saveData();
+      widgetRefreshSoon();
       renderTodo();
       return;
     }
@@ -5431,6 +5433,7 @@ function toggleTodo(id, e, dayK) {
       delete t.completedAt;
     }
     saveData();
+    widgetRefreshSoon();
     showToast(t.done ? `"${t.title}" 완료!` : `미완료로 복구됨`);
   }
   renderTodo();
@@ -8537,8 +8540,116 @@ function refreshSummaryPlan(why) {
 
 // 할일을 고치면 바로 올린다. 10분 잠금에 걸려 안 올라가면 그 사이에 잡아둔
 // 시각이 지나가 알림을 놓친다 — 시간을 정해둔 할일에서는 치명적이다.
+// 📱 위젯에 띄울 오늘 것 — 할일(체크 여부 포함)·운동·생활비·목표
+function widgetData() {
+  const tk = todayKey();
+  const out = { date: tk, todos: [] };
+  try {
+    out.todos = (todos || [])
+      .filter(t => t && todoOnDay(t, tk) && !todoSkippedOn(t, tk))
+      .map(t => ({
+        id: String(t.id), t: String(t.title || '할일').slice(0, 60),
+        at: t.time ? String(t.time) : '', done: todoDoneOn(t, tk), rep: !!(t.repeat && t.repeat.type),
+      }))
+      .sort((a, b) => (a.done - b.done) || String(a.at || '99').localeCompare(String(b.at || '99')))
+      .slice(0, 40);
+  } catch (e) {}
+  try {
+    const log = (workoutLog || {})[tk];
+    out.workout = { done: !!(log && log.done), min: Number(log && log.minutes) || 0 };
+  } catch (e) {}
+  try {
+    const rows = (budget?.expenses || []).filter(e => e.dateKey === tk && countsAsLiving(e));
+    out.spent = Math.max(0, rows.reduce((n, e) => n + livingAmount(e), 0));
+    const b = livingBudgetNow();
+    if (b && b.total > 0) out.living = { left: b.left, perDay: b.perDay, daysLeft: b.daysLeft };
+  } catch (e) {}
+  try {
+    const g = getMonthlyGoals() || [];
+    if (g.length) out.goals = { done: g.filter(x => x.done).length, total: g.length, items: g.filter(x => !x.done).slice(0, 3).map(x => String(x.text || '').slice(0, 40)) };
+  } catch (e) {}
+  return out;
+}
+
+// 할일을 체크하면 위젯도 곧 바뀌게 — 여러 번 눌러도 한 번만 올린다
+function widgetRefreshSoon() {
+  if (!settings.widgetUsed) return;
+  clearTimeout(window._widgetPushTimer);
+  window._widgetPushTimer = setTimeout(() => {
+    try { pushSummaryToServer(); } catch (e) {}
+  }, 4000);
+}
+
+// ✅ 위젯·Scriptable 에서 누른 체크·추가를 앱에 반영한다.
+//   서버는 할일 목록을 직접 못 고친다 (앱이 통째로 저장해서 서로 덮어쓸 수 있다).
+//   그래서 '이렇게 해달라' 가 수신함에 쌓이고, 여기서 하나씩 반영한 뒤 지운다.
+const TODO_INBOX = 'todoInbox';
+
+function applyWidgetTodoOp(it) {
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(it.date || '')) ? it.date : todayKey();
+  if (it.op === 'add') {
+    const text = String(it.text || '').trim().slice(0, 60);
+    if (!text) return false;
+    const wid = String(it.id || '');
+    if ((todos || []).some(t => String(t.fromWidget || '') === wid)) return false;   // 이미 넣음
+    const time = /^\d{2}:\d{2}$/.test(String(it.time || '')) ? it.time : '';
+    todos.unshift({
+      id: Date.now() + Math.floor(Math.random() * 1000), title: text, tag: '업무', dateKey: date,
+      flag: false, priority: 3, subtasks: [], time, memo: '', done: false,
+      alarmBefore: -1, fromWidget: wid,
+    });
+    return true;
+  }
+  const t = (todos || []).find(x => String(x.id) === String(it.id));
+  if (!t) return false;
+  const want = it.op === 'done';
+  if (t.repeat && t.repeat.type) {
+    if (!t.doneDates) t.doneDates = {};
+    if (want && !t.doneDates[date]) { t.doneDates[date] = Number(it.at) || Date.now(); return true; }
+    if (!want && t.doneDates[date]) { delete t.doneDates[date]; return true; }
+    return false;
+  }
+  if (want && !t.done) { t.done = true; t.completedAt = Number(it.at) || Date.now(); return true; }
+  if (!want && t.done) { t.done = false; delete t.completedAt; return true; }
+  return false;
+}
+
+async function drainTodoInbox() {
+  if (!photosReady()) return 0;
+  await waitForCloudLoad();
+  let snap;
+  try {
+    const { collection, getDocs, db } = window._fb;
+    snap = await getDocs(collection(db, 'users', currentUser.uid, TODO_INBOX));
+  } catch (e) { console.warn('위젯 수신함 읽기 실패:', e); return 0; }
+
+  const picked = [];
+  snap.forEach(d => picked.push({ id_: d.id, ...(d.data() || {}) }));
+  if (!picked.length) return 0;
+  picked.sort((a, b) => (Number(a.at) || 0) - (Number(b.at) || 0));   // 누른 순서대로
+
+  let changed = 0, lastAt = Number(settings.todoInboxDrainedAt) || 0;
+  for (const it of picked) {
+    try { if (applyWidgetTodoOp(it)) changed++; } catch (e) { console.warn('위젯 체크 반영 실패:', e); }
+    lastAt = Math.max(lastAt, Number(it.at) || 0);
+    try {
+      const { deleteDoc, doc, db } = window._fb;
+      await deleteDoc(doc(db, 'users', currentUser.uid, TODO_INBOX, it.id_));
+    } catch (e) { console.warn('위젯 수신함 정리 실패:', e); }
+  }
+  settings.todoInboxDrainedAt = lastAt;
+  saveData();
+  if (changed) {
+    showToast(`📱 위젯에서 한 것 ${changed}건 반영했어요`);
+    if (currentTab === 'todo') renderTodo();
+    if (currentTab === 'calendar') renderCalendar();
+  }
+  try { pushSummaryToServer(); } catch (e) {}
+  return changed;
+}
+
 function forcePlanPush(why) {
-  if (!settings.pushEnabled) return;
+  if (!settings.pushEnabled && !settings.widgetUsed) return;
   window._lastPlanPush = Date.now();
   try { pushSummaryToServer(); } catch (e) { console.warn('할일 알림 올리기 실패(' + why + '):', e); }
 }
@@ -8735,6 +8846,7 @@ function setupInboxWatch() {
     window._lastInboxCheck = now;
     try { drainWorkoutInbox(true); } catch (e) { console.warn('수신함 확인 실패(' + why + '):', e); }
     try { drainExpenseInbox(true); } catch (e) {}
+    try { drainTodoInbox(); } catch (e) {}
     try { refreshSummaryPlan(why); } catch (e) {}
     try { clearSeenNotifications(); } catch (e) {}
   };
@@ -29761,7 +29873,7 @@ function openAccountModal() {
 // 지울 곳: Firestore 하위 컬렉션 → 본문서 → uploadKeys → 푸시 구독 → 이 기기 저장분 → 로그인 계정
 
 // 계정에 딸린 Firestore 하위 컬렉션들 (사진·수신함·AI 키)
-const USER_SUBCOLLECTIONS = ['workoutPhotos', 'workoutInbox', 'expenseInbox', 'config'];
+const USER_SUBCOLLECTIONS = ['workoutPhotos', 'workoutInbox', 'expenseInbox', 'todoInbox', 'config'];
 
 function openDeleteAccount() {
   const email = currentUser?.email || '';
@@ -30906,6 +31018,7 @@ function widgetScriptText() {
 }
 
 function openWidgetGuide() {
+  if (!settings.widgetUsed) { settings.widgetUsed = true; saveData(); }
   const url = widgetUrl();
   // 서버에 일정이 올라가 있어야 위젯이 읽는다 — 열 때 한 번 올려둔다
   try { forcePlanPush('위젯 안내'); } catch (e) {}
@@ -30920,7 +31033,8 @@ function openWidgetGuide() {
       </div>
       <div style="padding:0 16px 20px;">
         <div style="padding:11px 12px; background:var(--bg-info); border-radius:10px; font-size:11.5px; color:var(--text-info); line-height:1.8; margin-bottom:12px;">
-          홈 화면과 잠금화면에 <b>오늘 할일 · 목표 · 다음 일정</b>이 떠요.<br>
+          홈 화면과 잠금화면에 <b>오늘 할 일 · 다음 일정 · 운동 · 생활비 · 목표</b>가 떠요.<br>
+          위젯에서 할 일을 <b>누르면 바로 체크</b>되고, <b>＋</b> 로 새 할 일도 넣을 수 있어요.<br>
           <span style="opacity:0.85;">아이폰은 웹 앱에 위젯을 허용하지 않아서, 무료 앱 <b>Scriptable</b> 을 거칩니다.</span>
         </div>
 
@@ -30929,6 +31043,9 @@ function openWidgetGuide() {
             알림 서버 주소나 열쇠가 없어요. <b>설정 → 알림</b> 에서 서버 주소를 넣고,
             <b>워치 연동</b> 에서 열쇠를 만든 뒤 다시 열어주세요.
           </div>` : `
+          <div style="padding:10px 12px; background:var(--bg-warning); border-radius:10px; font-size:11px; color:var(--text-warning); line-height:1.7; margin-bottom:12px;">
+            <b>이미 위젯을 쓰고 있다면</b> 아래 <b>2번</b>만 다시 하세요 — 스크립트를 복사해서 Scriptable 의 MyPlanner 안 내용을 통째로 바꿔 붙여넣으면 끝이에요.
+          </div>
           <div style="font-size:12px; font-weight:800; margin:4px 0 8px;">1. Scriptable 설치</div>
           <div style="font-size:11.5px; color:var(--text-secondary); line-height:1.8; margin-bottom:12px;">
             App Store 에서 <b>Scriptable</b> 을 받으세요 (무료, 광고 없음).
@@ -30955,8 +31072,15 @@ function openWidgetGuide() {
             <b>Scriptable</b> → 넓은 칸 고르기 → 눌러서 Script 에서 <b>MyPlanner</b>
           </div>
 
+          <div style="font-size:12px; font-weight:800; margin:4px 0 8px;">5. 앱처럼 쓰기</div>
+          <div style="font-size:11.5px; color:var(--text-secondary); line-height:1.8; margin-bottom:12px;">
+            위젯 빈 곳을 누르거나 Scriptable 에서 <b>MyPlanner</b> 를 누르면 오늘 할 일 목록이 열려요.
+            눌러서 체크 · 되돌리기 · <b>＋ 할 일 추가</b>가 되고, 맨 아래에서 플래너 전체도 열 수 있어요.<br>
+            <span style="color:var(--text-tertiary);">중간·큰 위젯은 줄마다 눌러 체크돼요. 작은 위젯은 누르면 목록이 열려요.</span>
+          </div>
           <div style="padding:10px 12px; background:var(--bg-secondary); border-radius:10px; font-size:10.5px; color:var(--text-tertiary); line-height:1.7;">
-            위젯은 <b>30분마다</b> 새로 그려요 (iOS 가 정한 간격이라 조금 늦을 수 있어요).
+            위젯에서 체크한 건 <b>플래너를 열 때</b> 자동으로 반영돼요.<br>
+            위젯은 <b>15분쯤마다</b> 새로 그려요 (iOS 가 정한 간격이라 조금 늦을 수 있어요).
             내용은 <b>앱을 열 때</b> 갱신되고, 하루 앞서 만들어 두기 때문에 아침에 앱을 안 열어도 오늘 것이 나와요.<br>
             스크립트에는 내 열쇠가 들어 있으니 남에게 보내지 마세요.
           </div>`}
@@ -31021,8 +31145,10 @@ function timedTodoAlerts() {
 // 서버에 '언제, 무슨 내용으로 보낼지'를 넣어둔다. 앱을 열 때마다 갱신된다.
 async function pushSummaryToServer() {
   const url = pushServerUrl();
-  if (!url || !settings.pushEnabled) return false;
-  if (settings.summaryTime === 'off') return false;
+  // 알림도 위젯도 안 쓰는 사람의 할일은 서버로 보내지 않는다
+  if (!url || !(settings.pushEnabled || settings.widgetUsed)) return false;
+  // 아침 요약을 꺼도 위젯·할일 알림은 계속 받아야 한다 — 끔 표시만 붙여 보낸다
+  const summaryOff = settings.summaryTime === 'off' || !settings.pushEnabled;
 
   // 환율·금 시세는 자산 탭을 열어야 채워진다. 요약에 넣으려면 미리 받아둬야 한다.
   if (summaryOn('market')) {
@@ -31036,7 +31162,13 @@ async function pushSummaryToServer() {
       body: JSON.stringify({
         uid: (currentUser && currentUser.uid) || '',
         key: settings.uploadKey || '',
-        at: settings.summaryTime || '08:00',   // 한국 시간 기준 HH:MM
+        at: (settings.summaryTime && settings.summaryTime !== 'off') ? settings.summaryTime : '08:00',   // 한국 시간 기준 HH:MM
+        summaryOff,
+        alertsOff: !settings.pushEnabled,
+        // 📱 위젯에 띄울 오늘 할일·운동·생활비·목표
+        widget: widgetData(),
+        // 위젯에서 누른 것 중 여기까지는 앱에 반영됐다
+        inboxDrainedAt: Number(settings.todoInboxDrainedAt) || 0,
         title: '📋 오늘 정리',
         // 오늘 것 (옛 서버도 이걸 본다)
         body: buildMorningSummary(),
@@ -31048,7 +31180,7 @@ async function pushSummaryToServer() {
         // 위젯에 띄울 오늘·내일 시간 일정 (알림을 안 건 것도 포함)
         agenda: widgetAgenda(),
         // 📊 월말 결산 — 말일 저녁에 한 번
-        monthly: settings.monthlyWrap === false ? null : {
+        monthly: (settings.monthlyWrap === false || !settings.pushEnabled) ? null : {
           on: lastDayOfMonth(),
           at: settings.monthlyWrapTime || '21:00',
           title: '📊 이번 달 정리',
@@ -34107,76 +34239,301 @@ function confirmTossSync() {
 <!-- 📱 Scriptable 위젯 스크립트 원본. 실행되지 않는다 — '위젯 스크립트 복사' 가
      __WIDGET_URL__ 을 내 주소로 바꿔 클립보드에 넣는다. -->
 <script type="text/plain" id="widget-script-src">
-// MyPlanner 위젯 — Scriptable 앱에 붙여넣어 쓰세요
-// 홈 화면(작게·중간·크게)과 잠금화면(넓은 칸·한 줄) 모두 됩니다.
+// MyPlanner — Scriptable 앱에 붙여넣어 쓰세요
+// · 홈 화면 위젯 (작게·중간·크게) — 할 일을 누르면 바로 체크돼요
+// · 잠금화면 위젯 (넓은 칸·한 줄)
+// · Scriptable 에서 이 스크립트를 열면 앱처럼 할 일 체크·추가가 돼요
 const URL = "__WIDGET_URL__";
 const APP = "https://qorwl503.github.io/Life-planner/";
-const fam = config.widgetFamily || "medium";
+const TODO_URL = URL.replace("/widget?", "/widget/todo?");
+const ME = encodeURIComponent(Script.name());
+const params = args.queryParameters || {};
 
-let data = null;
-try {
-  const r = new Request(URL);
-  r.timeoutInterval = 10;
-  data = await r.loadJSON();
-} catch (e) {}
+const ink = Color.dynamic(new Color("#1A1A1A"), new Color("#F2F2F2"));
+const soft = Color.dynamic(new Color("#8A8A8A"), new Color("#8E8E93"));
+const green = new Color("#3D8168");
+const bg = Color.dynamic(new Color("#F4F4EE"), new Color("#1C1C1E"));
 
-const w = new ListWidget();
-w.url = APP;
-w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
+async function load() {
+  try {
+    const r = new Request(URL);
+    r.timeoutInterval = 10;
+    return await r.loadJSON();
+  } catch (e) { return null; }
+}
 
-if (!data || data.error) {
-  const t = w.addText(data && data.error ? data.error : "불러오지 못했어요");
-  t.font = Font.systemFont(11);
-} else if (fam === "accessoryInline") {
-  // 잠금화면 시계 위 한 줄
-  w.addText(data.next ? "⏰ " + data.next : (data.lines[0] || "오늘 일정 없음"));
-} else if (fam.indexOf("accessory") === 0) {
-  // 잠금화면 시계 아래 칸
-  const head = w.addText(data.next ? "⏰ " + data.next : "📋 오늘");
-  head.font = Font.boldSystemFont(13);
-  head.lineLimit = 1;
-  const rest = data.agenda && data.agenda.length > 1
-    ? data.agenda.slice(1, 3).map(a => a.at + " " + a.title)
-    : data.lines.slice(0, 2);
-  for (const l of rest) {
-    const t = w.addText(l);
+async function send(body) {
+  try {
+    const r = new Request(TODO_URL);
+    r.method = "POST";
+    r.headers = { "Content-Type": "application/json" };
+    r.body = JSON.stringify(body);
+    r.timeoutInterval = 10;
+    return await r.loadJSON();
+  } catch (e) { return { error: "서버에 못 닿았어요" }; }
+}
+
+const won = (n) => Math.round(Number(n) || 0).toLocaleString() + "원";
+const runUrl = (q) => "scriptable:///run/" + ME + (q ? "?" + q : "");
+const todosOf = (d) => (d && Array.isArray(d.todos)) ? d.todos : null;
+
+function stats(d) {
+  const out = [];
+  if (d.count && d.count.total) out.push("✅ " + d.count.done + "/" + d.count.total);
+  if (d.workout) out.push(d.workout.done ? "💪 " + (d.workout.min ? d.workout.min + "분" : "함") : "💪 아직");
+  if (d.living) out.push("💰 하루 " + won(d.living.perDay));
+  else if (d.spent) out.push("💰 오늘 " + won(d.spent));
+  if (d.goals && d.goals.total) out.push("🎯 " + d.goals.done + "/" + d.goals.total);
+  return out.join("  ");
+}
+
+function todoLine(t) {
+  return (t.done ? "✓ " : "○ ") + (t.at ? t.at + " " : "") + t.t + (t.rep ? " 🔁" : "");
+}
+
+// ── 위젯 ─────────────────────────────────────────────
+function buildWidget(d, fam) {
+  const w = new ListWidget();
+  w.url = runUrl("");   // 빈 곳을 누르면 앱처럼 열린다
+  w.refreshAfterDate = new Date(Date.now() + 15 * 60 * 1000);
+
+  if (!d || d.error) {
+    const t = w.addText(d && d.error ? d.error : "불러오지 못했어요");
     t.font = Font.systemFont(11);
-    t.lineLimit = 1;
+    return w;
   }
-} else {
-  w.backgroundColor = Color.dynamic(new Color("#F4F4EE"), new Color("#1C1C1E"));
-  const ink = Color.dynamic(new Color("#1A1A1A"), new Color("#F2F2F2"));
-  const soft = Color.dynamic(new Color("#6B6B6B"), new Color("#A0A0A0"));
+  const list = todosOf(d);
+  const left = list ? list.filter(t => !t.done) : [];
 
-  const title = w.addText(data.title || "📋 오늘");
-  title.font = Font.boldSystemFont(fam === "small" ? 13 : 15);
+  if (fam === "accessoryInline") {
+    w.addText(d.next ? "⏰ " + d.next : (list ? "✅ " + d.count.done + "/" + d.count.total : (d.lines[0] || "오늘 일정 없음")));
+    return w;
+  }
+  if (fam.indexOf("accessory") === 0) {
+    const head = w.addText(d.next ? "⏰ " + d.next : "📋 오늘");
+    head.font = Font.boldSystemFont(13);
+    head.lineLimit = 1;
+    const rest = list ? [stats(d)].concat(left.slice(0, 1).map(t => "○ " + t.t)) : d.lines.slice(0, 2);
+    for (const l of rest) {
+      const t = w.addText(l);
+      t.font = Font.systemFont(11);
+      t.lineLimit = 1;
+    }
+    return w;
+  }
+
+  w.backgroundColor = bg;
+  w.setPadding(12, 14, 10, 14);
+  const small = fam === "small";
+
+  const top = w.addStack();
+  top.centerAlignContent();
+  const title = top.addText("📋 오늘");
+  title.font = Font.boldSystemFont(small ? 13 : 15);
   title.textColor = ink;
+  if (list && d.count.total) {
+    top.addSpacer(6);
+    const c = top.addText(d.count.done + "/" + d.count.total);
+    c.font = Font.boldSystemFont(small ? 12 : 13);
+    c.textColor = green;
+  }
+  top.addSpacer();
+  if (!small) {
+    const plus = top.addText("＋");
+    plus.font = Font.boldSystemFont(16);
+    plus.textColor = green;
+    plus.url = runUrl("add=1");
+  }
 
-  if (data.next) {
+  if (d.next) {
     w.addSpacer(3);
-    const nx = w.addText("⏰ " + data.next);
-    nx.font = Font.boldSystemFont(fam === "small" ? 11 : 12);
-    nx.textColor = new Color("#3D8168");
+    const nx = w.addText("⏰ " + d.next);
+    nx.font = Font.boldSystemFont(small ? 11 : 12);
+    nx.textColor = green;
     nx.lineLimit = 1;
   }
+  if (list && !small) {
+    w.addSpacer(2);
+    const st = w.addText(stats(d));
+    st.font = Font.systemFont(10);
+    st.textColor = soft;
+    st.lineLimit = 1;
+  }
 
-  w.addSpacer(4);
-  const max = fam === "small" ? 4 : fam === "medium" ? 6 : 16;
-  for (const l of data.lines.slice(0, max)) {
-    const t = w.addText(l);
-    t.font = Font.systemFont(fam === "small" ? 10 : 11);
-    t.textColor = ink;
-    t.lineLimit = 1;
+  w.addSpacer(5);
+  if (!list) {
+    // 앱을 아직 새 판으로 안 열었을 때 — 예전처럼 줄글로
+    for (const l of d.lines.slice(0, small ? 4 : fam === "medium" ? 5 : 14)) {
+      const t = w.addText(l);
+      t.font = Font.systemFont(small ? 10 : 11);
+      t.textColor = ink;
+      t.lineLimit = 1;
+    }
+  } else {
+    const max = small ? 4 : fam === "medium" ? 4 : 12;
+    const show = fam === "large" ? list.slice(0, max) : left.slice(0, max);
+    if (!show.length) {
+      const t = w.addText(list.length ? "오늘 할 일 다 했어요 🎉" : "오늘 할 일이 없어요");
+      t.font = Font.systemFont(12);
+      t.textColor = soft;
+    }
+    for (const it of show) {
+      const row = w.addStack();
+      row.centerAlignContent();
+      // 작은 위젯은 한 군데만 누를 수 있어서 줄마다 체크는 중간·큰 위젯에서만
+      if (!small) row.url = runUrl((it.done ? "undo=" : "done=") + encodeURIComponent(it.id));
+      const tx = row.addText(todoLine(it));
+      tx.font = Font.systemFont(small ? 10.5 : 12);
+      tx.textColor = it.done ? soft : ink;
+      tx.lineLimit = 1;
+      row.addSpacer();
+      w.addSpacer(small ? 2 : 4);
+    }
+    const more = (fam === "large" ? list.length : left.length) - show.length;
+    if (more > 0) {
+      const m = w.addText("외 " + more + "개");
+      m.font = Font.systemFont(9);
+      m.textColor = soft;
+    }
   }
 
   w.addSpacer();
-  const foot = w.addText("업데이트 " + (data.updated || ""));
+  const foot = w.addText(small ? "누르면 열려요" : "줄을 누르면 체크 · 업데이트 " + (d.updated || ""));
   foot.font = Font.systemFont(8);
   foot.textColor = soft;
+  return w;
 }
 
-if (config.runsInWidget) Script.setWidget(w);
-else await w.presentMedium();
+// ── 앱처럼 쓰는 화면 ─────────────────────────────────
+async function askAdd() {
+  const a = new Alert();
+  a.title = "＋ 오늘 할 일";
+  a.addTextField("무엇을 할까요?", "");
+  a.addTextField("시간 (예 14:30 · 없으면 비워두기)", "");
+  a.addAction("추가");
+  a.addCancelAction("취소");
+  if ((await a.presentAlert()) !== 0) return null;
+  const text = a.textFieldValue(0).trim();
+  let time = a.textFieldValue(1).trim().replace(/[^0-9:]/g, "");
+  if (/^\d{3,4}$/.test(time)) time = time.padStart(4, "0").slice(0, 2) + ":" + time.padStart(4, "0").slice(2);
+  if (!/^\d{2}:\d{2}$/.test(time)) time = "";
+  if (!text) return null;
+  return send({ op: "add", text, time });
+}
+
+async function notice(msg) {
+  const a = new Alert();
+  a.message = msg;
+  a.addAction("확인");
+  await a.presentAlert();
+}
+
+async function showApp(d, banner) {
+  const table = new UITable();
+  table.showSeparators = true;
+
+  const render = () => {
+    table.removeAllRows();
+    const list = todosOf(d);
+
+    const head = new UITableRow();
+    head.isHeader = true;
+    head.height = 64;
+    const h = head.addText("📋 오늘" + (list && d.count.total ? "  " + d.count.done + "/" + d.count.total : ""),
+      banner || stats(d) || (d.next ? "⏰ " + d.next : ""));
+    h.titleFont = Font.boldSystemFont(20);
+    h.subtitleColor = banner ? green : soft;
+    table.addRow(head);
+
+    if (!list) {
+      const r = new UITableRow();
+      r.addText("앱(플래너)을 한 번 열면 체크 목록이 나와요", "지금은 예전 요약만 있어요");
+      table.addRow(r);
+    } else {
+      if (!list.length) {
+        const r = new UITableRow();
+        r.addText("오늘 할 일이 없어요");
+        table.addRow(r);
+      }
+      for (const it of list) {
+        const r = new UITableRow();
+        r.height = 52;
+        r.dismissOnSelect = false;
+        const c = r.addText((it.done ? "✅  " : "⬜️  ") + it.t + (it.rep ? " 🔁" : ""), (it.at || "") + (it.pending ? "  · 앱에 곧 반영" : ""));
+        c.titleColor = it.done ? soft : ink;
+        c.subtitleColor = soft;
+        r.onSelect = async () => {
+          const res = await send({ op: it.done ? "undo" : "done", id: it.id });
+          if (res && !res.error) { d = Object.assign({}, d, res); banner = it.done ? "되돌렸어요" : "✅ 완료!"; }
+          else await notice((res && res.error) || "실패했어요");
+          render();
+        };
+        table.addRow(r);
+      }
+    }
+
+    const add = new UITableRow();
+    add.dismissOnSelect = false;
+    add.height = 50;
+    const ac = add.addText("＋  할 일 추가");
+    ac.titleColor = green;
+    add.onSelect = async () => {
+      const res = await askAdd();
+      if (res && !res.error) { d = Object.assign({}, d, res); banner = "추가했어요"; }
+      else if (res && res.error) await notice(res.error);
+      render();
+    };
+    table.addRow(add);
+
+    if (d.goals && d.goals.items && d.goals.items.length) {
+      const g = new UITableRow();
+      g.height = 56;
+      const gc = g.addText("🎯 이달 목표 " + d.goals.done + "/" + d.goals.total, d.goals.items.join(" · "));
+      gc.subtitleColor = soft;
+      table.addRow(g);
+    }
+
+    const open = new UITableRow();
+    open.addText("🌐  플래너 전체 열기");
+    open.onSelect = () => Safari.open(APP);
+    table.addRow(open);
+
+    const tip = new UITableRow();
+    tip.height = 54;
+    const tc = tip.addText("", "홈 화면 위젯은 iOS 가 정한 때에 바뀌어요 (보통 15분 안팎).\n체크한 건 플래너를 열 때 자동으로 반영돼요.");
+    tc.subtitleColor = soft;
+    tc.subtitleFont = Font.systemFont(11);
+    table.addRow(tip);
+
+    table.reload();
+  };
+
+  render();
+  await table.present(false);
+}
+
+// ── 시작 ─────────────────────────────────────────────
+if (config.runsInWidget || config.runsInAccessoryWidget) {
+  const d = await load();
+  Script.setWidget(buildWidget(d, config.widgetFamily || "medium"));
+} else {
+  let d = await load();
+  let banner = "";
+  if (!d || d.error) {
+    await notice((d && d.error) || "불러오지 못했어요. 인터넷 연결을 확인해주세요");
+  } else {
+    if (params.done || params.undo) {
+      const res = await send({ op: params.done ? "done" : "undo", id: params.done || params.undo });
+      if (res && !res.error) { d = Object.assign({}, d, res); banner = params.done ? "✅ 완료!" : "되돌렸어요"; }
+      else banner = (res && res.error) || "실패했어요";
+    } else if (params.add) {
+      const res = await askAdd();
+      if (res && !res.error) { d = Object.assign({}, d, res); banner = "추가했어요"; }
+      else if (res && res.error) banner = res.error;
+    }
+    await showApp(d, banner);
+  }
+}
 Script.complete();
 </script>
 </body>

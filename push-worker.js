@@ -40,9 +40,9 @@
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
 // 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
-const WORKER_VERSION = '2026-11-20.10';
+const WORKER_VERSION = '2026-11-21.1';
 const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
-  '/push/plan', '/push/status', '/relay/workout', '/relay/expense', '/relay/ping', '/widget', '/version', '/keys/status', '/keys/issue', '/keys/revoke', '/account/delete'];
+  '/push/plan', '/push/status', '/relay/workout', '/relay/expense', '/relay/ping', '/widget', '/version', '/keys/status', '/keys/issue', '/keys/revoke', '/account/delete', '/widget/todo'];
 
 let ENV = null;
 
@@ -66,6 +66,7 @@ export default {
       if (url.pathname.startsWith('/keys/') && request.method === 'POST') return await handleKeys(request, env, url);
       if (url.pathname === '/version') return json({ version: WORKER_VERSION, routes: ROUTE_LIST, relayReady: !!env.FIREBASE_SA });
       if (url.pathname === '/widget' && request.method === 'GET') return await handleWidget(env, url);
+      if (url.pathname === '/widget/todo' && request.method === 'POST') return await handleWidgetTodo(request, env, url);
       if (url.pathname.startsWith('/ai/') && request.method === 'POST') return await handleAI(request, env, url);
       if (url.pathname === '/push/status') return await handleStatus(request, env, url);
     } catch (e) {
@@ -529,7 +530,7 @@ async function adminAccessToken(env) {
 // 전용 주소로 들어온 기록을 '그 토큰 주인의' 수신함에 쓴다. 경로는 여기서만 만든다.
 async function adminInboxWrite(env, uid, coll, bodyJson) {
   if (!/^[A-Za-z0-9_-]{8,128}$/.test(String(uid))) throw new Error('uid 가 이상해요');
-  if (!['workoutInbox', 'expenseInbox'].includes(coll)) throw new Error('쓸 수 없는 곳이에요');
+  if (!['workoutInbox', 'expenseInbox', 'todoInbox'].includes(coll)) throw new Error('쓸 수 없는 곳이에요');
   const token = await adminAccessToken(env);
   return fetch('https://firestore.googleapis.com/v1/projects/' + env.FIREBASE_PROJECT_ID
     + '/databases/(default)/documents/users/' + encodeURIComponent(uid) + '/' + coll, {
@@ -997,7 +998,95 @@ async function handleWidget(env, url) {
     next: upcoming.length ? `${upcoming[0].at} ${upcoming[0].title}` : '',
     agenda: today.slice(0, 8),
     updated,
+    ...widgetView(plan, now.date),
   });
+}
+
+// 앱이 보낸 위젯 내용을 정리해 둔다 (길이·개수 제한 — 남이 큰 값을 밀어넣지 못하게)
+function cleanWidgetData(w) {
+  if (!w || typeof w !== 'object') return null;
+  const str = (x, n) => String(x == null ? '' : x).slice(0, n);
+  const num = (x) => { const v = Number(x); return Number.isFinite(v) ? v : 0; };
+  const out = { date: /^\d{4}-\d{2}-\d{2}$/.test(String(w.date || '')) ? w.date : '' };
+  out.todos = (Array.isArray(w.todos) ? w.todos : []).slice(0, 40).map(t => ({
+    id: str(t && t.id, 40), t: str(t && t.t, 60),
+    at: /^\d{2}:\d{2}$/.test(String(t && t.at || '')) ? t.at : '',
+    done: !!(t && t.done), rep: !!(t && t.rep),
+  })).filter(t => t.id && t.t);
+  if (w.workout) out.workout = { done: !!w.workout.done, min: num(w.workout.min) };
+  out.spent = num(w.spent);
+  if (w.living) out.living = { left: num(w.living.left), perDay: num(w.living.perDay), daysLeft: num(w.living.daysLeft) };
+  if (w.goals) out.goals = {
+    done: num(w.goals.done), total: num(w.goals.total),
+    items: (Array.isArray(w.goals.items) ? w.goals.items : []).slice(0, 5).map(x => str(x, 40)),
+  };
+  return out;
+}
+
+// 위젯에 줄 오늘 할일 — 앱이 마지막으로 보낸 것 위에 '위젯에서 누른 것' 을 덧씌운다
+function widgetView(plan, date) {
+  const w = plan && plan.widget;
+  if (!w || w.date !== date) return { todos: null };
+  const todos = w.todos.map(t => ({ ...t }));
+  for (const o of (plan.pendingOps || [])) {
+    if (o.date !== date) continue;
+    if (o.op === 'add') {
+      if (!todos.some(t => t.id === o.id)) todos.push({ id: o.id, t: o.text, at: o.time || '', done: false, rep: false, pending: true });
+      continue;
+    }
+    const t = todos.find(x => x.id === o.id);
+    if (t) t.done = o.op === 'done';
+  }
+  todos.sort((a, b) => (a.done - b.done) || String(a.at || '99').localeCompare(String(b.at || '99')));
+  const done = todos.filter(t => t.done).length;
+  return {
+    todos, count: { done, total: todos.length },
+    workout: w.workout || null, spent: w.spent || 0, living: w.living || null, goals: w.goals || null,
+  };
+}
+
+// ✅ 위젯·Scriptable 에서 할일 체크·추가.
+//   앱의 할일 목록을 서버가 직접 고치지 않는다 — 앱이 통째로 저장하는 구조라
+//   서로 덮어쓸 수 있다. 대신 '이렇게 해달라' 를 수신함에 넣고, 앱이 열릴 때 반영한다.
+//   그 사이에도 위젯에는 바로 보이도록 서버의 위젯 내용에 덧씌워 둔다.
+async function handleWidgetTodo(request, env, url) {
+  const body = await request.json().catch(() => ({}));
+  const uid = String(url.searchParams.get('uid') || body.uid || '');
+  const key = String(url.searchParams.get('key') || body.key || '');
+  if (!/^[A-Za-z0-9_-]{8,128}$/.test(uid) || !key) return json({ error: '주소가 올바르지 않아요' }, 400);
+  if (!env.PUSH_KV) return json({ error: '서버 저장소가 없어요' }, 500);
+  if (!env.FIREBASE_SA) return json({ error: '서버 준비가 아직 안 됐어요' }, 503);
+
+  const raw = await env.PUSH_KV.get(planKey(uid));
+  if (!raw) return json({ error: '앱을 한 번 열어주세요' }, 404);
+  let plan;
+  try { plan = JSON.parse(raw); } catch (e) { return json({ error: '저장된 내용이 깨졌어요' }, 500); }
+  if (!plan.widgetKey || plan.widgetKey !== key) return json({ error: '열쇠가 맞지 않아요. 앱에서 위젯 스크립트를 다시 복사해주세요' }, 403);
+
+  const op = String(body.op || '');
+  if (!['done', 'undo', 'add'].includes(op)) return json({ error: '할 일을 알 수 없어요' }, 400);
+  const date = kstNow().date;
+  const at = Date.now();
+  let id = String(body.id || '').slice(0, 40);
+  const text = String(body.text || '').trim().slice(0, 60);
+  const time = /^\d{2}:\d{2}$/.test(String(body.time || '')) ? String(body.time) : '';
+  if (op === 'add') {
+    if (!text) return json({ error: '내용을 적어주세요' }, 400);
+    id = 'w' + at;   // 앱이 반영할 때 이 번호로 만든다 (두 번 들어와도 하나만)
+  } else if (!id) {
+    return json({ error: '어떤 할일인지 모르겠어요' }, 400);
+  }
+
+  const doc = { fields: {
+    op: { stringValue: op }, id: { stringValue: id }, date: { stringValue: date },
+    text: { stringValue: text }, time: { stringValue: time }, at: { integerValue: String(at) },
+  } };
+  const res = await adminInboxWrite(env, uid, 'todoInbox', JSON.stringify(doc));
+  if (!res.ok) return json({ error: '저장하지 못했어요 (' + res.status + ')' }, 502);
+
+  plan.pendingOps = (plan.pendingOps || []).filter(o => !(o.id === id && o.op !== 'add')).concat([{ op, id, date, text, time, at }]).slice(-60);
+  await env.PUSH_KV.put(planKey(uid), JSON.stringify(plan));
+  return json({ ok: true, id, ...widgetView(plan, date) });
 }
 
 async function handlePlan(request, env) {
@@ -1053,6 +1142,12 @@ async function handlePlan(request, env) {
     agenda: (body.agenda && typeof body.agenda === 'object') ? body.agenda : {},
     sentTodo: (old && old.sentTodo) || {},        // 이미 보낸 할일 알림 (중복 방지)
     tag: body.tag || 'daily-summary',
+    // 아침 요약·할일 알림을 끈 사람도 위젯은 쓸 수 있다 — 끔 표시만 하고 내용은 받아둔다
+    summaryOff: !!body.summaryOff,
+    alertsOff: !!body.alertsOff,
+    widget: cleanWidgetData(body.widget),
+    // 위젯에서 눌렀는데 앱이 아직 반영 안 한 것 — 앱이 수신함을 비운 시각 이후 것만 남긴다
+    pendingOps: ((old && old.pendingOps) || []).filter(o => o && Number(o.at) > (Number(body.inboxDrainedAt) || 0)),
     savedAt: Date.now(),
   };
   await env.PUSH_KV.put(planKey(who.uid), JSON.stringify(plan));
@@ -1090,6 +1185,7 @@ async function runPlan(env) {
 async function runPlanFor(env, uid) {
   const raw = await env.PUSH_KV.get(planKey(uid));
   if (!raw) return;
+  if (raw.indexOf('"summaryOff":true') >= 0) return;   // 아침 요약을 끈 사람
 
   let plan;
   try { plan = JSON.parse(raw); } catch (e) { return; }
@@ -1165,6 +1261,7 @@ async function runMonthlyFor(env, uid) {
 async function runTodoAlertsFor(env, uid) {
   const raw = await env.PUSH_KV.get(planKey(uid));
   if (!raw) return;
+  if (raw.indexOf('"alertsOff":true') >= 0) return;    // 알림을 끈 사람
 
   let plan;
   try { plan = JSON.parse(raw); } catch (e) { return; }
