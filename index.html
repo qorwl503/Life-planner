@@ -3060,7 +3060,7 @@ function renderCalendar() {
       const renderEvt = (e) => {
         const clickHandler = e.todoId !== undefined ? `onclick="toggleTodoFromCal(${e.todoId}, '${e.dateKeyStr}')" style="cursor:pointer;"`
           : e.challengeId !== undefined ? `onclick="toggleChallengeDate(${e.challengeId}, '${e.challengeDateKey}')" style="cursor:pointer;"`
-          : e.workoutDateKey !== undefined ? `onclick="toggleWorkoutFromCal('${e.workoutDateKey}')" style="cursor:pointer;"`
+          : e.workoutDateKey !== undefined ? `onclick="markAndPickWorkout('${e.workoutDateKey}')" style="cursor:pointer;"`
           : e.expenseId !== undefined ? `onclick="editExpense(${e.expenseId})" style="cursor:pointer;"`
           : '';
         // 챌린지는 성공/실패/미체크 3상태 — 체크박스 모양으로 바로 보이게
@@ -3159,12 +3159,14 @@ function getEventsForDay(d) {
   // 운동 — 기록이 없는 날도 캘린더에서 바로 체크할 수 있게 항상 표시
   const w = workoutLog[k];
   const isFuture = k > todayKey();
-  if (w?.done) {
+  if (dayWorkedOut(k)) {
+    const _tk = dayTickSports(k);
+    const _sub = [Number(w?.minutes) > 0 ? `${w.minutes}분` : '', Number(w?.kcal) > 0 ? `${w.kcal} kcal` : ''].filter(Boolean).join(' · ');
     events.push({
       type: 'workout',
       icon: 'ti-barbell',
-      title: w.note || '운동 완료',
-      sub: `${w.minutes || 0}분 · ${w.kcal || 0} kcal`,
+      title: (w && w.note) || (_tk.length ? _tk.join(' · ') : '운동 완료'),
+      sub: _sub || '눌러서 종목 고르기',
       workoutDone: true,
       workoutDateKey: k,
     });
@@ -3173,7 +3175,7 @@ function getEventsForDay(d) {
       type: 'workout',
       icon: 'ti-barbell',
       title: '운동 안 함',
-      sub: '눌러서 완료로 기록',
+      sub: '눌러서 무슨 운동 했는지 고르기',
       workoutDone: false,
       workoutDateKey: k,
     });
@@ -3445,11 +3447,7 @@ function skipTodoFromCal(todoId, dayK) {
 function toggleWorkoutFromCal(dayK) {
   if (!workoutLog[dayK]) workoutLog[dayK] = { done: false };
   workoutLog[dayK].done = !workoutLog[dayK].done;
-  if (workoutLog[dayK].done) {
-    if (!workoutLog[dayK].kcal) workoutLog[dayK].kcal = 300;
-    if (!workoutLog[dayK].minutes) workoutLog[dayK].minutes = 30;
-    haptic();
-  }
+  if (workoutLog[dayK].done) haptic();   // 숫자는 지어내지 않는다 — '했음' 표시만
   saveData();
   showToast(workoutLog[dayK].done ? '운동 완료 ✓' : '운동 체크 해제');
   renderCalendar();
@@ -6678,8 +6676,19 @@ function planTicks(dateK) {
   return settings.planTicks[k];
 }
 
+function dayTickSports(dateK) {
+  const d = settings.planTicks && settings.planTicks[dateK];
+  return (d && typeof d === 'object') ? Object.keys(d).filter(k => d[k]) : [];
+}
+function dayWorkedOut(dateK) {
+  const log = (workoutLog || {})[dateK];
+  return !!(log && log.done) || dayTickSports(dateK).length > 0;
+}
+
 function planTickedOn(sport, dateK) {
-  return !!planTicks(dateK)[sport];
+  // 읽기만 — planTicks() 는 빈 칸을 만들어 저장 데이터에 빈 날이 쌓인다
+  const d = settings.planTicks && settings.planTicks[dateK || todayKey()];
+  return !!(d && d[sport]);
 }
 
 function togglePlanTick(sport, dateK) {
@@ -6703,6 +6712,112 @@ function togglePlanTick(sport, dateK) {
   saveData();
   showToast(on ? `${sport} 했어요 ✓` : `${sport} 해제`);
   if (currentTab === 'workout') renderWorkout();
+  if (currentTab === 'calendar' && typeof renderCalendar === 'function') { try { renderCalendar(); } catch (e) {} }
+  if (window._woPickDate === k && document.getElementById('wo-pick-grid')) renderWorkoutPick(k);
+}
+
+// 🗓️ 달력에서 날짜를 누르면 — '무슨 운동?' 을 바로 고른다.
+//    예전에는 달력에서 '했음' 을 누르고, 위 계획 칸에서 스트레칭·유산소·수영을 또 눌러야 했다.
+//    여기서 고른 종목은 계획 칸에도 그대로 세어지고, 달력에도 했음으로 칠해진다.
+function workoutPickSports() {
+  const out = [];
+  const add = k => { if (k && !out.includes(k)) out.push(k); };
+  Object.keys(workoutPlan()).filter(k => Number(workoutPlan()[k]) > 0).forEach(add);
+  QUICK_SPORTS.forEach(add);
+  ['자전거', '등산', '요가', '구기', '명상'].forEach(add);
+  return out;
+}
+// 달력에서 누르면: 바로 '했음' 으로 칠하고, 무슨 운동인지 고르는 창을 띄운다
+function markAndPickWorkout(dateK) {
+  if (dateK > todayKey()) { showToast('아직 오지 않은 날이에요'); return; }
+  if (!dayWorkedOut(dateK)) {
+    if (!workoutLog[dateK]) workoutLog[dateK] = { done: false };
+    workoutLog[dateK].done = true;
+    workoutLog[dateK].marked = true;
+    haptic();
+    saveData();
+    if (currentTab === 'workout') renderWorkout();
+    if (currentTab === 'calendar' && typeof renderCalendar === 'function') { try { renderCalendar(); } catch (e) {} }
+  }
+  openWorkoutPick(dateK);
+}
+// '안 했어요' — 그날 표시(했음·종목 체크)만 지운다. 시간·거리까지 적은 운동 기록은 건드리지 않는다.
+function unmarkWorkoutDay(dateK) {
+  const log = workoutLog[dateK];
+  if (log && workoutSessions(log).length === 0) {
+    log.done = false; log.marked = false;
+    delete log.kcal; delete log.minutes; delete log.dist; delete log.unit;
+  }
+  if (settings.planTicks) delete settings.planTicks[dateK];
+  saveData();
+  closeModal();
+  showToast('운동 표시를 지웠어요');
+  if (currentTab === 'workout') renderWorkout();
+  if (currentTab === 'calendar' && typeof renderCalendar === 'function') { try { renderCalendar(); } catch (e) {} }
+}
+
+function openWorkoutPick(dateK) {
+  window._woPickDate = dateK;
+  const [y, m, d] = dateK.split('-').map(Number);
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <button class="modal-cancel" onclick="closeModal()">닫기</button>
+        <h2>${m}월 ${d}일 운동 ✓</h2>
+        <span></span>
+      </div>
+      <div style="font-size:11.5px; color:var(--text-tertiary); margin:-4px 0 12px; line-height:1.6;">
+        <b>했음으로 체크했어요.</b> 무슨 운동인지 눌러주세요 — <b>이번 주 계획</b>에도 같이 세어져요. 여러 개 골라도 돼요.
+      </div>
+      <div id="wo-pick-grid"></div>
+      <button onclick="closeModal(); openWorkoutModal('${dateK}')" style="width:100%; margin-top:12px; padding:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); border-radius:11px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">
+        ✏️ 시간·거리까지 자세히 적기
+      </button>
+    </div>`;
+  modal.classList.add('show');
+  renderWorkoutPick(dateK);
+}
+function renderWorkoutPick(dateK) {
+  const box = document.getElementById('wo-pick-grid');
+  if (!box) return;
+  const log = (workoutLog || {})[dateK] || {};
+  const plain = !!log.done && dayTickSports(dateK).length === 0 && workoutSessions(log).length === 0;
+  box.innerHTML = `
+    <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:8px;">
+      ${workoutPickSports().map(k => {
+        const st = planDayState(k, dateK);
+        const on = !!st;
+        const meta = SPORTS.find(x => x.key === k) || { emoji: '💪' };
+        return `<button onclick="togglePlanTick('${escapeAttr(k)}', '${dateK}')"
+          style="padding:12px 4px; border-radius:12px; border:${on ? '1.5px solid var(--accent-tab, #3D8168)' : '0.5px solid var(--border-tertiary)'}; background:${on ? 'rgba(61,129,104,0.14)' : 'var(--bg-primary)'}; color:${on ? 'var(--accent-tab, #3D8168)' : 'var(--text-primary)'}; font-size:12.5px; font-weight:${on ? '800' : '600'}; cursor:pointer; font-family:inherit; display:flex; flex-direction:column; align-items:center; gap:3px;">
+          <span style="font-size:22px;">${meta.emoji}</span>${escapeHTML(k)}${on ? ' ✓' : ''}
+        </button>`;
+      }).join('')}
+    </div>
+    <div style="display:flex; gap:8px; margin-top:10px;">
+      <button onclick="closeModal()" style="flex:2; padding:11px; border-radius:11px; border:none; background:var(--accent-tab, #3D8168); color:#fff; font-size:12.5px; font-weight:800; cursor:pointer; font-family:inherit;">
+        완료${plain ? ' (종목 없이)' : ''}
+      </button>
+      <button onclick="unmarkWorkoutDay('${dateK}')" style="flex:1; padding:11px; border-radius:11px; border:0.5px solid var(--border-tertiary); background:var(--bg-secondary); color:var(--text-danger); font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">
+        안 했어요
+      </button>
+    </div>`;
+}
+// 종목 없이 '했음' 만 (예전 달력 누르기와 같은 것)
+function toggleWorkoutPlain(dateK) {
+  if (dateK > todayKey()) { showToast('아직 오지 않은 날이에요'); return; }
+  const [y, m, d] = dateK.split('-').map(Number);
+  if (!workoutLog[dateK]) workoutLog[dateK] = { done: false };
+  const log = workoutLog[dateK];
+  log.done = !log.done;
+  log.marked = log.done;
+  if (!log.done && workoutSessions(log).length === 0) { delete log.kcal; delete log.minutes; delete log.dist; delete log.unit; }
+  saveData();
+  showToast(log.done ? `${m}/${d} 운동 ✓` : `${m}/${d} 해제`);
+  if (currentTab === 'workout') renderWorkout();
+  if (currentTab === 'calendar' && typeof renderCalendar === 'function') { try { renderCalendar(); } catch (e) {} }
+  renderWorkoutPick(dateK);
 }
 
 function weeklyDoneBySport() {
@@ -6822,8 +6937,7 @@ function renderWorkoutPlanCard() {
       }).join('')}
 
       <div style="margin-top:8px; font-size:10.5px; color:var(--text-tertiary); line-height:1.7;">
-        요일을 누르면 그날 한 것으로 세요. <b>운동 기록으로는 안 남습니다</b> —
-        스트레칭처럼 매일 하지만 운동 목록에 넣고 싶지 않은 것에 쓰세요.<br>
+        아래 <b>운동 달력</b>에서 날짜를 누르고 종목을 고르면 <b>여기도 자동으로 채워져요</b>. 따로 안 눌러도 됩니다.<br>
         <span style="display:inline-block; width:9px; height:9px; border-radius:2px; background:var(--accent-tab, #3D8168); vertical-align:-1px;"></span> 운동 기록이 있는 날 ·
         <span style="display:inline-block; width:9px; height:9px; border-radius:2px; background:rgba(61,129,104,0.14); border:0.5px solid var(--accent-tab, #3D8168); vertical-align:-1px;"></span> 눌러서 체크한 날
         ${totalDid > 0 ? '<br>종목 이름을 누르면 <b>이번 주에 센 날</b>을 볼 수 있어요.' : ''}
@@ -7872,8 +7986,13 @@ function renderWorkout() {
   const woStartOffset = woMonthStart.getDay();
 
   // 통계
-  const monthDone = Object.entries(workoutLog).filter(([k, v]) => k.startsWith(`${workoutViewYear}-${String(workoutViewMonth+1).padStart(2,'0')}`) && v.done);
-  const monthDoneCount = monthDone.length;
+  const _woMonthPrefix = `${workoutViewYear}-${String(workoutViewMonth+1).padStart(2,'0')}`;
+  const monthDone = Object.entries(workoutLog).filter(([k, v]) => k.startsWith(_woMonthPrefix) && v.done);
+  // 일수는 계획 체크만 한 날도 센다 (칼로리·시간은 실제 기록만)
+  const monthDoneCount = new Set([
+    ...monthDone.map(([k]) => k),
+    ...Object.keys(settings.planTicks || {}).filter(k => k.startsWith(_woMonthPrefix) && dayTickSports(k).length),
+  ]).size;
   const totalKcal = monthDone.reduce((s, [k, v]) => s + (Number(v.kcal) || 0), 0);
   const totalMinutes = monthDone.reduce((s, [k, v]) => s + (Number(v.minutes) || 0), 0);
 
@@ -7975,8 +8094,8 @@ function renderWorkout() {
   //   기록이 이미 있으면 묻지 않고 무엇을 했는지만 보여준다.
   if (isWorkoutCurrentMonth()) {
     const todayLog = workoutLog[todayKey()];
-    const isDone = todayLog?.done;
-    const isMarkedX = todayLog && todayLog.done === false && todayLog.marked === true;
+    const isDone = dayWorkedOut(todayKey());
+    const isMarkedX = !isDone && todayLog && todayLog.done === false && todayLog.marked === true;
     const todaySessions = workoutSessions(todayLog || {});
 
     if (todaySessions.length > 0) {
@@ -8053,14 +8172,15 @@ function renderWorkout() {
       const log = workoutLog[woKey(dayNum)];
       const isToday = dayNum === today && isWorkoutCurrentMonth();
       const isFuture = isWorkoutCurrentMonth() && dayNum > today;
-      const done = log?.done;
+      const done = dayWorkedOut(woKey(dayNum));
       let cellClass = 'wcell';
       if (done) cellClass += ' done';
       if (isToday) cellClass += ' today';
       if (isFuture) cellClass += ' future';
       const _dk = woKey(dayNum);
       const _photo = workoutCellPhoto(_dk);
-      const _label = workoutCellLabel(log);
+      const _ticks = dayTickSports(_dk);
+      const _label = workoutCellLabel(log) || (_ticks.length ? _ticks.slice(0, 2).map(k => (SPORTS.find(x => x.key === k) || { emoji: '💪' }).emoji).join('') : '');
       html += `<button class="${cellClass}" onclick="openWorkoutDay(${dayNum})" style="position:relative; overflow:hidden;">
         ${_photo}
         <span style="position:relative; z-index:1; ${_photo ? 'color:#fff; text-shadow:0 1px 3px rgba(0,0,0,0.75); font-weight:700;' : ''}">${dayNum}</span>
@@ -8238,11 +8358,7 @@ function quickToggleToday() {
   const k = todayKey();
   if (!workoutLog[k]) workoutLog[k] = { done: false };
   workoutLog[k].done = !workoutLog[k].done;
-  if (workoutLog[k].done && !workoutLog[k].kcal) {
-    workoutLog[k].kcal = 300;
-    workoutLog[k].minutes = 30;
-  }
-  if (workoutLog[k].done) haptic();
+  if (workoutLog[k].done) haptic();   // 숫자는 지어내지 않는다
   saveData();
   showToast(workoutLog[k].done ? '오늘 운동 ✓' : '체크 해제됨');
   renderWorkout();
@@ -8281,11 +8397,7 @@ function setTodayWorkout(done) {
   const k = todayKey();
   if (!workoutLog[k]) workoutLog[k] = {};
   workoutLog[k].done = done;
-  workoutLog[k].marked = true; // 명시적으로 선택했음
-  if (done && !workoutLog[k].kcal) {
-    workoutLog[k].kcal = 300;
-    workoutLog[k].minutes = 30;
-  }
+  workoutLog[k].marked = true; // 명시적으로 선택했음 (숫자는 지어내지 않는다)
   saveData();
   showToast(done ? '오늘 운동 ✓' : '오늘 안 함 ✗');
   renderWorkout();
@@ -10143,7 +10255,7 @@ function openWorkoutDay(dayNum) {
   const hasPhoto = woPhotoList(dateK).length > 0;
   const hasSession = workoutSessions(log).length > 0;
   if (hasPhoto || hasSession) { openWorkoutPhoto(dateK); return; }
-  toggleWorkoutDay(dayNum);
+  markAndPickWorkout(dateK);
 }
 
 // 그 날 운동 기록을 통째로 지운다 (사진 포함). 되돌릴 수 없으니 한 번 묻는다.
