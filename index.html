@@ -34581,7 +34581,7 @@ function ddBox(parent, x, width) {
   const top = box.addStack(); top.addSpacer(); top.centerAlignContent();
   const e = top.addText(x.e || "📌"); e.font = Font.systemFont(13);
   top.addSpacer(3);
-  const l = txt(top, ddLabel(x), 14, ddSoon(x) ? C.red : C.mint, true);
+  const l = txt(top, ddLabel(x), 14, ddSoon(x) ? C.red : C.pink, true);
   l.minimumScaleFactor = 0.6;   // 날수는 잘리지 않게 줄여서라도 다 보이게
   top.addSpacer();
   const n = box.addStack(); n.addSpacer();
@@ -34612,6 +34612,15 @@ const C = {
   ink: Color.dynamic(new Color("#1A1A1A"), new Color("#F2F2F2")),
   gMint: new Color("#4A9E7C"),
   gRed: new Color("#E5533F"),
+  // 카드별 색 (글자) — 밝은/어두운 화면에 맞춰
+  purple: Color.dynamic(new Color("#7B61C4"), new Color("#B9A6F2")),
+  blue: Color.dynamic(new Color("#3F7CC4"), new Color("#8EC1F5")),
+  orange: Color.dynamic(new Color("#C97A2B"), new Color("#F5B97A")),
+  pink: Color.dynamic(new Color("#C2557E"), new Color("#F2A3C1")),
+  // 그림용 고정색
+  gPurple: new Color("#9A82E0"),
+  gBlue: new Color("#6FA8E8"),
+  gOrange: new Color("#EBA05A"),
 };
 const widgetBg = Color.dynamic(new Color("#F2F2F7"), new Color("#1C1C1E"));
 
@@ -34759,12 +34768,12 @@ function bigWon(n) {
 function moneyCard(parent, d, w, compact) {
   const L = d.living;
   const k = card(parent, w, 0);
-  txt(k, "생활비", 11, soft);
+  txt(k, "💳 생활비", 11, C.orange, true);
   if (L && L.total) {
     const over = L.left < 0;
     txt(k, over ? man(-L.left) + " 초과" : man(L.left) + " 남음", compact ? 13 : 15, over ? C.red : C.ink, true);
     k.addSpacer(4);
-    k.addImage(barImage(L.spent / L.total, (w || 130) - 20, compact ? 5 : 6, over ? C.gRed : C.green)).imageSize = new Size((w || 130) - 20, compact ? 5 : 6);
+    k.addImage(barImage(L.spent / L.total, (w || 130) - 20, compact ? 5 : 6, over ? C.gRed : C.gOrange)).imageSize = new Size((w || 130) - 20, compact ? 5 : 6);
     if (!compact) {
       k.addSpacer(3);
       txt(k, over ? man(L.spent) + " / " + man(L.total) : "하루 " + man(L.perDay) + " · " + L.daysLeft + "일", 10, soft);
@@ -34778,7 +34787,7 @@ function moneyCard(parent, d, w, compact) {
 function assetCard(parent, d, w, compact) {
   const A = d.asset;
   const k = card(parent, w, 0);
-  txt(k, "순자산", 11, soft);
+  txt(k, "📈 순자산", 11, C.blue, true);
   if (!A) { txt(k, "기록 없음", 13, soft); return k; }
   const up = A.diff == null ? null : A.diff >= 0;
   if (compact) {
@@ -34791,13 +34800,33 @@ function assetCard(parent, d, w, compact) {
   } else {
     txt(k, bigWon(A.net), 15, C.ink, true);
     k.addSpacer(3);
-    const im = k.addImage(lineImage(A.hist, (w || 130) - 20, 28, up === false ? C.gRed : C.gMint));
-    im.imageSize = new Size((w || 130) - 20, 28);
+    const im = k.addImage(lineImage(A.hist, (w || 130) - 20, 22, up === false ? C.gRed : C.gBlue));
+    im.imageSize = new Size((w || 130) - 20, 22);
     if (A.diff != null) {
       k.addSpacer(2);
-      txt(k, "지난달 " + (up ? "+" : "−") + man(A.diff), 10, up ? C.mint : C.red);
+      txt(k, "지난달 " + (up ? "+" : "−") + man(A.diff), 10, up ? C.blue : C.red);
     }
   }
+  return k;
+}
+
+// 🏃 이번 달 운동 — 오른쪽 열 맨 아래 (보라)
+function workoutCard(parent, d, w) {
+  const wo = d.workout;
+  if (!wo || !wo.mDays) return null;
+  parent.addSpacer(8);
+  const k = card(parent, w, 0);
+  const r1 = k.addStack(); r1.centerAlignContent();
+  txt(r1, "🏃 운동", 11, C.purple, true);
+  r1.addSpacer();
+  if (wo.wTarget) txt(r1, "주 " + wo.wDid + "/" + wo.wTarget, 10, wo.wDid >= wo.wTarget ? C.mint : soft, true);
+  const r2 = k.addStack(); r2.centerAlignContent();
+  txt(r2, wo.mDone + "일", 15, C.ink, true);
+  txt(r2, " / " + wo.mDays + "일", 11, soft);
+  r2.addSpacer();
+  txt(r2, Math.round(wo.mDone / wo.mDays * 100) + "%", 11, C.purple, true);
+  k.addSpacer(4);
+  k.addImage(barImage(wo.mDone / wo.mDays, w - 20, 5, C.gPurple)).imageSize = new Size(w - 20, 5);
   return k;
 }
 
@@ -34827,9 +34856,9 @@ function weekCard(parent, d) {
     col.layoutVertically();
     col.centerAlignContent();
     const top = col.addStack(); top.addSpacer(); txt(top, x.w, 10, x.sun ? C.red : soft); top.addSpacer();
-    const mid = col.addStack(); mid.addSpacer(); txt(mid, x.d, 13, i === 0 ? C.mint : C.ink, i === 0); mid.addSpacer();
+    const mid = col.addStack(); mid.addSpacer(); txt(mid, x.d, 13, i === 0 ? C.blue : C.ink, i === 0); mid.addSpacer();
     const bot = col.addStack(); bot.addSpacer();
-    txt(bot, x.n ? "●".repeat(Math.min(3, x.n)) : " ", 7, i === 0 ? C.mint : soft);
+    txt(bot, x.n ? "●".repeat(Math.min(3, x.n)) : " ", 7, C.purple);
     bot.addSpacer();
     if (i < days.length - 1) k.addSpacer();
   });
@@ -34950,7 +34979,7 @@ function buildWidget(d, fam) {
   head.addSpacer(10);
   const tt = head.addStack(); tt.layoutVertically();
   txt(tt, "오늘 · " + dateLabel, 17, C.ink, true);
-  txt(tt, d.next ? "다음 " + d.next : stats(d), 12, d.next ? C.mint : soft);
+  txt(tt, d.next ? "⏰ 다음 " + d.next : (cnt.total ? "할 일 " + cnt.done + "/" + cnt.total : "오늘 할 일 없음"), 12, d.next ? C.mint : soft);
   head.addSpacer();
   const dds = d.ddays || [];
   // 하나면 넓게, 둘이면 조금 좁게 — 날수·이름이 잘리지 않게
@@ -34970,7 +34999,7 @@ function buildWidget(d, fam) {
   Lc.layoutVertically();
   const T = card(Lc, 0, 0);
   const th = T.addStack();   // 가로로 꽉 채우는 머리줄
-  txt(th, "할 일", 11, soft);
+  txt(th, "✅ 할 일", 11, C.mint, true);
   th.addSpacer();
   if (cnt.total) txt(th, cnt.done + "/" + cnt.total, 11, C.mint, true);
   T.addSpacer(5);
@@ -34983,14 +35012,14 @@ function buildWidget(d, fam) {
   const ups = (d.upcoming || []).slice(0, Math.max(0, room - 1));
   if (ups.length) {
     T.addSpacer(4);
-    txt(T, "다가오는 일정", 11, soft);
+    txt(T, "📅 다가오는 일정", 11, C.purple, true);
     T.addSpacer(4);
     for (const u of ups) {
       const r = T.addStack();
       r.centerAlignContent();
       const dc = r.addStack();
       dc.size = new Size(58, 0);
-      txt(dc, u.n === 1 ? "내일" : u.w + " " + u.d, 13, C.mint, true);
+      txt(dc, u.n === 1 ? "내일" : u.w + " " + u.d, 13, C.purple, true);
       dc.addSpacer();
       txt(r, (u.at ? u.at + " " : "") + u.t, 13, C.ink);
       r.addSpacer();
@@ -34998,25 +35027,6 @@ function buildWidget(d, fam) {
     }
   }
   T.addSpacer();
-  // 🏃 이번 달 운동 (할 일 카드 아래)
-  const wo = d.workout;
-  if (wo && wo.mDays) {
-    Lc.addSpacer(8);
-    const k = card(Lc, 0, 0);
-    const r1 = k.addStack(); r1.centerAlignContent();
-    txt(r1, "🏃 운동", 11, soft);
-    r1.addSpacer();
-    if (wo.wTarget) txt(r1, "이번 주 " + wo.wDid + "/" + wo.wTarget + "회", 10, wo.wDid >= wo.wTarget ? C.mint : soft, true);
-    const r2 = k.addStack(); r2.centerAlignContent();
-    txt(r2, wo.mDone + "일 / " + wo.mDays + "일", 15, C.ink, true);
-    r2.addSpacer(6);
-    txt(r2, Math.round(wo.mDone / wo.mDays * 100) + "% 달성", 11, wo.done ? C.mint : soft);
-    r2.addSpacer();
-    k.addSpacer(4);
-    const bw = 150;
-    k.addImage(barImage(wo.mDone / wo.mDays, bw, 5, C.green)).imageSize = new Size(bw, 5);
-  }
-
   mid.addSpacer(8);
   const R = mid.addStack();
   R.layoutVertically();
@@ -35024,6 +35034,7 @@ function buildWidget(d, fam) {
   moneyCard(R, d, 132, false);
   R.addSpacer(8);
   assetCard(R, d, 132, false);
+  workoutCard(R, d, 132);
   R.addSpacer();
 
   return w;
