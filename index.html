@@ -4018,6 +4018,7 @@ function renderInbox() {
 function projectRows() {
   const map = {};
   for (const t of (todos || [])) {
+    if (t.repeat && t.repeat.type) continue;   // 반복(루틴)은 끝이 없어 진행률에 넣지 않는다 — 루틴 칸에서 본다
     const raw = String(t.tag || '').trim();
     if (!raw) continue;
     const tag = catKey(raw);   // 예전 태그(병원·은행…)도 새 분류로 묶는다
