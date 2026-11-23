@@ -40,7 +40,7 @@
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
 // 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
-const WORKER_VERSION = '2026-11-21.2';
+const WORKER_VERSION = '2026-11-23.1';
 const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
   '/push/plan', '/push/status', '/relay/workout', '/relay/expense', '/relay/ping', '/widget', '/version', '/keys/status', '/keys/issue', '/keys/revoke', '/account/delete', '/widget/todo'];
 
@@ -1029,8 +1029,10 @@ function cleanWidgetData(w) {
 
 // 위젯에 줄 오늘 할일 — 앱이 마지막으로 보낸 것 위에 '위젯에서 누른 것' 을 덧씌운다
 function widgetView(plan, date) {
-  const w = plan && plan.widget;
-  if (!w || w.date !== date) return { todos: null };
+  // 미리 받아둔 날짜별 것 중 오늘 것 → 없으면 마지막으로 받은 것이 오늘 것일 때만
+  const w = ((plan && plan.widgetDays) || []).find(x => x && x.date === date)
+    || (plan && plan.widget && plan.widget.date === date ? plan.widget : null);
+  if (!w) return { todos: null };
   const todos = w.todos.map(t => ({ ...t }));
   for (const o of (plan.pendingOps || [])) {
     if (o.date !== date) continue;
@@ -1151,6 +1153,7 @@ async function handlePlan(request, env) {
     summaryOff: !!body.summaryOff,
     alertsOff: !!body.alertsOff,
     widget: cleanWidgetData(body.widget),
+    widgetDays: (Array.isArray(body.widgetDays) ? body.widgetDays : []).slice(0, 3).map(cleanWidgetData).filter(Boolean),
     // 위젯에서 눌렀는데 앱이 아직 반영 안 한 것 — 앱이 수신함을 비운 시각 이후 것만 남긴다
     pendingOps: ((old && old.pendingOps) || []).filter(o => o && Number(o.at) > (Number(body.inboxDrainedAt) || 0)),
     savedAt: Date.now(),

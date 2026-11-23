@@ -31208,6 +31208,8 @@ async function pushSummaryToServer() {
         alertsOff: !settings.pushEnabled,
         // 📱 위젯에 띄울 오늘 할일·운동·생활비·목표
         widget: widgetData(),
+        // 오늘·내일·모레 것을 미리 — 앱을 안 연 날에도 위젯이 그날 것을 보여준다
+        widgetDays: [0, 1, 2].map(i => i === 0 ? widgetData() : withDay(dayAfter(todayKey(), i), () => widgetData())),
         // 위젯에서 누른 것 중 여기까지는 앱에 반영됐다
         inboxDrainedAt: Number(settings.todoInboxDrainedAt) || 0,
         title: '📋 오늘 정리',
@@ -34441,13 +34443,10 @@ function buildWidget(d, fam) {
 
   w.addSpacer(5);
   if (!list) {
-    // 앱을 아직 새 판으로 안 열었을 때 — 예전처럼 줄글로
-    for (const l of d.lines.slice(0, small ? 4 : fam === "medium" ? 5 : 14)) {
-      const t = w.addText(l);
-      t.font = Font.systemFont(small ? 10 : 11);
-      t.textColor = ink;
-      t.lineLimit = 1;
-    }
+    // 며칠 동안 앱을 안 열어 오늘 것이 서버에 없을 때
+    const t = w.addText("플래너를 한 번 열면 오늘 할 일·일정이 채워져요");
+    t.font = Font.systemFont(small ? 10 : 12);
+    t.textColor = soft;
   } else {
     // 아래에 일정·생활비·자산 줄이 들어가므로 할 일은 크기별로 몇 줄만
     const max = small ? 2 : fam === "medium" ? (d.next ? 2 : 3) : 6;
@@ -34480,15 +34479,19 @@ function buildWidget(d, fam) {
     // 📅 이번 주 · 💰 생활비 · 📈 자산
     const ups = d.upcoming || [];
     const extra = [];
-    if (fam === "large") {
-      if (ups.length) extra.push({ text: "📅 이번 주", bold: true });
-      for (const u of ups.slice(0, 5)) extra.push({ text: "  " + upLine(u) });
-    } else if (fam === "medium" && ups.length) {
-      extra.push({ text: "📅 " + upLine(ups[0]) });
-    }
     const money = moneyLine(d, small);
-    if (money) extra.push({ text: money, warn: d.living && d.living.left < 0 });
     const asset = assetLine(d, small);
+    // 할 일이 적으면 남는 줄을 이번 주 일정에 준다
+    const used = (d.next ? 1 : 0) + Math.max(1, show.length) + (money ? 1 : 0) + (asset ? 1 : 0);
+    if (fam === "large") {
+      const n = Math.min(10, Math.max(3, 13 - used - (stats(d) ? 1 : 0) - (d.goals && d.goals.total ? 1 : 0)));
+      if (ups.length) extra.push({ text: "📅 이번 주", bold: true });
+      for (const u of ups.slice(0, n)) extra.push({ text: "  " + upLine(u) });
+    } else if (fam === "medium" && ups.length) {
+      const n = Math.min(4, Math.max(1, 6 - used));
+      for (const u of ups.slice(0, n)) extra.push({ text: "📅 " + upLine(u) });
+    }
+    if (money) extra.push({ text: money, warn: d.living && d.living.left < 0 });
     if (asset) extra.push({ text: asset });
     if (fam === "large" && d.goals && d.goals.total) extra.push({ text: "🎯 이달 목표 " + d.goals.done + "/" + d.goals.total });
 
