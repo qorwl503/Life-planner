@@ -8627,9 +8627,13 @@ function widgetData() {
   // 🎂 D-day — 날짜만 보낸다. 며칠 남았는지는 서버가 그날 기준으로 센다 (앱을 안 열어도 줄어들게)
   try {
     out.ddays = (settings.ddays || [])
-      .filter(x => x && /^\d{4}-\d{2}-\d{2}$/.test(String(x.date || '')) && String(x.date) >= tk)
-      .sort((a, b) => String(a.date).localeCompare(String(b.date)))
-      .slice(0, 6)
+      .filter(x => x && /^\d{4}-\d{2}-\d{2}$/.test(String(x.date || '')))
+      .sort((a, b) => {
+        const fa = String(a.date) >= tk, fb = String(b.date) >= tk;
+        if (fa !== fb) return fa ? -1 : 1;
+        return fa ? String(a.date).localeCompare(String(b.date)) : String(b.date).localeCompare(String(a.date));
+      })
+      .slice(0, 8)
       .map(x => ({ t: String(x.title || 'D-day').slice(0, 20), e: String(x.emoji || '📌').slice(0, 4), date: String(x.date) }));
   } catch (e) {}
   // 🗓️ 주간 달력 — 오늘부터 7일, 그날 할 일 수 (루틴 포함, 넘긴 것 제외)
@@ -34405,7 +34409,8 @@ function assetLine(d, short) {
   return s;
 }
 
-function ddLabel(x) { return x.n === 0 ? "D-DAY" : "D-" + x.n; }
+function ddLabel(x) { return x.n === 0 ? "D-DAY" : x.n < 0 ? "D+" + (-x.n) : "D-" + x.n; }
+function ddSoon(x) { return x && x.n >= 0 && x.n <= 7; }
 function ddLine(list, max) {
   return (list || []).slice(0, max).map(x => x.e + " " + x.t + " " + ddLabel(x)).join("  ·  ");
 }
@@ -34717,7 +34722,7 @@ function buildWidget(d, fam) {
     for (const it of left.slice(0, 2)) { txt(w, "○ " + it.t, 13, C.ink); w.addSpacer(3); }
     w.addSpacer();
     const dd0 = (d.ddays || [])[0];
-    if (dd0) txt(w, dd0.e + " " + dd0.t + " " + ddLabel(dd0), 11, dd0.n <= 7 ? C.red : C.mint, true);
+    if (dd0) txt(w, dd0.e + " " + dd0.t + " " + ddLabel(dd0), 11, ddSoon(dd0) ? C.red : C.mint, true);
     else {
       const m = moneyLine(d, true);
       if (m) txt(w, m, 11, d.living && d.living.left < 0 ? C.red : soft);
@@ -34742,7 +34747,7 @@ function buildWidget(d, fam) {
     plus.textColor = C.green;
     plus.url = runUrl("add=1");
     const ddm = d.ddays || [];
-    if (ddm.length) { L.addSpacer(3); txt(L, ddLine(ddm, 2), 11, ddm[0].n <= 7 ? C.red : C.mint, true); }
+    if (ddm.length) { L.addSpacer(3); txt(L, ddLine(ddm, 2), 11, ddSoon(ddm[0]) ? C.red : C.mint, true); }
     L.addSpacer(6);
     if (!showList.length) { txt(L, list.length ? "오늘 할 일 다 했어요 🎉" : "오늘 할 일이 없어요", 13, soft); L.addSpacer(5); }
     todoRows(L, showList, (d.next ? 2 : 3) - (ddm.length ? 1 : 0), 13);
@@ -34788,7 +34793,7 @@ function buildWidget(d, fam) {
       p.setPadding(4, 8, 4, 8);
       p.centerAlignContent();
       txt(p, x.e + " " + x.t + " ", 12, C.ink);
-      txt(p, ddLabel(x), 12, x.n <= 7 ? C.red : C.mint, true);
+      txt(p, ddLabel(x), 12, ddSoon(x) ? C.red : C.mint, true);
       if (i < Math.min(3, dds.length) - 1) pills.addSpacer(6);
     });
     pills.addSpacer();
@@ -34934,7 +34939,7 @@ async function showApp(d, banner) {
         const r = new UITableRow();
         r.height = 44;
         const c = r.addText(x.e + "  " + x.t, ddLabel(x));
-        c.subtitleColor = x.n <= 7 ? new Color("#C0392B") : green;
+        c.subtitleColor = ddSoon(x) ? new Color("#C0392B") : green;
         table.addRow(r);
       }
     }
