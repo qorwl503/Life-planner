@@ -34986,11 +34986,13 @@ async function showApp(d, banner) {
       table.addRow(g);
     }
 
-    // iOS 는 주소로 홈 화면 앱을 열 수 없다 (Safari 로 가서 로그인을 또 하라고 뜸) → 안내만
+    // iOS 는 주소로 홈 화면 앱을 열 수 없다 → Safari 로 연다 (Safari 에서 한 번 로그인하면 유지)
     const open = new UITableRow();
     open.height = 50;
-    const oc = open.addText("📱  플래너는 홈 화면의 MyPlanner 아이콘으로 열어주세요", "여기서 열면 Safari 로 가서 따로 로그인해야 해요");
+    const oc = open.addText("🌐  플래너 열기", "Safari 로 열려요 · 처음 한 번만 로그인하면 계속 유지돼요");
     oc.subtitleColor = soft;
+    open.onSelect = () => Safari.open(APP);
+    open.dismissOnSelect = false;
     table.addRow(open);
 
     const tip = new UITableRow();
