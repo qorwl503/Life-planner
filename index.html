@@ -7002,7 +7002,6 @@ function openWorkoutPlanModal() {
         <button class="modal-save" onclick="closeModal()">완료</button>
       </div>
       <div style="padding:0 16px 20px;">
-        <div style="font-size:11.5px; color:var(--text-tertiary); margin-bottom:10px;">할 종목을 누르세요. 다시 누르면 빠져요.</div>
         <div id="wp-body"></div>
       </div>
     </div>`;
@@ -7016,28 +7015,23 @@ function renderWorkoutPlanBody() {
   const plan = workoutPlan();
   const sports = SPORTS.filter(x => x.key !== '기타');
   const on = sports.filter(x => Number(plan[x.key]) > 0);
+  const off = sports.filter(x => !(Number(plan[x.key]) > 0));
+  // 고른 종목만 크게 (횟수 숫자 한 번 누르기). 나머지는 아래 작은 칩으로 — 앞에서 자리 차지하지 않게
   box.innerHTML = `
-    <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:6px;">
-      ${sports.map(x => {
-        const n = Number(plan[x.key]) || 0;
-        return `<button onclick="toggleWorkoutPlanSport('${escapeAttr(x.key)}')" style="padding:9px 2px 7px; border-radius:11px; border:${n ? '1.5px solid var(--accent-tab, #3D8168)' : '0.5px solid var(--border-tertiary)'}; background:${n ? 'rgba(61,129,104,0.14)' : 'var(--bg-primary)'}; cursor:pointer; font-family:inherit; display:flex; flex-direction:column; align-items:center; gap:2px;">
-          <span style="font-size:19px;">${x.emoji}</span>
-          <span style="font-size:11px; font-weight:${n ? '800' : '600'}; color:${n ? 'var(--accent-tab, #3D8168)' : 'var(--text-primary)'};">${escapeHTML(x.key)}</span>
-          <span style="font-size:9.5px; color:${n ? 'var(--accent-tab, #3D8168)' : 'transparent'}; font-weight:700;">주 ${n || 0}회</span>
-        </button>`;
-      }).join('')}
-    </div>
-    ${on.length ? `
-    <div style="margin-top:14px; font-size:11px; color:var(--text-tertiary); margin-bottom:4px;">주 몇 회? (숫자 한 번 누르기)</div>
-    ${on.map(x => {
+    ${on.length ? on.map(x => {
       const n = Number(plan[x.key]) || 0;
-      return `<div style="display:flex; align-items:center; gap:8px; padding:7px 0; border-top:0.5px solid var(--border-tertiary);">
-        <span style="flex:0 0 74px; font-size:12px; font-weight:700; white-space:nowrap;">${x.emoji} ${escapeHTML(x.key)}</span>
+      return `<div style="display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:0.5px solid var(--border-tertiary);">
+        <span style="flex:0 0 78px; font-size:12.5px; font-weight:700; white-space:nowrap;">${x.emoji} ${escapeHTML(x.key)}</span>
         <div style="flex:1; display:flex; gap:4px;">
           ${[1, 2, 3, 4, 5, 6, 7].map(k => `<button onclick="setWorkoutPlan('${escapeAttr(x.key)}', ${k})" style="flex:1; padding:7px 0; border-radius:8px; border:0.5px solid ${k === n ? 'var(--accent-tab, #3D8168)' : 'var(--border-tertiary)'}; background:${k === n ? 'var(--accent-tab, #3D8168)' : 'var(--bg-primary)'}; color:${k === n ? '#fff' : 'var(--text-secondary)'}; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">${k}</button>`).join('')}
         </div>
+        <button onclick="setWorkoutPlan('${escapeAttr(x.key)}', 0)" title="빼기" style="flex:none; border:none; background:transparent; color:var(--text-tertiary); font-size:14px; cursor:pointer; padding:0 2px;">✕</button>
       </div>`;
-    }).join('')}` : ''}`;
+    }).join('') : `<div style="font-size:12px; color:var(--text-tertiary); padding:6px 0 10px;">아직 계획이 없어요. 아래에서 종목을 눌러 추가하세요.</div>`}
+    <div style="margin-top:12px; font-size:10.5px; color:var(--text-tertiary); margin-bottom:6px;">＋ 종목 추가 (기본 주 3회)</div>
+    <div style="display:flex; flex-wrap:wrap; gap:5px;">
+      ${off.map(x => `<button onclick="setWorkoutPlan('${escapeAttr(x.key)}', 3)" style="padding:4px 9px; border-radius:999px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); color:var(--text-secondary); font-size:11px; cursor:pointer; font-family:inherit;">${x.emoji} ${escapeHTML(x.key)}</button>`).join('')}
+    </div>`;
 }
 
 function setWorkoutPlan(sport, n) {
