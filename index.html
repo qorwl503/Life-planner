@@ -34569,24 +34569,24 @@ function ddLine(list, max) {
   return (list || []).slice(0, max).map(x => x.e + " " + x.t + " " + ddLabel(x)).join("  ·  ");
 }
 
-// D-day 아이콘 — 홈 화면 앱 아이콘처럼
-function ddIcon(parent, x) {
-  const col = parent.addStack();
-  col.layoutVertically();
-  col.size = new Size(56, 0);
-  const box = col.addStack();
-  box.size = new Size(56, 44);
+// D-day 박스 — 머리줄 날짜 옆. 위: 이모지 + D-숫자, 아래: 이름
+function ddBox(parent, x) {
+  const box = parent.addStack();
+  box.layoutVertically();
+  box.size = new Size(66, 40);
   box.backgroundColor = C.card;
-  box.cornerRadius = 12;
-  box.centerAlignContent();
-  box.addSpacer();
-  const e = box.addText(x.e || "📌");
-  e.font = Font.systemFont(24);
-  box.addSpacer();
-  col.addSpacer(3);
-  const l = col.addStack(); l.addSpacer(); txt(l, ddLabel(x), 12, ddSoon(x) ? C.red : C.mint, true); l.addSpacer();
-  const n = col.addStack(); n.addSpacer(); txt(n, x.t, 10, soft); n.addSpacer();
-  return col;
+  box.cornerRadius = 10;
+  box.setPadding(3, 4, 3, 4);
+  const top = box.addStack(); top.addSpacer(); top.centerAlignContent();
+  const e = top.addText(x.e || "📌"); e.font = Font.systemFont(11);
+  top.addSpacer(2);
+  const l = txt(top, ddLabel(x), 12, ddSoon(x) ? C.red : C.mint, true);
+  l.minimumScaleFactor = 0.7;
+  top.addSpacer();
+  const n = box.addStack(); n.addSpacer();
+  txt(n, x.t, 9, soft);
+  n.addSpacer();
+  return box;
 }
 
 function upLine(u) {
@@ -34950,6 +34950,8 @@ function buildWidget(d, fam) {
   txt(tt, "오늘 · " + dateLabel, 17, C.ink, true);
   txt(tt, d.next ? "다음 " + d.next : stats(d), 12, d.next ? C.mint : soft);
   head.addSpacer();
+  const dds = d.ddays || [];
+  dds.slice(0, 2).forEach(x => { ddBox(head, x); head.addSpacer(6); });
   const plus = head.addText("＋");
   plus.font = Font.boldSystemFont(24);
   plus.textColor = C.green;
@@ -34957,8 +34959,6 @@ function buildWidget(d, fam) {
 
   // 주간 달력은 머리 바로 아래 (날짜 → 자세한 내용 순으로 읽히게)
   if ((d.week || []).length) { w.addSpacer(8); weekCard(w, d); }
-
-  const dds = d.ddays || [];
 
   w.addSpacer(8);
   const mid = w.addStack();
@@ -34994,15 +34994,6 @@ function buildWidget(d, fam) {
     }
   }
   T.addSpacer();
-  if (dds.length) {
-    Lc.addSpacer(8);
-    const icons = Lc.addStack();
-    dds.slice(0, 3).forEach((x, i) => {
-      if (i) icons.addSpacer();
-      ddIcon(icons, x);
-    });
-    if (dds.length < 3) icons.addSpacer();
-  }
 
   mid.addSpacer(8);
   const R = mid.addStack();
