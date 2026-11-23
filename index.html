@@ -34781,6 +34781,9 @@ function buildWidget(d, fam) {
   plus.textColor = C.green;
   plus.url = runUrl("add=1");
 
+  // 주간 달력은 머리 바로 아래 (날짜 → 자세한 내용 순으로 읽히게)
+  if ((d.week || []).length) { w.addSpacer(8); weekCard(w, d); }
+
   const dds = d.ddays || [];
   if (dds.length) {
     w.addSpacer(8);
@@ -34837,9 +34840,8 @@ function buildWidget(d, fam) {
   moneyCard(R, d, 132, false);
   R.addSpacer(8);
   assetCard(R, d, 132, false);
+  R.addSpacer();
 
-  w.addSpacer(8);
-  if ((d.week || []).length) weekCard(w, d);
   return w;
 }
 
