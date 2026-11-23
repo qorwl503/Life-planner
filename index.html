@@ -16771,8 +16771,10 @@ function openCalcModal(standalone) {
 
   // 키보드 입력 처리
   const calcInput = document.getElementById('calc-input');
+  // 터치 화면은 키보드 대신 화면 버튼만 쓴다 (inputmode=none → 눌러도 키보드 안 뜸)
+  if (calcIsTouch() && calcInput) { calcInput.setAttribute('inputmode', 'none'); calcInput.setAttribute('readonly', ''); }
   setTimeout(() => {
-    calcInput?.focus();
+    calcFocus(calcInput);
     calcEvaluate();
   }, 100);
 
@@ -16805,24 +16807,33 @@ function calcBtnStyle(bg, fg) {
   return `padding:18px; border:none; background:${bg}; color:${fg}; border-radius:12px; font-size:18px; font-weight:600; cursor:pointer; font-family:inherit; ${bg === 'white' ? 'box-shadow:0 1px 2px rgba(0,0,0,0.05); border:0.5px solid #E5E5E5;' : ''}`;
 }
 
+// 📱 터치 화면(아이폰)에서는 계산기 입력칸에 커서를 넣지 않는다 —
+//    넣으면 키보드가 올라오면서 화면이 맨 아래로 튀어 버튼을 못 누른다
+function calcIsTouch() {
+  try { return window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window; } catch (e) { return false; }
+}
+function calcFocus(input) {
+  if (input && !calcIsTouch()) input.focus();
+}
+
 function calcAppend(ch) {
   const input = document.getElementById('calc-input');
   input.value = (input.value || '') + ch;
-  input.focus();
+  calcFocus(input);
   calcEvaluate();
 }
 
 function calcBack() {
   const input = document.getElementById('calc-input');
   input.value = (input.value || '').slice(0, -1);
-  input.focus();
+  calcFocus(input);
   calcEvaluate();
 }
 
 function calcClear() {
   document.getElementById('calc-input').value = '';
   document.getElementById('calc-result').textContent = '0';
-  document.getElementById('calc-input').focus();
+  calcFocus(document.getElementById('calc-input'));
 }
 
 function calcQuick(amt) {
@@ -16831,7 +16842,7 @@ function calcQuick(amt) {
   if (!cur || cur === '0') cur = String(amt);
   else cur = cur + '+' + String(amt);
   input.value = cur;
-  input.focus();
+  calcFocus(input);
   calcEvaluate();
 }
 
