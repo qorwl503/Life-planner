@@ -1787,35 +1787,64 @@ function migrateTodos() {
 // 날짜 키 → 그룹 동적 분류 (today/tomorrow/week/later/past)
 // 🏷️ 할일 카테고리 — 입력 모달과 목록이 같은 정의를 쓰도록 전역에 둔다
 //    (예전엔 모달 안에만 있어서 목록에는 글자만 나오고 이모지가 빠졌음)
-const TODO_TAGS = [
-  { tag: '업무',   emoji: '💼',   color: '#456E9E' },
-  { tag: '미팅',   emoji: '🤝',   color: '#3E6696' },
-  { tag: '학습',   emoji: '📚',   color: '#6B5B96' },
-  { tag: '서류',   emoji: '📄',   color: '#5F6B73' },
-  { tag: '생활',   emoji: '🏠',   color: '#3D8168' },
-  { tag: '쇼핑',   emoji: '🛒',   color: '#B87D3C' },
-  { tag: '금융',   emoji: '💰',   color: '#895B29' },
-  { tag: '건강',   emoji: '🏥',   color: '#9B3A33' },
-  { tag: '운동',   emoji: '💪',   color: '#327059' },
-  { tag: '식사',   emoji: '🍽️',   color: '#C08A4A' },
-  { tag: '가족',   emoji: '👨‍👩‍👧', color: '#A55265' },
-  { tag: '친구',   emoji: '👥',   color: '#7C9CC4' },
-  { tag: '데이트', emoji: '💕',   color: '#B06B7E' },
-  { tag: '여행',   emoji: '✈️',   color: '#2E5F73' },
-  { tag: '취미',   emoji: '🎨',   color: '#8B7FAE' },
-  { tag: '집안일', emoji: '🧹',   color: '#4E7F68' },
-  { tag: '약속',   emoji: '📅',   color: '#5A7CA6' },
-  { tag: '연락',   emoji: '📞',   color: '#6E8CB0' },
-  { tag: '병원',   emoji: '💊',   color: '#A8524B' },
-  { tag: '은행',   emoji: '🏦',   color: '#7A6234' },
-  { tag: '관공서', emoji: '🏛️',   color: '#5F6B73' },
-  { tag: '차량',   emoji: '🚗',   color: '#4A6B80' },
-  { tag: '반려',   emoji: '🐾',   color: '#9A7B52' },
-  { tag: '정리',   emoji: '🗃️',   color: '#6B7A82' },
-  { tag: '기타',   emoji: '🗂️',   color: '#5F6B73' },
+// 🗂️ 분류 — 지출·가계부·할 일이 모두 이 목록 하나를 쓴다 (같은 이름·아이콘·색)
+//   exp: 지출에서 보임 / todo: 할 일에서 보임
+//   alias: 예전에 쓰던 이름 — 기록은 그대로 두고 화면·집계에서만 이 분류로 묶는다
+const CATEGORIES = [
+  { key: '업무',        emoji: '💼', color: '#456E9E', exp: 0, todo: 1, alias: ['업무'] },
+  { key: '미팅·약속',   emoji: '🤝', color: '#3E6696', exp: 0, todo: 1, alias: ['미팅', '약속'] },
+  { key: '서류·관공서', emoji: '📄', color: '#5F6B73', exp: 0, todo: 1, alias: ['서류', '관공서'] },
+  { key: '식비',        emoji: '🍚', color: '#C08A4A', exp: 1, todo: 1, alias: ['식비', '외식', '편의점', '식사'] },
+  { key: '카페·간식',   emoji: '☕', color: '#8B6A4E', exp: 1, todo: 0, alias: ['카페', '간식'] },
+  { key: '배달',        emoji: '🛵', color: '#D07A3A', exp: 1, todo: 0, alias: ['배달'] },
+  { key: '술·모임',     emoji: '🍺', color: '#B8873A', exp: 1, todo: 0, alias: ['술·모임', '술', '모임'] },
+  { key: '마트·생필품', emoji: '🛒', color: '#3D8168', exp: 1, todo: 1, alias: ['마트', '생필품', '생활', '세탁', '쇼핑(장보기)', '장보기'] },
+  { key: '집·관리비',   emoji: '🏠', color: '#4E7F68', exp: 1, todo: 1, alias: ['집안일', '정리', '관리비', '주거', '월세'] },
+  { key: '통신·구독',   emoji: '📱', color: '#5A7CA6', exp: 1, todo: 0, alias: ['통신', '구독', '게임·앱'] },
+  { key: '교통',        emoji: '🚌', color: '#4A6B80', exp: 1, todo: 0, alias: ['교통', '택시'] },
+  { key: '차량',        emoji: '🚗', color: '#3F5E70', exp: 1, todo: 1, alias: ['차량', '주유', '주차'] },
+  { key: '쇼핑·의류',   emoji: '🛍️', color: '#B87D3C', exp: 1, todo: 1, alias: ['쇼핑', '의류', '가전·가구'] },
+  { key: '병원·약',     emoji: '🏥', color: '#9B3A33', exp: 1, todo: 1, alias: ['의료', '약국', '병원', '건강'] },
+  { key: '미용',        emoji: '💇', color: '#B06B8E', exp: 1, todo: 1, alias: ['미용'] },
+  { key: '운동',        emoji: '🏋️', color: '#327059', exp: 1, todo: 1, alias: ['운동', '헬스'] },
+  { key: '공부·도서',   emoji: '📚', color: '#6B5B96', exp: 1, todo: 1, alias: ['학습', '교육', '도서', '자기계발', '학회'] },
+  { key: '문화·취미',   emoji: '🎬', color: '#8B7FAE', exp: 1, todo: 1, alias: ['문화', '취미'] },
+  { key: '여행',        emoji: '✈️', color: '#2E5F73', exp: 1, todo: 1, alias: ['여행'] },
+  { key: '가족·자녀',   emoji: '👨‍👩‍👧', color: '#A55265', exp: 1, todo: 1, alias: ['가족', '자녀'] },
+  { key: '친구·연락',   emoji: '👥', color: '#7C9CC4', exp: 0, todo: 1, alias: ['친구', '연락'] },
+  { key: '데이트',      emoji: '💕', color: '#B06B7E', exp: 1, todo: 1, alias: ['데이트'] },
+  { key: '반려동물',    emoji: '🐾', color: '#9A7B52', exp: 1, todo: 1, alias: ['반려동물', '반려'] },
+  { key: '선물·경조사', emoji: '🎁', color: '#C0605A', exp: 1, todo: 1, alias: ['선물', '경조사', '기부'] },
+  { key: '금융·투자',   emoji: '💰', color: '#895B29', exp: 1, todo: 1, alias: ['금융', '은행', '수수료'] },
+  { key: '기타',        emoji: '📦', color: '#5F6B73', exp: 1, todo: 1, alias: ['기타'] },
 ];
+const _CAT_BY = (() => {
+  const m = {};
+  for (const c of CATEGORIES) { m[c.key] = c; for (const a of c.alias) if (!m[a]) m[a] = c; }
+  return m;
+})();
+// 예전 이름 → 새 분류 이름. 모르는 이름(수입·투자 종목 등)은 그대로 돌려준다.
+function catKey(name) {
+  const n = String(name || '기타');
+  const c = _CAT_BY[n];
+  return c ? c.key : n;
+}
+function catMeta(name) {
+  return _CAT_BY[String(name || '기타')] || { key: String(name || '기타'), emoji: '📌', color: '#5F6B73' };
+}
+function catLabel(name) {
+  const m = catMeta(name);
+  return `${m.emoji} ${m.key}`;
+}
+const EXP_CATS = CATEGORIES.filter(c => c.exp).map(c => c.key);
+const TODO_CATS = CATEGORIES.filter(c => c.todo).map(c => c.key);
+
+// 할 일 태그 — 위 목록에서 할 일용만 (예전 모양 { tag, emoji, color } 그대로)
+const TODO_TAGS = CATEGORIES.filter(c => c.todo).map(c => ({ tag: c.key, emoji: c.emoji, color: c.color }));
 function todoTagMeta(tag) {
-  return TODO_TAGS.find(x => x.tag === tag) || { tag: tag || '기타', emoji: '📌', color: '#5F6B73' };
+  // 예전 태그(병원·은행·집안일 …)도 새 분류의 아이콘·색으로 보인다
+  const m = catMeta(tag);
+  return { tag: m.key, emoji: m.emoji, color: m.color };
 }
 // 목록용 배지 — 이모지 + 카테고리 색으로 한눈에 구분되게
 function todoTagBadge(tag) {
@@ -3133,16 +3162,16 @@ function getEventsForDay(d) {
 
   // 할일 — 🔧 기간 일정(여행 등)은 기간 내 모든 날짜에 표시 (몇일차인지 함께)
   todos.filter(t => todoOnDay(t, k)).forEach(t => {
-    let sub = t.tag;
+    let sub = t.tag ? catKey(t.tag) : t.tag;   // 예전 태그도 새 분류 이름으로
     if (t.endDateKey && t.dateKey) {
       const [sy, sm, sd] = t.dateKey.split('-').map(Number);
       const [ey, em, ed] = t.endDateKey.split('-').map(Number);
       const [ky, km, kd] = k.split('-').map(Number);
       const total = Math.round((new Date(ey, em-1, ed) - new Date(sy, sm-1, sd)) / 86400000) + 1;
       const dayN = Math.round((new Date(ky, km-1, kd) - new Date(sy, sm-1, sd)) / 86400000) + 1;
-      sub = `${t.tag} · ${dayN}일차/${total}일`;
+      sub = `${catKey(t.tag)} · ${dayN}일차/${total}일`;
     } else if (t.repeat && t.repeat.type) {
-      sub = `${t.tag} · 🔁 ${repeatLabel(t)}`;
+      sub = `${catKey(t.tag)} · 🔁 ${repeatLabel(t)}`;
     }
     events.push({
       type: 'todo',
@@ -3813,7 +3842,7 @@ function renderTodoBoard() {
           <div style="font-size:12.5px; font-weight:${done ? '500' : '700'}; line-height:1.4; color:${done ? 'var(--text-tertiary)' : 'var(--text-primary)'}; ${done ? 'text-decoration:line-through;' : ''}">${escapeHTML(t.title)}</div>
           <div style="display:flex; gap:6px; align-items:center; font-size:10px; color:var(--text-tertiary); margin-top:3px; flex-wrap:wrap;">
             ${t.time ? `<span style="color:var(--text-info); font-weight:700;">${escapeHTML(t.time)}</span>` : ''}
-            ${t.tag ? `<span>${escapeHTML(t.tag)}</span>` : ''}
+            ${t.tag ? `<span>${escapeHTML(catLabel(t.tag))}</span>` : ''}
             ${sub > 0 ? `<span>☑ ${subDone}/${sub}</span>` : ''}
             ${t.repeat ? '<span>🔁</span>' : ''}
           </div>
@@ -4685,7 +4714,7 @@ function openTodoGroup(kind) {
              style="width:22px; height:22px; flex-shrink:0; border-radius:7px; border:1.5px solid ${done ? 'var(--text-success)' : 'var(--border-secondary)'}; background:${done ? 'var(--text-success)' : 'transparent'}; color:white; font-size:12px; display:flex; align-items:center; justify-content:center; cursor:pointer;">${done ? '✓' : ''}</div>
         <div onclick="closeModal(); editTodo(${t.id});" style="flex:1; min-width:0; cursor:pointer;">
           <div style="font-size:12.5px; font-weight:600; ${done ? 'text-decoration:line-through; color:var(--text-tertiary);' : ''}">${t.time ? `<span style="color:var(--text-info); font-weight:700; margin-right:5px;">${escapeHTML(t.time)}</span>` : ''}${escapeHTML(t.title)}</div>
-          <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">${t.dateKey ? dateLabel(t.dateKey) : '날짜 없음'}${t.tag ? ' · ' + escapeHTML(t.tag) : ''}</div>
+          <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">${t.dateKey ? dateLabel(t.dateKey) : '날짜 없음'}${t.tag ? ' · ' + escapeHTML(catLabel(t.tag)) : ''}</div>
         </div>
         ${done ? '' : `<button onclick="skipTodo(${t.id}, event, '${dk}'); openTodoGroup('${kind}');" style="flex:0 0 auto; padding:4px 9px; border:0.5px solid var(--border-tertiary); background:var(--bg-secondary); color:var(--text-tertiary); border-radius:7px; font-size:11px; cursor:pointer; font-family:inherit;">안 함</button>`}
       </div>`;
@@ -5242,7 +5271,7 @@ function openTodoReview() {
         <div style="display:flex; align-items:center; gap:9px; padding:9px 11px; background:var(--bg-primary); border:0.5px solid var(--border-tertiary); border-left:3px solid ${color}; border-radius:10px; margin-bottom:5px; box-shadow:var(--shadow-card);">
           <div style="flex:1; min-width:0;">
             <div style="font-size:12.5px; font-weight:600;">${escapeHTML(r.t.title)}${r.repeat ? ' <span style="font-size:10px; color:var(--text-tertiary); font-weight:500;">🔁</span>' : ''}</div>
-            <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">${r.date || '날짜 없음'}${r.t.tag ? ' · ' + escapeHTML(r.t.tag) : ''}</div>
+            <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">${r.date || '날짜 없음'}${r.t.tag ? ' · ' + escapeHTML(catLabel(r.t.tag)) : ''}</div>
           </div>
           ${showUndo ? `<button onclick="skipTodo(${r.t.id}, event, '${r.date}'); closeModal();" style="flex:0 0 auto; padding:4px 9px; border:0.5px solid var(--border-tertiary); background:var(--bg-secondary); color:var(--text-secondary); border-radius:7px; font-size:11px; cursor:pointer; font-family:inherit;">되돌리기</button>` : ''}
         </div>`).join('')}`;
@@ -11000,7 +11029,7 @@ function renderMoneyInsightCards(opts) {
     // 카테고리별 묶기
     const catGroups = {};
     expenseItems.forEach(e => {
-      const cat = e.cat || '기타';
+      const cat = catKey(e.cat);
       if (!catGroups[cat]) catGroups[cat] = { count: 0, total: 0, memos: [] };
       catGroups[cat].count++;
       catGroups[cat].total += Number(e.amt) || 0;
@@ -11008,7 +11037,7 @@ function renderMoneyInsightCards(opts) {
     });
 
     // "새는 돈" 후보: 3회 이상 + 카페·편의점·구독 같은 자잘한 카테고리
-    const leakCats = ['카페', '편의점', '식비', '구독', '배달', '간식'];
+    const leakCats = ['카페·간식', '식비', '통신·구독', '배달'];
     const leaks = Object.entries(catGroups)
       .filter(([cat, g]) => g.count >= 3 && leakCats.some(lc => cat.includes(lc)))
       .map(([cat, g]) => ({ cat, count: g.count, total: g.total, avg: Math.round(g.total / g.count) }))
@@ -11044,7 +11073,7 @@ function renderMoneyInsightCards(opts) {
       const sumByCat = (mStr) => {
         const g = {};
         (budget.expenses || []).filter(e => isSpendRow(e) && e.dateKey?.startsWith(mStr) && Number((e.dateKey.split('-')[2]) || 99) <= dayCut)
-          .forEach(e => { const c = e.cat || '기타'; g[c] = (g[c] || 0) + (Number(e.amt) || 0); });
+          .forEach(e => { const c = catKey(e.cat); g[c] = (g[c] || 0) + (Number(e.amt) || 0); });
         return g;
       };
       const curG = sumByCat(curMStr);
@@ -11292,7 +11321,7 @@ function renderMonthlyReview(opts) {
   const expenseItems = viewMonthExpenses.filter(e => isSpendRow(e));
   const catTotals = {};
   expenseItems.forEach(e => {
-    const cat = e.cat || '기타';
+    const cat = catKey(e.cat);
     catTotals[cat] = (catTotals[cat] || 0) + (Number(e.amt) || 0);
   });
   const top3 = Object.entries(catTotals)
@@ -11422,7 +11451,7 @@ function catDetailRows(cat, prefix) {
   const want = String(cat || '기타');
   return (budget.expenses || [])
     .filter(e => e && e.dateKey && String(e.dateKey).startsWith(prefix))
-    .filter(e => (e.cat || '기타') === want)
+    .filter(e => catKey(e.cat) === catKey(want))
     .filter(e => !isTransferRow(e))     // 주머니 사이 이동은 쓴 돈이 아니다
     .sort((a, b) => String(b.dateKey).localeCompare(String(a.dateKey)));
 }
@@ -11510,10 +11539,17 @@ function openCatDetail(cat) {
 // ===== 💰 카테고리별 예산 =====
 // 쓰고 나서 집계만 하면 늦다. 미리 정해두고 '남은 돈'을 보게 한다.
 
-const BUDGET_CATS = ['식비','외식','배달','카페','술·모임','간식','편의점','마트','생필품','쇼핑','의류','가전·가구','교통','택시','주유','주차','문화','취미','게임·앱','의료','약국','미용','헬스','반려동물','생활','세탁','통신','경조사','기부','교육','도서','자기계발','여행','운동','자녀','선물','학회','구독','수수료','기타'];
+const BUDGET_CATS = EXP_CATS;
 
+// 예전 이름으로 정해둔 예산은 새 분류로 합쳐서 보여준다 (원본은 catBudgetOld 에 한 번 보관)
 function catBudgets() {
-  return settings.catBudget || {};
+  const raw = settings.catBudget || {};
+  const out = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const nk = catKey(k);
+    out[nk] = (out[nk] || 0) + (Number(v) || 0);
+  }
+  return out;
 }
 
 // 보고 있는 달의 카테고리별 지출 합계 (입금·투자는 뺀다)
@@ -11524,7 +11560,7 @@ function catSpentThisMonth() {
   const out = {};
   for (const e of (budget?.expenses || [])) {
     if (!String(e.dateKey || '').startsWith(prefix)) continue;
-    const c = e.cat || '기타';
+    const c = catKey(e.cat);
     // 같은 카테고리로 들어온 입금은 그 카테고리에서 빼준다
     out[c] = (out[c] || 0) + livingAmount(e);
   }
@@ -11651,6 +11687,9 @@ function openCatBudgetModal() {
 }
 
 function saveCatBudget() {
+  if (settings.catBudget && !settings.catBudgetOld && Object.keys(settings.catBudget).some(k => catKey(k) !== k)) {
+    settings.catBudgetOld = { ...settings.catBudget };   // 예전 이름 예산 원본 보관
+  }
   const out = {};
   document.querySelectorAll('[data-cat]').forEach(el => {
     const v = Math.round(Number(el.value) || 0);
@@ -11676,7 +11715,7 @@ function fillCatBudgetFromHistory() {
     const k = String(e.dateKey || '');
     const idx = months.findIndex(m => k.startsWith(m));
     if (idx < 0) continue;
-    const c = e.cat || '기타';
+    const c = catKey(e.cat);
     sum[c] = (sum[c] || 0) + livingAmount(e);
     seen[c] = seen[c] || new Set();
     seen[c].add(months[idx]);
@@ -12316,7 +12355,7 @@ function renderMoney() {
     // 카테고리별 합계 (입금은 음수로 들어가고, 받은 게 더 많으면 0에서 멈춘다)
     const catTotals = {};
     expensesOnly.forEach(e => {
-      const c = e.cat || '기타';
+      const c = catKey(e.cat);
       catTotals[c] = (catTotals[c] || 0) + livingAmount(e);
     });
     // 받은 게 쓴 것보다 많은 카테고리는 0으로 보고 목록에서 뺀다
@@ -12677,7 +12716,7 @@ function renderMoney() {
             <input type="checkbox" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation(); toggleExpenseSelect(${e.id});" style="width:18px; height:18px; cursor:pointer;" />
             <div style="flex:1; min-width:0;">
               <div style="font-weight:500;">${icon} ${escapeHTML(e.memo || e.cat)}</div>
-              <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">${isTf ? escapeHTML((e.from || '?') + ' → ' + (e.to || '?')) : escapeHTML(e.cat)}</div>
+              <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">${isTf ? escapeHTML((e.from || '?') + ' → ' + (e.to || '?')) : escapeHTML(catLabel(e.cat))}</div>
             </div>
             <span style="font-weight:600; color:${amtColor};">${sign}${Number(e.amt).toLocaleString()}원</span>
           </div>`;
@@ -12685,7 +12724,7 @@ function renderMoney() {
           html += `<div onclick="editExpense(${e.id})" style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; ${!isLast ? 'border-bottom:0.5px solid var(--border-tertiary);' : ''} font-size:13px; cursor:pointer;">
             <div style="flex:1; min-width:0;">
               <div style="font-weight:500;">${icon} ${escapeHTML(e.memo || e.cat)}</div>
-              <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">${isTf ? escapeHTML((e.from || '?') + ' → ' + (e.to || '?')) : escapeHTML(e.cat)}</div>
+              <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">${isTf ? escapeHTML((e.from || '?') + ' → ' + (e.to || '?')) : escapeHTML(catLabel(e.cat))}</div>
             </div>
             <span style="font-weight:600; color:${amtColor};">${sign}${Number(e.amt).toLocaleString()}원</span>
           </div>`;
@@ -12767,7 +12806,7 @@ function showDayExpenses(dateK) {
           return `<div onclick="closeModal(); setTimeout(()=>editExpense(${e.id}),100);" style="display:flex; justify-content:space-between; align-items:center; padding:11px 0; border-bottom:0.5px solid var(--border-tertiary); cursor:pointer;">
             <div style="flex:1; min-width:0;">
               <div style="font-size:13px; font-weight:500;">${isTf2 ? "🔁 " : isDep ? "💵 " : ""}${escapeHTML(e.memo || e.cat)}</div>
-              <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">${isTf2 ? escapeHTML((e.from || '?') + ' → ' + (e.to || '?')) : escapeHTML(e.cat)}</div>
+              <div style="font-size:11px; color:var(--text-tertiary); margin-top:2px;">${isTf2 ? escapeHTML((e.from || '?') + ' → ' + (e.to || '?')) : escapeHTML(catLabel(e.cat))}</div>
             </div>
             <span style="font-weight:600; color:${color}; font-size:13px;">${sign}${Number(e.amt).toLocaleString()}원</span>
           </div>`;
@@ -13455,7 +13494,7 @@ function renderMoneyAI(spent, projected) {
   const byCategory = {};
   budget.expenses.forEach(e => {
     if (e.dateKey && !e.dateKey.startsWith(thisMonthPrefix)) return;
-    byCategory[e.cat] = (byCategory[e.cat] || 0) + Number(e.amt);
+    byCategory[catKey(e.cat)] = (byCategory[catKey(e.cat)] || 0) + Number(e.amt);
   });
 
   const ranked = Object.entries(byCategory).sort((a,b) => b[1] - a[1]);
@@ -13657,7 +13696,7 @@ function archiveLastMonthIfNeeded() {
     budget.expenses.forEach(e => {
       if (!e.dateKey || !e.dateKey.startsWith(prevPrefix)) return;
       if (e.type === 'income') return; // 입금은 지출 요약에서 제외
-      byCategory[e.cat] = (byCategory[e.cat] || 0) + Number(e.amt);
+      byCategory[catKey(e.cat)] = (byCategory[catKey(e.cat)] || 0) + Number(e.amt);
       total += Number(e.amt);
     });
 
@@ -17341,24 +17380,7 @@ function openExpenseModal(forDateKey) {
         <div class="field-label">카테고리</div>
         <div style="margin-bottom:8px; font-size:11px; color:var(--text-tertiary); font-weight:500;">생활비</div>
         <div class="cat-grid" id="cat-grid">
-          <button class="cat-btn active" data-c="식비"><span style="font-size:18px;">🍚</span><span>식비</span></button>
-          <button class="cat-btn" data-c="카페"><span style="font-size:18px;">☕</span><span>카페</span></button>
-          <button class="cat-btn" data-c="교통"><span style="font-size:18px;">🚌</span><span>교통</span></button>
-          <button class="cat-btn" data-c="쇼핑"><span style="font-size:18px;">🛍️</span><span>쇼핑</span></button>
-          <button class="cat-btn" data-c="문화"><span style="font-size:18px;">🎬</span><span>문화/여가</span></button>
-          <button class="cat-btn" data-c="의료"><span style="font-size:18px;">🏥</span><span>의료</span></button>
-          <button class="cat-btn" data-c="미용"><span style="font-size:18px;">💇</span><span>미용</span></button>
-          <button class="cat-btn" data-c="생활"><span style="font-size:18px;">🧻</span><span>생활용품</span></button>
-          <button class="cat-btn" data-c="통신"><span style="font-size:18px;">📱</span><span>통신</span></button>
-          <button class="cat-btn" data-c="경조사"><span style="font-size:18px;">🎁</span><span>경조사</span></button>
-          <button class="cat-btn" data-c="교육"><span style="font-size:18px;">📝</span><span>교육</span></button>
-          <button class="cat-btn" data-c="도서"><span style="font-size:18px;">📚</span><span>도서</span></button>
-          <button class="cat-btn" data-c="여행"><span style="font-size:18px;">✈️</span><span>여행</span></button>
-          <button class="cat-btn" data-c="운동"><span style="font-size:18px;">🏋️</span><span>운동/건강</span></button>
-          <button class="cat-btn" data-c="자녀"><span style="font-size:18px;">👶</span><span>자녀/육아</span></button>
-          <button class="cat-btn" data-c="선물"><span style="font-size:18px;">💝</span><span>선물/기부</span></button>
-          <button class="cat-btn" data-c="학회"><span style="font-size:18px;">🩺</span><span>학회/의학</span></button>
-          <button class="cat-btn" data-c="기타"><span style="font-size:18px;">📦</span><span>기타</span></button>
+          ${EXP_CATS.map((c, i) => `<button class="cat-btn${i === 0 ? ' active' : ''}" data-c="${c}"><span style="font-size:18px;">${catMeta(c).emoji}</span><span>${c}</span></button>`).join('')}
         </div>
         <div style="margin:14px 0 8px; font-size:11px; color:var(--text-tertiary); font-weight:500;">💎 자산 투자 <span style="font-size:10px; opacity:0.82;">(자산 페이지와 연동됨)</span></div>
         <div class="cat-grid" id="cat-grid-invest">
@@ -17695,9 +17717,9 @@ function editExpense(id) {
       <div class="field">
         <div class="field-label">카테고리</div>
         <select id="edit-cat" style="width:100%; padding:11px 12px; border:0.5px solid var(--border-tertiary); border-radius:var(--radius-md); font-size:13px; background:var(--bg-primary); color:var(--text-primary); font-family:inherit;">
-          ${['식비','카페','편의점','마트','교통','쇼핑','문화','의료','미용','생활','통신','경조사','교육','도서','여행','운동','자녀','선물','학회','구독','투자','기타']
-            .concat([e.cat].filter(c => c && !['식비','카페','편의점','마트','교통','쇼핑','문화','의료','미용','생활','통신','경조사','교육','도서','여행','운동','자녀','선물','학회','구독','투자','기타'].includes(c)))
-            .map(c => `<option value="${c}" ${c === e.cat ? 'selected' : ''}>${c}</option>`).join('')}
+          ${EXP_CATS.concat(['투자'])
+            .concat([e.cat].filter(c => c && !EXP_CATS.includes(c) && c !== '투자'))
+            .map(c => `<option value="${escapeAttr(c)}" ${c === e.cat ? 'selected' : ''}>${EXP_CATS.includes(c) || c === '투자' ? catLabel(c) : escapeHTML(c) + ' (예전 분류 → ' + catLabel(c) + ')'}</option>`).join('')}
         </select>
       </div>
 
@@ -20094,7 +20116,7 @@ function guessExpenseCategoryFromText(text) {
     { cat:'수수료', kw:['수수료','이체수수료','atm'] },
   ];
   for (const r of rules) {
-    if (r.kw.some(k => t.includes(k.toLowerCase()))) return r.cat;
+    if (r.kw.some(k => t.includes(k.toLowerCase()))) return catKey(r.cat);
   }
   return '기타';
 }
@@ -20652,7 +20674,7 @@ async function processCardCapture(input) {
    - store: 가맹점/사용처/입금처 (예: "스타벅스", "이마트", "급여")
    - amount: 금액 (숫자만, 콤마 제거, 원화, 항상 양수)
    - type: "expense"(지출·결제·출금) 또는 "income"(입금·수입·급여·이체받음·환급)
-   - category: 지출이면 - 식비, 카페, 교통, 쇼핑, 도서, 의료, 문화, 통신, 학습, 기타
+   - category: 지출이면 - ${EXP_CATS.join(', ')} 중 하나
      입금이면 - 더치페이, 송금받음, 빌려준돈, 회비정산, 경조사, 환급, 환불, 용돈, 급여, 상여, 이자, 중고판매, 지원금, 기타입금
 2. 지출과 입금을 모두 추출한다 (입금 내역서·이체 화면도 그대로 읽는다)
    - "+" 로 표시되거나 입금/수입/급여/환급/이체받음이면 type="income"
@@ -21244,7 +21266,7 @@ function openTodoModal(forDateKey, editTodoObj) {
         <div class="field-label">카테고리</div>
         <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:6px;" id="tag-grid">
           ${TODO_TAGS.map(({tag, emoji}) => `
-            <button class="chip ${(isEdit ? editTodoObj.tag : '업무') === tag ? 'active' : ''}" data-tag="${tag}" style="display:flex; align-items:center; justify-content:center; gap:4px; padding:8px 6px; font-size:11px;">
+            <button class="chip ${catKey(isEdit ? editTodoObj.tag : '업무') === tag ? 'active' : ''}" data-tag="${tag}" style="display:flex; align-items:center; justify-content:center; gap:4px; padding:8px 6px; font-size:11px;">
               <span style="font-size:13px;">${emoji}</span>${tag}
             </button>
           `).join('')}
@@ -31113,7 +31135,7 @@ function buildMonthlySummary(mKey) {
 
     if (spent > 0) {
       const byCat = {};
-      spend.forEach(e => { const c = e.cat || '기타'; byCat[c] = (byCat[c] || 0) + (Number(e.amt) || 0); });
+      spend.forEach(e => { const c = catKey(e.cat); byCat[c] = (byCat[c] || 0) + (Number(e.amt) || 0); });
       const top = Object.entries(byCat).sort((a, b) => b[1] - a[1])[0];
       out.push(`💰 ${Math.round((spent - got) / 10000).toLocaleString()}만원 씀` +
         (top ? ` · 가장 많이 쓴 곳 ${top[0]} ${Math.round(top[1] / 10000)}만` : ''));
