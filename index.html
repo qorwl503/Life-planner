@@ -34577,21 +34577,22 @@ function ddLine(list, max) {
 }
 
 // D-day 박스 — 머리줄 날짜 옆. 위: 이모지 + D-숫자, 아래: 이름
-function ddBox(parent, x) {
+function ddBox(parent, x, width) {
   const box = parent.addStack();
   box.layoutVertically();
-  box.size = new Size(66, 40);
+  box.size = new Size(width || 104, 44);
   box.backgroundColor = C.card;
   box.cornerRadius = 10;
-  box.setPadding(3, 4, 3, 4);
+  box.setPadding(4, 6, 4, 6);
   const top = box.addStack(); top.addSpacer(); top.centerAlignContent();
-  const e = top.addText(x.e || "📌"); e.font = Font.systemFont(11);
-  top.addSpacer(2);
-  const l = txt(top, ddLabel(x), 12, ddSoon(x) ? C.red : C.mint, true);
-  l.minimumScaleFactor = 0.7;
+  const e = top.addText(x.e || "📌"); e.font = Font.systemFont(13);
+  top.addSpacer(3);
+  const l = txt(top, ddLabel(x), 14, ddSoon(x) ? C.red : C.mint, true);
+  l.minimumScaleFactor = 0.6;   // 날수는 잘리지 않게 줄여서라도 다 보이게
   top.addSpacer();
   const n = box.addStack(); n.addSpacer();
-  txt(n, x.t, 9, soft);
+  const nm = txt(n, x.t, 10, soft);
+  nm.minimumScaleFactor = 0.7;  // 이름도 웬만하면 다 보이게
   n.addSpacer();
   return box;
 }
@@ -34958,7 +34959,9 @@ function buildWidget(d, fam) {
   txt(tt, d.next ? "다음 " + d.next : stats(d), 12, d.next ? C.mint : soft);
   head.addSpacer();
   const dds = d.ddays || [];
-  dds.slice(0, 2).forEach(x => { ddBox(head, x); head.addSpacer(6); });
+  // 하나면 넓게, 둘이면 조금 좁게 — 날수·이름이 잘리지 않게
+  const ddw = dds.length >= 2 ? 84 : 104;
+  dds.slice(0, 2).forEach(x => { ddBox(head, x, ddw); head.addSpacer(6); });
   const plus = head.addText("＋");
   plus.font = Font.boldSystemFont(24);
   plus.textColor = C.green;
