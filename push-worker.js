@@ -40,7 +40,7 @@
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
 // 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
-const WORKER_VERSION = '2026-11-23.3';
+const WORKER_VERSION = '2026-11-23.4';
 const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
   '/push/plan', '/push/status', '/relay/workout', '/relay/expense', '/relay/ping', '/widget', '/version', '/keys/status', '/keys/issue', '/keys/revoke', '/account/delete', '/widget/todo'];
 
@@ -1166,6 +1166,7 @@ async function handlePlan(request, env) {
     widgetDays: (Array.isArray(body.widgetDays) ? body.widgetDays : []).slice(0, 3).map(cleanWidgetData).filter(Boolean),
     // 위젯에서 눌렀는데 앱이 아직 반영 안 한 것 — 앱이 수신함을 비운 시각 이후 것만 남긴다
     pendingOps: ((old && old.pendingOps) || []).filter(o => o && Number(o.at) > (Number(body.inboxDrainedAt) || 0)),
+    appVer: String(body.appVer || '').slice(0, 40), ddTotal: Math.min(999, Number(body.ddTotal) || 0),
     savedAt: Date.now(),
   };
   await env.PUSH_KV.put(planKey(who.uid), JSON.stringify(plan));

@@ -31250,6 +31250,8 @@ async function pushSummaryToServer() {
         widgetDays: [0, 1, 2].map(i => i === 0 ? widgetData() : withDay(dayAfter(todayKey(), i), () => widgetData())),
         // 위젯에서 누른 것 중 여기까지는 앱에 반영됐다
         inboxDrainedAt: Number(settings.todoInboxDrainedAt) || 0,
+        // 문제 찾기용 — 어느 판 앱이 보냈는지, D-day 가 몇 개 등록돼 있는지 (내용은 안 보냄)
+        appVer: String(APP_VERSION || ''), ddTotal: (settings.ddays || []).length,
         title: '📋 오늘 정리',
         // 오늘 것 (옛 서버도 이걸 본다)
         body: buildMorningSummary(),
