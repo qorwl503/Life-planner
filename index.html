@@ -34418,15 +34418,17 @@ function todoLine(t) {
 
 // ── 위젯 ─────────────────────────────────────────────
 // 그림(링·막대·그래프·체크 동그라미)은 DrawContext 로 그려 이미지로 넣는다.
-const DARK = Device.isUsingDarkAppearance();
+// 글자색은 Color.dynamic (위젯 안에서는 다크모드 감지가 틀릴 때가 있어서), 그림 색은 양쪽 배경 다 보이는 중간색
 const C = {
   card: Color.dynamic(new Color("#FFFFFF"), new Color("#2C2C2E")),
-  track: new Color(DARK ? "#3A3A3C" : "#E3E3E8"),
+  track: new Color("#8E8E93", 0.3),
   green: new Color("#3D8168"),
-  mint: new Color(DARK ? "#5FB38F" : "#2F7A5C"),
-  red: new Color(DARK ? "#FF6B5E" : "#D0402F"),
-  dim: new Color(DARK ? "#6B6B70" : "#B8B8BE"),
-  ink: new Color(DARK ? "#F2F2F2" : "#1A1A1A"),
+  mint: Color.dynamic(new Color("#2F7A5C"), new Color("#5FB38F")),
+  red: Color.dynamic(new Color("#D0402F"), new Color("#FF6B5E")),
+  dim: new Color("#8E8E93", 0.8),
+  ink: Color.dynamic(new Color("#1A1A1A"), new Color("#F2F2F2")),
+  gMint: new Color("#4A9E7C"),
+  gRed: new Color("#E5533F"),
 };
 const widgetBg = Color.dynamic(new Color("#F2F2F7"), new Color("#1C1C1E"));
 
@@ -34463,12 +34465,18 @@ function ringImage(done, total, size) {
     c.addPath(arcPath(size / 2, size / 2, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * pct));
     c.strokePath();
   }
-  c.setFont(Font.boldSystemFont(Math.round(size * 0.27)));
-  c.setTextColor(C.ink);
-  c.setTextAlignedCenter();
-  const fs = Math.round(size * 0.27);
-  c.drawTextInRect(total ? done + "/" + total : "–", new Rect(0, size / 2 - fs * 0.62, size, fs * 1.4));
   return c.getImage();
+}
+
+function ring(parent, done, total, size) {
+  const s = parent.addStack();
+  s.size = new Size(size, size);
+  s.backgroundImage = ringImage(done, total, size);
+  s.centerAlignContent();
+  s.addSpacer();
+  txt(s, total ? done + "/" + total : "–", Math.round(size * 0.27), C.ink, true);
+  s.addSpacer();
+  return s;
 }
 
 function checkImage(done) {
@@ -34573,7 +34581,7 @@ function moneyCard(parent, d, w, compact) {
     const over = L.left < 0;
     txt(k, over ? man(-L.left) + " 초과" : man(L.left) + " 남음", compact ? 13 : 15, over ? C.red : C.ink, true);
     k.addSpacer(4);
-    k.addImage(barImage(L.spent / L.total, (w || 130) - 20, compact ? 5 : 6, over ? C.red : C.green)).imageSize = new Size((w || 130) - 20, compact ? 5 : 6);
+    k.addImage(barImage(L.spent / L.total, (w || 130) - 20, compact ? 5 : 6, over ? C.gRed : C.green)).imageSize = new Size((w || 130) - 20, compact ? 5 : 6);
     if (!compact) {
       k.addSpacer(3);
       txt(k, over ? man(L.spent) + " / " + man(L.total) : "하루 " + man(L.perDay) + " · " + L.daysLeft + "일", 10, soft);
@@ -34595,12 +34603,12 @@ function assetCard(parent, d, w, compact) {
     row.centerAlignContent();
     txt(row, bigWon(A.net).replace(/ .*/, ""), 13, C.ink, true);
     row.addSpacer(6);
-    const im = row.addImage(lineImage(A.hist, 44, 16, up === false ? C.red : C.mint));
+    const im = row.addImage(lineImage(A.hist, 44, 16, up === false ? C.gRed : C.gMint));
     im.imageSize = new Size(44, 16);
   } else {
     txt(k, bigWon(A.net), 15, C.ink, true);
     k.addSpacer(3);
-    const im = k.addImage(lineImage(A.hist, (w || 130) - 20, 28, up === false ? C.red : C.mint));
+    const im = k.addImage(lineImage(A.hist, (w || 130) - 20, 28, up === false ? C.gRed : C.gMint));
     im.imageSize = new Size((w || 130) - 20, 28);
     if (A.diff != null) {
       k.addSpacer(2);
@@ -34697,8 +34705,7 @@ function buildWidget(d, fam) {
     w.setPadding(12, 12, 12, 12);
     const top = w.addStack();
     top.centerAlignContent();
-    const ring = top.addImage(ringImage(cnt.done, cnt.total, 40));
-    ring.imageSize = new Size(40, 40);
+    ring(top, cnt.done, cnt.total, 40);
     top.addSpacer(8);
     const tt = top.addStack(); tt.layoutVertically();
     txt(tt, "오늘", 15, C.ink, true);
@@ -34756,8 +34763,7 @@ function buildWidget(d, fam) {
   w.setPadding(14, 14, 12, 14);
   const head = w.addStack();
   head.centerAlignContent();
-  const ring = head.addImage(ringImage(cnt.done, cnt.total, 40));
-  ring.imageSize = new Size(40, 40);
+  ring(head, cnt.done, cnt.total, 40);
   head.addSpacer(10);
   const tt = head.addStack(); tt.layoutVertically();
   txt(tt, "오늘 · " + dateLabel, 17, C.ink, true);
@@ -34789,12 +34795,32 @@ function buildWidget(d, fam) {
   w.addSpacer(8);
   const mid = w.addStack();
   const T = card(mid, 0, 0);
-  txt(T, "할 일", 11, soft);
+  const th = T.addStack();   // 가로로 꽉 채우는 머리줄
+  txt(th, "할 일", 11, soft);
+  th.addSpacer();
+  if (cnt.total) txt(th, cnt.done + "/" + cnt.total, 11, C.mint, true);
   T.addSpacer(5);
-  if (!showList.length) txt(T, "오늘 할 일이 없어요", 13, soft);
+  if (!showList.length) { txt(T, "오늘 할 일이 없어요", 13, soft); T.addSpacer(5); }
   todoRows(T, showList, 6, 13);
   const more = showList.length - 6;
   if (more > 0) txt(T, "외 " + more + "개", 10, soft);
+  // 남는 줄에 다가오는 일정
+  const room = 6 - Math.min(6, showList.length) - (showList.length ? 0 : 1);
+  const ups = (d.upcoming || []).slice(0, Math.max(0, room - 1));
+  if (ups.length) {
+    T.addSpacer(4);
+    txt(T, "다가오는 일정", 11, soft);
+    T.addSpacer(4);
+    for (const u of ups) {
+      const r = T.addStack();
+      r.centerAlignContent();
+      txt(r, u.n === 1 ? "내일" : u.w + " " + u.d, 12, C.mint, true);
+      r.addSpacer(6);
+      txt(r, (u.at ? u.at + " " : "") + u.t, 12, C.ink);
+      r.addSpacer();
+      T.addSpacer(4);
+    }
+  }
   T.addSpacer();
 
   mid.addSpacer(8);
