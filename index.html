@@ -4018,8 +4018,9 @@ function renderInbox() {
 function projectRows() {
   const map = {};
   for (const t of (todos || [])) {
-    const tag = String(t.tag || '').trim();
-    if (!tag) continue;
+    const raw = String(t.tag || '').trim();
+    if (!raw) continue;
+    const tag = catKey(raw);   // 예전 태그(병원·은행…)도 새 분류로 묶는다
     if (!map[tag]) map[tag] = { tag, total: 0, done: 0, rest: [] };
     map[tag].total++;
     if (t.done) map[tag].done++;
@@ -4057,46 +4058,33 @@ function projectRows() {
 function renderProjectCard() {
   const rows = projectRows();
   if (rows.length === 0) return '';
-
-  const open = !!window._projOpen;
   const running = rows.filter(r => r.left > 0);
+  const finished = rows.filter(r => r.left === 0);
 
-  const list = rows.map(r => {
-    const done = r.left === 0;
+  // 깔끔하게 — 진행 중인 것만. 줄마다: 이름 + 남은 수 / 막대 / (밀림·마감·다음) 한 줄
+  const list = running.map((r, i) => {
+    const m = catMeta(r.tag);
+    const meta = [
+      r.overdue > 0 ? `<span style="color:var(--text-danger); font-weight:700;">밀림 ${r.overdue}</span>` : '',
+      r.nextTitle ? `<span style="color:var(--text-tertiary);">다음 · ${escapeHTML(r.nextTitle)}${r.nextDate ? ` (${r.nextDate.slice(5).replace('-', '/')})` : ''}</span>` : '',
+    ].filter(Boolean).join('<span style="color:var(--text-tertiary);"> · </span>');
     return `
-      <div onclick="window.todoSearch='${escapeAttr(r.tag)}'; renderTodo();" style="padding:8px 0; border-top:0.5px solid var(--border-tertiary); cursor:pointer;">
-        <div style="display:flex; justify-content:space-between; align-items:baseline; font-size:11.5px; margin-bottom:4px;">
-          <span style="font-weight:700; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHTML(r.tag)}</span>
-          <span style="color:${done ? 'var(--text-success)' : 'var(--text-tertiary)'}; font-weight:${done ? '800' : '600'}; flex-shrink:0; margin-left:8px;">
-            ${done ? '완료' : `${r.done}/${r.total}`}
-          </span>
+      <div onclick="window.todoSearch='${escapeAttr(r.tag)}'; renderTodo();" style="padding:9px 0; ${i ? 'border-top:0.5px solid var(--border-tertiary);' : ''} cursor:pointer;">
+        <div style="display:flex; align-items:center; gap:8px; font-size:12.5px;">
+          <span style="flex:none;">${m.emoji}</span>
+          <span style="font-weight:700; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHTML(r.tag)}</span>
+          <span style="flex:none; font-size:11px; color:var(--text-tertiary); font-weight:600;">${r.done}/${r.total}</span>
         </div>
-        <div style="height:5px; background:var(--bg-primary); border-radius:999px; overflow:hidden;">
-          <div style="width:${r.pct}%; height:100%; background:${done ? 'var(--text-success)' : (r.overdue > 0 ? 'var(--text-danger)' : 'var(--accent-tab, #6B5B96)')}; border-radius:999px;"></div>
+        <div style="height:4px; background:var(--bg-secondary); border-radius:999px; overflow:hidden; margin:6px 0 0 24px;">
+          <div style="width:${r.pct}%; height:100%; background:${r.overdue > 0 ? 'var(--text-danger)' : 'var(--accent-tab, #3D8168)'}; border-radius:999px;"></div>
         </div>
-        ${done ? '' : `
-        <div style="display:flex; align-items:center; gap:6px; margin-top:4px; font-size:10px; line-height:1.5;">
-          ${r.dday != null ? `<span style="flex:none; font-weight:800; color:${r.dday < 0 ? 'var(--text-danger)' : r.dday <= 3 ? 'var(--text-warning)' : 'var(--text-tertiary)'};">
-            ${r.dday < 0 ? `D+${-r.dday}` : r.dday === 0 ? 'D-day' : `D-${r.dday}`}
-          </span>` : ''}
-          ${r.overdue > 0 ? `<span style="flex:none; color:var(--text-danger); font-weight:700;">밀린 ${r.overdue}개</span>` : ''}
-          ${r.nextTitle ? `<span style="flex:1; min-width:0; color:var(--text-tertiary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-            다음 · ${escapeHTML(r.nextTitle)}${r.nextDate ? ` (${r.nextDate.slice(5)})` : ''}
-          </span>` : ''}
-        </div>`}
-        ${!done && r.nextTitle ? `<div style="font-size:10.5px; color:var(--text-tertiary); margin-top:4px;">다음 · ${escapeHTML(r.nextTitle)}</div>` : ''}
+        ${meta ? `<div style="margin:5px 0 0 24px; font-size:10.5px; line-height:1.4; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${meta}</div>` : ''}
       </div>`;
   }).join('');
 
   return `
-    <div style="margin-bottom:14px; padding:12px 13px; background:var(--bg-secondary); border-radius:12px;">
-      <div onclick="window._projOpen = !window._projOpen; renderTodo();" style="display:flex; align-items:center; justify-content:space-between; cursor:pointer;">
-        <span style="font-size:12.5px; font-weight:800;">📦 프로젝트 ${running.length ? running.length : ''}</span>
-        <span style="font-size:11px; color:var(--text-tertiary);">${open ? '접기' : '펼치기'}</span>
-      </div>
-      ${open ? `<div style="margin-top:4px;">${list}</div>
-        <div style="font-size:10.5px; color:var(--text-tertiary); margin-top:8px; line-height:1.6;">할일에 같은 태그를 달면 여기 묶여요.</div>` : ''}
-    </div>`;
+    ${list || '<div style="font-size:11.5px; color:var(--text-tertiary); padding:4px 0;">진행 중인 분류가 없어요 ✨</div>'}
+    ${finished.length ? `<div style="margin-top:8px; padding-top:8px; border-top:0.5px solid var(--border-tertiary); font-size:10.5px; color:var(--text-tertiary);">✓ 다 끝낸 분류 ${finished.length}개 — ${finished.map(r => catMeta(r.tag).emoji).join(' ')}</div>` : ''}`;
 }
 
 // 접었다 펼 수 있는 섹션 틀. 접힘 상태는 기기에 남겨 다음에 열어도 그대로다.
@@ -4512,6 +4500,7 @@ function todoMatchesSearch(t, q) {
   if ((t.title || '').toLowerCase().includes(s)) return true;
   if ((t.memo || '').toLowerCase().includes(s)) return true;
   if ((t.tag || '').toLowerCase().includes(s)) return true;
+  if (t.tag && catKey(t.tag).toLowerCase() === s) return true;
   if (Array.isArray(t.subtasks) && t.subtasks.some(x => (x.text || '').toLowerCase().includes(s))) return true;
   return false;
 }
@@ -5131,14 +5120,15 @@ function routineWeek(t) {
 
 function renderDailyRoutines() {
   const tk = todayKey();
-  const all = todos.filter(t => t.repeat && t.repeat.type);
+  // 통째로 끝낸 반복(done) 은 루틴에서 뺀다
+  const all = todos.filter(t => t.repeat && t.repeat.type && t.done !== true);
   const routines = all.filter(t => todoRepeatsOn(t, tk));
-  const resting = all.filter(t => !todoRepeatsOn(t, tk));
+  // 이미 끝난 루틴(종료일이 지난 것)은 보여주지 않는다 — 지저분해진다
+  const resting = all.filter(t => !todoRepeatsOn(t, tk) && !(t.repeat.until && tk > t.repeat.until));
 
   if (routines.length === 0) {
     return `
-      <div class="card" style="margin-bottom:12px;">
-        <div style="font-size:13px; font-weight:700; margin-bottom:6px;">🔁 데일리 루틴</div>
+      <div>
         ${resting.length === 0 ? `
           <div style="font-size:11px; color:var(--text-tertiary); line-height:1.6;">
             매일·매주 반복하는 일을 루틴으로 만들어보세요.<br>
@@ -5196,10 +5186,10 @@ function renderDailyRoutines() {
   }).join('');
 
   return `
-    <div class="card" style="margin-bottom:12px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-        <span style="font-size:13px; font-weight:700;">🔁 데일리 루틴 <span style="font-size:11px; color:var(--text-tertiary); font-weight:500;">${doneN}/${routines.length}</span></span>
-        ${doneN === routines.length ? '<span style="font-size:11px; color:var(--text-success); font-weight:700;">오늘 다 했어요 ✨</span>' : ''}
+    <div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:2px; font-size:11px; color:var(--text-tertiary);">
+        <span>오늘 ${doneN}/${routines.length}</span>
+        ${doneN === routines.length ? '<span style="color:var(--text-success); font-weight:700;">다 했어요 ✨</span>' : ''}
       </div>
       ${rows}
     </div>`;
