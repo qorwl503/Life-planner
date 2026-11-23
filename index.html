@@ -2223,7 +2223,15 @@ function render() {
     try { refreshPushSubscription(); } catch (e) { console.warn('푸시 재등록 실패:', e); }
     // 푸시를 안 켰어도 서비스워커는 등록해둔다 (앱 안 알림이 알림 센터에 남게 하려면 필요)
     try { registerPushWorker(); } catch (e) {}
-    setTimeout(() => { try { pushSummaryToServer(); } catch (e) {} }, 4000);   // 데이터가 다 올라온 뒤 갱신
+    // 데이터가 올라오는 대로 바로 올린다. 예전엔 4초를 기다려서, 앱을 잠깐 열고 닫으면
+    // 위젯·알림 내용이 하루 묵은 채로 남았다.
+    (async () => {
+      try {
+        await new Promise(r => setTimeout(r, 800));
+        await waitForCloudLoad();
+        await pushSummaryToServer();
+      } catch (e) {}
+    })();
     try { consumeWorkoutFromUrl(); } catch (e) { console.warn('URL 운동 기록 실패:', e); }
     try { consumeExpenseFromUrl(); } catch (e) { console.warn('URL 가계부 기록 실패:', e); }
     // 📥 워치·문자가 보내둔 기록 가져오기 (앱이 안 열려 있던 동안 쌓인 것)
@@ -8541,8 +8549,10 @@ async function waitForCloudLoad(maxMs = 15000) {
 // 그래서 화면이 보일 때마다 오늘 것으로 다시 올린다 (10분에 한 번까지).
 function refreshSummaryPlan(why) {
   if (document.visibilityState !== 'visible') return;
-  if (!settings.pushEnabled || settings.summaryTime === 'off') return;
-  if (Date.now() - (window._lastPlanPush || 0) < 10 * 60 * 1000) return;
+  if (!settings.pushEnabled && !settings.widgetUsed) return;
+  // 날짜가 바뀌었으면 기다리지 않고 바로 (위젯이 어제 것을 보여주지 않게)
+  const newDay = window._lastPlanPushDay !== todayKey();
+  if (!newDay && Date.now() - (window._lastPlanPush || 0) < 10 * 60 * 1000) return;
   window._lastPlanPush = Date.now();
   try { pushSummaryToServer(); } catch (e) { console.warn('요약 갱신 실패(' + why + '):', e); }
 }
@@ -31232,6 +31242,7 @@ async function pushSummaryToServer() {
         tag: 'daily-summary',
       }),
     });
+    if (res.ok) { window._lastPlanPush = Date.now(); window._lastPlanPushDay = todayKey(); }
     return res.ok;
   } catch (e) {
     console.warn('요약 예약 실패:', e);
@@ -34410,18 +34421,18 @@ function buildWidget(d, fam) {
   const top = w.addStack();
   top.centerAlignContent();
   const title = top.addText("📋 오늘");
-  title.font = Font.boldSystemFont(small ? 13 : 15);
+  title.font = Font.boldSystemFont(small ? 15 : 18);
   title.textColor = ink;
   if (list && d.count.total) {
     top.addSpacer(6);
     const c = top.addText(d.count.done + "/" + d.count.total);
-    c.font = Font.boldSystemFont(small ? 12 : 13);
+    c.font = Font.boldSystemFont(small ? 14 : 17);
     c.textColor = green;
   }
   top.addSpacer();
   if (!small) {
     const plus = top.addText("＋");
-    plus.font = Font.boldSystemFont(16);
+    plus.font = Font.boldSystemFont(22);
     plus.textColor = green;
     plus.url = runUrl("add=1");
   }
@@ -34429,14 +34440,14 @@ function buildWidget(d, fam) {
   if (d.next) {
     w.addSpacer(3);
     const nx = w.addText("⏰ " + d.next);
-    nx.font = Font.boldSystemFont(small ? 11 : 12);
+    nx.font = Font.boldSystemFont(small ? 12 : 14);
     nx.textColor = green;
     nx.lineLimit = 1;
   }
   if (list && fam === "large" && stats(d)) {
     w.addSpacer(2);
     const st = w.addText(stats(d));
-    st.font = Font.systemFont(10);
+    st.font = Font.systemFont(12);
     st.textColor = soft;
     st.lineLimit = 1;
   }
@@ -34445,15 +34456,15 @@ function buildWidget(d, fam) {
   if (!list) {
     // 며칠 동안 앱을 안 열어 오늘 것이 서버에 없을 때
     const t = w.addText("플래너를 한 번 열면 오늘 할 일·일정이 채워져요");
-    t.font = Font.systemFont(small ? 10 : 12);
+    t.font = Font.systemFont(small ? 12 : 14);
     t.textColor = soft;
   } else {
     // 아래에 일정·생활비·자산 줄이 들어가므로 할 일은 크기별로 몇 줄만
-    const max = small ? 2 : fam === "medium" ? (d.next ? 2 : 3) : 6;
+    const max = small ? 2 : fam === "medium" ? (d.next ? 1 : 2) : 5;
     const show = fam === "large" ? list.slice(0, max) : left.slice(0, max);
     if (!show.length) {
       const t = w.addText(list.length ? "오늘 할 일 다 했어요 🎉" : "오늘 할 일이 없어요");
-      t.font = Font.systemFont(small ? 10.5 : 12);
+      t.font = Font.systemFont(small ? 12 : 14);
       t.textColor = soft;
       w.addSpacer(small ? 2 : 4);
     }
@@ -34463,7 +34474,7 @@ function buildWidget(d, fam) {
       // 작은 위젯은 한 군데만 누를 수 있어서 줄마다 체크는 중간·큰 위젯에서만
       if (!small) row.url = runUrl((it.done ? "undo=" : "done=") + encodeURIComponent(it.id));
       const tx = row.addText(todoLine(it));
-      tx.font = Font.systemFont(small ? 10.5 : 12);
+      tx.font = Font.systemFont(small ? 12 : 14);
       tx.textColor = it.done ? soft : ink;
       tx.lineLimit = 1;
       row.addSpacer();
@@ -34472,7 +34483,7 @@ function buildWidget(d, fam) {
     const more = (fam === "large" ? list.length : left.length) - show.length;
     if (more > 0) {
       const m = w.addText("외 " + more + "개");
-      m.font = Font.systemFont(9);
+      m.font = Font.systemFont(11);
       m.textColor = soft;
     }
 
@@ -34484,11 +34495,11 @@ function buildWidget(d, fam) {
     // 할 일이 적으면 남는 줄을 이번 주 일정에 준다
     const used = (d.next ? 1 : 0) + Math.max(1, show.length) + (money ? 1 : 0) + (asset ? 1 : 0);
     if (fam === "large") {
-      const n = Math.min(10, Math.max(3, 13 - used - (stats(d) ? 1 : 0) - (d.goals && d.goals.total ? 1 : 0)));
+      const n = Math.min(8, Math.max(3, 11 - used - (stats(d) ? 1 : 0) - (d.goals && d.goals.total ? 1 : 0)));
       if (ups.length) extra.push({ text: "📅 이번 주", bold: true });
       for (const u of ups.slice(0, n)) extra.push({ text: "  " + upLine(u) });
     } else if (fam === "medium" && ups.length) {
-      const n = Math.min(4, Math.max(1, 6 - used));
+      const n = Math.min(3, Math.max(1, 5 - used));
       for (const u of ups.slice(0, n)) extra.push({ text: "📅 " + upLine(u) });
     }
     if (money) extra.push({ text: money, warn: d.living && d.living.left < 0 });
@@ -34498,7 +34509,7 @@ function buildWidget(d, fam) {
     if (extra.length) w.addSpacer(small ? 3 : 5);
     for (const x of extra) {
       const t = w.addText(x.text);
-      t.font = x.bold ? Font.boldSystemFont(small ? 10 : 11) : Font.systemFont(small ? 10 : 11);
+      t.font = x.bold ? Font.boldSystemFont(small ? 11 : 14) : Font.systemFont(small ? 11 : 14);
       t.textColor = x.warn ? new Color("#C0392B") : ink;
       t.lineLimit = 1;
       w.addSpacer(small ? 1 : 2);
@@ -34508,7 +34519,7 @@ function buildWidget(d, fam) {
   w.addSpacer();
   if (fam !== "medium") {
     const foot = w.addText(small ? "누르면 열려요" : "줄을 누르면 체크 · 업데이트 " + (d.updated || ""));
-    foot.font = Font.systemFont(8);
+    foot.font = Font.systemFont(10);
     foot.textColor = soft;
   }
   return w;
