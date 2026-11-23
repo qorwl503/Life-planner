@@ -8712,7 +8712,18 @@ function widgetData() {
   } catch (e) {}
   try {
     const log = (workoutLog || {})[tk];
-    out.workout = { done: !!(log && log.done), min: Number(log && log.minutes) || 0 };
+    // 이번 달 운동한 날 (달력에서 '했음' 이나 종목 체크한 날) + 이번 주 계획
+    const [yy, mm] = tk.split('-').map(Number);
+    const dim = new Date(yy, mm, 0).getDate();
+    let mDone = 0;
+    for (let i = 1; i <= dim; i++) {
+      const dk = `${yy}-${String(mm).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+      if (dk > tk) break;
+      if (dayWorkedOut(dk)) mDone++;
+    }
+    let wDid = 0, wTarget = 0;
+    try { for (const r of workoutPlanRows()) { wTarget += r.target; wDid += Math.min(r.did, r.target); } } catch (e) {}
+    out.workout = { done: dayWorkedOut(tk), min: Number(log && log.minutes) || 0, mDone, mDays: dim, wDid, wTarget };
   } catch (e) {}
   try {
     const rows = (budget?.expenses || []).filter(e => e.dateKey === tk && countsAsLiving(e));
@@ -34990,6 +35001,24 @@ function buildWidget(d, fam) {
     }
   }
   T.addSpacer();
+  // 🏃 이번 달 운동 (할 일 카드 아래)
+  const wo = d.workout;
+  if (wo && wo.mDays) {
+    Lc.addSpacer(8);
+    const k = card(Lc, 0, 0);
+    const r1 = k.addStack(); r1.centerAlignContent();
+    txt(r1, "🏃 운동", 11, soft);
+    r1.addSpacer();
+    if (wo.wTarget) txt(r1, "이번 주 " + wo.wDid + "/" + wo.wTarget + "회", 10, wo.wDid >= wo.wTarget ? C.mint : soft, true);
+    const r2 = k.addStack(); r2.centerAlignContent();
+    txt(r2, wo.mDone + "일 / " + wo.mDays + "일", 15, C.ink, true);
+    r2.addSpacer(6);
+    txt(r2, Math.round(wo.mDone / wo.mDays * 100) + "% 달성", 11, wo.done ? C.mint : soft);
+    r2.addSpacer();
+    k.addSpacer(4);
+    const bw = 150;
+    k.addImage(barImage(wo.mDone / wo.mDays, bw, 5, C.green)).imageSize = new Size(bw, 5);
+  }
 
   mid.addSpacer(8);
   const R = mid.addStack();

@@ -40,7 +40,7 @@
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
 // 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
-const WORKER_VERSION = '2026-11-23.5';
+const WORKER_VERSION = '2026-11-23.6';
 const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
   '/push/plan', '/push/status', '/relay/workout', '/relay/expense', '/relay/ping', '/widget', '/version', '/keys/status', '/keys/issue', '/keys/revoke', '/account/delete', '/widget/todo'];
 
@@ -1013,7 +1013,8 @@ function cleanWidgetData(w) {
     at: /^\d{2}:\d{2}$/.test(String(t && t.at || '')) ? t.at : '',
     done: !!(t && t.done), rep: !!(t && t.rep),
   })).filter(t => t.id && t.t);
-  if (w.workout) out.workout = { done: !!w.workout.done, min: num(w.workout.min) };
+  if (w.workout) out.workout = { done: !!w.workout.done, min: num(w.workout.min),
+    mDone: Math.min(31, num(w.workout.mDone)), mDays: Math.min(31, num(w.workout.mDays)), wDid: Math.min(99, num(w.workout.wDid)), wTarget: Math.min(99, num(w.workout.wTarget)) };
   out.spent = num(w.spent);
   if (w.living) out.living = { left: num(w.living.left), perDay: num(w.living.perDay), daysLeft: num(w.living.daysLeft), total: num(w.living.total), spent: num(w.living.spent) };
   out.upcoming = (Array.isArray(w.upcoming) ? w.upcoming : []).slice(0, 10).map(u => ({
