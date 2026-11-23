@@ -40,7 +40,7 @@
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
 // 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
-const WORKER_VERSION = '2026-11-23.2';
+const WORKER_VERSION = '2026-11-23.3';
 const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
   '/push/plan', '/push/status', '/relay/workout', '/relay/expense', '/relay/ping', '/widget', '/version', '/keys/status', '/keys/issue', '/keys/revoke', '/account/delete', '/widget/todo'];
 
@@ -1021,6 +1021,9 @@ function cleanWidgetData(w) {
   })).filter(u => u.t);
   if (w.asset) out.asset = { net: num(w.asset.net), total: num(w.asset.total), debt: num(w.asset.debt), diff: w.asset.diff == null ? null : num(w.asset.diff),
     hist: (Array.isArray(w.asset.hist) ? w.asset.hist : []).slice(-12).map(num) };
+  out.ddays = (Array.isArray(w.ddays) ? w.ddays : []).slice(0, 6).map(x => ({
+    t: str(x && x.t, 20), e: str(x && x.e, 4), date: /^\d{4}-\d{2}-\d{2}$/.test(String(x && x.date || '')) ? x.date : '',
+  })).filter(x => x.t && x.date);
   out.week = (Array.isArray(w.week) ? w.week : []).slice(0, 7).map(x => ({
     d: num(x && x.d), w: str(x && x.w, 2), n: Math.min(99, num(x && x.n)), sun: !!(x && x.sun), sat: !!(x && x.sat),
   }));
@@ -1053,6 +1056,9 @@ function widgetView(plan, date) {
     todos, count: { done, total: todos.length },
     workout: w.workout || null, spent: w.spent || 0, living: w.living || null, goals: w.goals || null,
     upcoming: w.upcoming || [], asset: w.asset || null, week: w.week || [],
+    // 남은 날은 오늘(한국 시간) 기준으로 센다 — 지난 것은 뺀다
+    ddays: (w.ddays || []).map(x => ({ t: x.t, e: x.e, n: Math.round((Date.parse(x.date + 'T00:00:00Z') - Date.parse(date + 'T00:00:00Z')) / 86400000) }))
+      .filter(x => x.n >= 0).sort((a, b) => a.n - b.n).slice(0, 4),
   };
 }
 
