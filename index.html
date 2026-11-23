@@ -6909,67 +6909,35 @@ function renderWorkoutPlanCard() {
       </div>`;
   }
 
+  // 심플하게 — 한 줄 요약 + 종목별 작은 칩 (요일 칸은 없앰: 아래 운동 달력에서 누르면 자동으로 세어진다)
   const rows = workoutPlanRows();
   const totalTarget = rows.reduce((s, r) => s + r.target, 0);
   const totalDid = rows.reduce((s, r) => s + Math.min(r.did, r.target), 0);
   const allDone = totalDid >= totalTarget;
   const daysLeft = 6 - new Date().getDay();   // 이번 주 남은 날 (오늘 제외)
+  const pct = totalTarget ? Math.round(totalDid / totalTarget * 100) : 0;
 
   return `
-    <div style="margin-bottom:14px; padding:13px 14px; background:var(--bg-secondary); border-radius:12px;">
-      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:9px;">
-        <span style="font-size:12.5px; font-weight:800;">🗓️ 이번 주 운동 계획</span>
-        <button onclick="openWorkoutPlanModal()" style="border:none; background:transparent; color:var(--text-tertiary); font-size:11px; cursor:pointer; font-family:inherit;">✏️ 수정</button>
+    <div style="margin-bottom:14px; padding:11px 13px; background:var(--bg-secondary); border-radius:12px;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="font-size:12.5px; font-weight:800; flex:none;">🗓️ 이번 주</span>
+        <span style="font-size:12px; font-weight:700; color:${allDone ? 'var(--text-success)' : 'var(--text-primary)'};">
+          ${allDone ? '✨ 다 채웠어요' : `${totalDid}/${totalTarget}회`}
+        </span>
+        <span style="font-size:11px; color:var(--text-tertiary);">${allDone ? '' : (daysLeft > 0 ? `· ${daysLeft}일 남음` : '· 오늘 마지막')}</span>
+        <span style="flex:1;"></span>
+        <button onclick="openWorkoutPlanModal()" style="border:none; background:transparent; color:var(--text-tertiary); font-size:11px; cursor:pointer; font-family:inherit; padding:0;">✏️</button>
       </div>
-
-      <div style="font-size:12px; font-weight:700; color:${allDone ? 'var(--text-success)' : 'var(--text-primary)'}; margin-bottom:9px;">
-        ${allDone ? '✨ 이번 주 계획 다 채웠어요' : `${totalDid} / ${totalTarget}회 · ${daysLeft > 0 ? `${daysLeft}일 남음` : '오늘이 마지막 날'}`}
+      <div style="height:5px; background:var(--bg-primary); border-radius:3px; margin:8px 0 9px; overflow:hidden;">
+        <div style="height:100%; width:${pct}%; background:var(--accent-tab, #3D8168); border-radius:3px;"></div>
       </div>
-
-      ${rows.map(r => {
-        const ok = r.did >= r.target;
-        const DOW = ['일', '월', '화', '수', '목', '금', '토'];
-        const tk = todayKey();
-        const cells = weekKeysFull().map((dk, i) => {
-          const st = planDayState(r.sport, dk);
-          const future = dk > tk;
-          const isToday = dk === tk;
-          // 운동 기록으로 한 날은 꽉 찬 색, 계획에만 체크한 날은 테두리만
-          const bg = st === 'log' ? 'var(--accent-tab, #3D8168)'
-                   : st === 'tick' ? 'rgba(61,129,104,0.14)' : 'var(--bg-primary)';
-          const fg = st === 'log' ? '#fff'
-                   : st === 'tick' ? 'var(--accent-tab, #3D8168)' : 'var(--text-tertiary)';
-          const bd = st ? 'var(--accent-tab, #3D8168)' : 'var(--border-tertiary)';
-          const mark = st === 'log' ? '✓' : st === 'tick' ? '✓' : '';
-          return `
-            <button ${future ? 'disabled' : ''}
-              onclick="event.stopPropagation(); togglePlanTick('${escapeAttr(r.sport)}', '${dk}')"
-              title="${dk}${st === 'log' ? ' · 운동 기록 있음' : st === 'tick' ? ' · 계획 체크' : ''}"
-              style="flex:1; min-width:0; padding:5px 0 4px; border:0.5px solid ${bd}; background:${bg}; color:${fg}; border-radius:7px; cursor:${future ? 'default' : 'pointer'}; font-family:inherit; opacity:${future ? '0.35' : '1'}; ${isToday ? 'box-shadow:0 0 0 1.5px var(--accent-tab, #3D8168);' : ''}">
-              <div style="font-size:9px; line-height:1.1;">${DOW[i]}</div>
-              <div style="font-size:11px; line-height:1.3; font-weight:800; min-height:14px;">${mark}</div>
-            </button>`;
-        }).join('');
-
-        return `
-        <div style="margin-bottom:10px;">
-          <div style="display:flex; align-items:center; gap:8px; font-size:11.5px; margin-bottom:4px;">
-            <span style="flex:1; min-width:0; font-weight:600; cursor:pointer;" onclick="openWeekDoneDetail('${escapeAttr(r.sport)}')">
-              ${r.emoji} ${escapeHTML(r.sport)}${r.did > 0 ? ' <span style="color:var(--text-tertiary); font-weight:600;">›</span>' : ''}
-            </span>
-            <span style="flex:none; color:${ok ? 'var(--text-success)' : 'var(--text-tertiary)'}; font-weight:${ok ? '800' : '600'};">
-              ${ok ? '완료' : `${r.left}회 남음`} <span style="color:var(--text-tertiary); font-weight:600;">(${r.did}/${r.target})</span>
-            </span>
-          </div>
-          <div style="display:flex; gap:3px;">${cells}</div>
-        </div>`;
-      }).join('')}
-
-      <div style="margin-top:8px; font-size:10.5px; color:var(--text-tertiary); line-height:1.7;">
-        아래 <b>운동 달력</b>에서 날짜를 누르고 종목을 고르면 <b>여기도 자동으로 채워져요</b>. 따로 안 눌러도 됩니다.<br>
-        <span style="display:inline-block; width:9px; height:9px; border-radius:2px; background:var(--accent-tab, #3D8168); vertical-align:-1px;"></span> 운동 기록이 있는 날 ·
-        <span style="display:inline-block; width:9px; height:9px; border-radius:2px; background:rgba(61,129,104,0.14); border:0.5px solid var(--accent-tab, #3D8168); vertical-align:-1px;"></span> 눌러서 체크한 날
-        ${totalDid > 0 ? '<br>종목 이름을 누르면 <b>이번 주에 센 날</b>을 볼 수 있어요.' : ''}
+      <div style="display:flex; flex-wrap:wrap; gap:6px;">
+        ${rows.map(r => {
+          const ok = r.did >= r.target;
+          return `<span onclick="openWeekDoneDetail('${escapeAttr(r.sport)}')" style="cursor:pointer; padding:5px 9px; border-radius:999px; font-size:11.5px; font-weight:700; background:${ok ? 'rgba(61,129,104,0.16)' : 'var(--bg-primary)'}; color:${ok ? 'var(--accent-tab, #3D8168)' : 'var(--text-primary)'}; border:0.5px solid ${ok ? 'var(--accent-tab, #3D8168)' : 'var(--border-tertiary)'};">
+            ${r.emoji} ${escapeHTML(r.sport)} ${r.did}/${r.target}${ok ? ' ✓' : ''}
+          </span>`;
+        }).join('')}
       </div>
     </div>`;
 }
