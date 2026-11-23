@@ -6990,37 +6990,74 @@ function openWeekDoneDetail(sport) {
   modal.classList.add('show');
 }
 
+// 주간 운동 계획 — 종목을 눌러 켜고(기본 주 3회), 숫자 하나 눌러 횟수를 정한다.
+//   예전엔 11개 종목마다 −/＋ 를 여러 번 눌러야 해서 귀찮았다.
 function openWorkoutPlanModal() {
-  const plan = workoutPlan();
-  const rows = SPORTS.filter(s => s.key !== '기타').map(s => `
-    <div style="display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:0.5px solid var(--border-tertiary);">
-      <span style="font-size:16px; width:24px;">${s.emoji}</span>
-      <span style="flex:1; font-size:12.5px; font-weight:600;">${escapeHTML(s.key)}</span>
-      <button onclick="bumpWorkoutPlan('${escapeAttr(s.key)}', -1)" style="width:30px; height:30px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); border-radius:8px; font-size:15px; cursor:pointer; font-family:inherit; color:var(--text-secondary);">−</button>
-      <span id="wp-${escapeAttr(s.key)}" style="min-width:38px; text-align:center; font-size:13px; font-weight:800;">${Number(plan[s.key]) || 0}</span>
-      <button onclick="bumpWorkoutPlan('${escapeAttr(s.key)}', 1)" style="width:30px; height:30px; border:0.5px solid var(--border-tertiary); background:var(--bg-primary); border-radius:8px; font-size:15px; cursor:pointer; font-family:inherit; color:var(--text-secondary);">+</button>
-    </div>`).join('');
-
   modal.innerHTML = `
     <div class="modal">
       <div class="modal-handle"></div>
       <div class="modal-header">
         <button class="modal-cancel" onclick="closeModal()">닫기</button>
         <h2 style="font-size:15px;">🗓️ 주간 운동 계획</h2>
-        <span></span>
+        <button class="modal-save" onclick="closeModal()">완료</button>
       </div>
       <div style="padding:0 16px 20px;">
-        <div style="padding:11px 12px; background:var(--bg-secondary); border-radius:10px; font-size:11.5px; color:var(--text-secondary); line-height:1.8; margin-bottom:12px;">
-          종목마다 <b>주 몇 회</b> 할지 정하세요. 매주 같은 계획으로 셉니다.<br>
-          <span style="color:var(--text-tertiary);">0으로 두면 그 종목은 계획에서 빠져요.</span>
-        </div>
-        ${rows}
-        <div style="font-size:11px; color:var(--text-tertiary); margin-top:12px; line-height:1.7;">
-          같은 날 같은 종목을 두 번 해도 <b>하루 1회</b>로 셉니다.
-        </div>
+        <div style="font-size:11.5px; color:var(--text-tertiary); margin-bottom:10px;">할 종목을 누르세요. 다시 누르면 빠져요.</div>
+        <div id="wp-body"></div>
       </div>
     </div>`;
   modal.classList.add('show');
+  renderWorkoutPlanBody();
+}
+
+function renderWorkoutPlanBody() {
+  const box = document.getElementById('wp-body');
+  if (!box) return;
+  const plan = workoutPlan();
+  const sports = SPORTS.filter(x => x.key !== '기타');
+  const on = sports.filter(x => Number(plan[x.key]) > 0);
+  box.innerHTML = `
+    <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:6px;">
+      ${sports.map(x => {
+        const n = Number(plan[x.key]) || 0;
+        return `<button onclick="toggleWorkoutPlanSport('${escapeAttr(x.key)}')" style="padding:9px 2px 7px; border-radius:11px; border:${n ? '1.5px solid var(--accent-tab, #3D8168)' : '0.5px solid var(--border-tertiary)'}; background:${n ? 'rgba(61,129,104,0.14)' : 'var(--bg-primary)'}; cursor:pointer; font-family:inherit; display:flex; flex-direction:column; align-items:center; gap:2px;">
+          <span style="font-size:19px;">${x.emoji}</span>
+          <span style="font-size:11px; font-weight:${n ? '800' : '600'}; color:${n ? 'var(--accent-tab, #3D8168)' : 'var(--text-primary)'};">${escapeHTML(x.key)}</span>
+          <span style="font-size:9.5px; color:${n ? 'var(--accent-tab, #3D8168)' : 'transparent'}; font-weight:700;">주 ${n || 0}회</span>
+        </button>`;
+      }).join('')}
+    </div>
+    ${on.length ? `
+    <div style="margin-top:14px; font-size:11px; color:var(--text-tertiary); margin-bottom:4px;">주 몇 회? (숫자 한 번 누르기)</div>
+    ${on.map(x => {
+      const n = Number(plan[x.key]) || 0;
+      return `<div style="display:flex; align-items:center; gap:8px; padding:7px 0; border-top:0.5px solid var(--border-tertiary);">
+        <span style="flex:0 0 74px; font-size:12px; font-weight:700; white-space:nowrap;">${x.emoji} ${escapeHTML(x.key)}</span>
+        <div style="flex:1; display:flex; gap:4px;">
+          ${[1, 2, 3, 4, 5, 6, 7].map(k => `<button onclick="setWorkoutPlan('${escapeAttr(x.key)}', ${k})" style="flex:1; padding:7px 0; border-radius:8px; border:0.5px solid ${k === n ? 'var(--accent-tab, #3D8168)' : 'var(--border-tertiary)'}; background:${k === n ? 'var(--accent-tab, #3D8168)' : 'var(--bg-primary)'}; color:${k === n ? '#fff' : 'var(--text-secondary)'}; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">${k}</button>`).join('')}
+        </div>
+      </div>`;
+    }).join('')}` : ''}`;
+}
+
+function setWorkoutPlan(sport, n) {
+  if (!settings.workoutPlan || typeof settings.workoutPlan !== 'object') settings.workoutPlan = {};
+  n = Math.max(0, Math.min(7, Number(n) || 0));
+  if (n === 0) delete settings.workoutPlan[sport];
+  else settings.workoutPlan[sport] = n;
+  saveData();
+  if (currentTab === 'workout') {
+    const keep = modal.innerHTML;
+    renderWorkout();
+    modal.innerHTML = keep;
+    modal.classList.add('show');
+  }
+  renderWorkoutPlanBody();
+}
+
+function toggleWorkoutPlanSport(sport) {
+  const cur = Number(workoutPlan()[sport]) || 0;
+  setWorkoutPlan(sport, cur ? 0 : 3);   // 켜면 기본 주 3회
 }
 
 function bumpWorkoutPlan(sport, delta) {
