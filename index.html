@@ -34388,10 +34388,19 @@ const won = (n) => Math.round(Number(n) || 0).toLocaleString() + "원";
 const runUrl = (q) => "scriptable:///run/" + ME + (q ? "?" + q : "");
 const todosOf = (d) => (d && Array.isArray(d.todos)) ? d.todos : null;
 
-// 1만 원이 넘으면 '만' 단위로 (위젯 칸이 좁다)
+// 1만 원이 넘으면 '만', 1억이 넘으면 '억 ○만' 으로 (11,770만 → 1억 1,770만)
 function man(n) {
   const v = Math.abs(Number(n) || 0);
+  if (v >= 1e8) {
+    const eok = Math.floor(v / 1e8), rest = Math.round((v % 1e8) / 1e4);
+    return eok.toLocaleString() + "억" + (rest ? " " + rest.toLocaleString() + "만" : "");
+  }
   return v >= 10000 ? Math.round(v / 10000).toLocaleString() + "만" : Math.round(v).toLocaleString() + "원";
+}
+// 좁은 칸용 — 1.18억
+function manShort(n) {
+  const v = Math.abs(Number(n) || 0);
+  return v >= 1e8 ? (Math.round(v / 1e6) / 100).toLocaleString() + "억" : man(v);
 }
 
 function stats(d) {
@@ -34639,7 +34648,7 @@ function assetCard(parent, d, w, compact) {
   if (compact) {
     const row = k.addStack();
     row.centerAlignContent();
-    txt(row, bigWon(A.net).replace(/ .*/, ""), 13, C.ink, true);
+    txt(row, (A.net < 0 ? "−" : "") + manShort(A.net), 13, C.ink, true);
     row.addSpacer(6);
     const im = row.addImage(lineImage(A.hist, 44, 16, up === false ? C.gRed : C.gMint));
     im.imageSize = new Size(44, 16);
