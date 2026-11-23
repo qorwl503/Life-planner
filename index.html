@@ -34415,6 +34415,26 @@ function ddLine(list, max) {
   return (list || []).slice(0, max).map(x => x.e + " " + x.t + " " + ddLabel(x)).join("  ·  ");
 }
 
+// D-day 아이콘 — 홈 화면 앱 아이콘처럼
+function ddIcon(parent, x) {
+  const col = parent.addStack();
+  col.layoutVertically();
+  col.size = new Size(56, 0);
+  const box = col.addStack();
+  box.size = new Size(56, 44);
+  box.backgroundColor = C.card;
+  box.cornerRadius = 12;
+  box.centerAlignContent();
+  box.addSpacer();
+  const e = box.addText(x.e || "📌");
+  e.font = Font.systemFont(24);
+  box.addSpacer();
+  col.addSpacer(3);
+  const l = col.addStack(); l.addSpacer(); txt(l, ddLabel(x), 12, ddSoon(x) ? C.red : C.mint, true); l.addSpacer();
+  const n = col.addStack(); n.addSpacer(); txt(n, x.t, 10, soft); n.addSpacer();
+  return col;
+}
+
 function upLine(u) {
   return (u.n === 1 ? "내일" : u.w + " " + u.d) + " " + (u.at ? u.at + " " : "") + u.t;
 }
@@ -34556,7 +34576,7 @@ function txt(stack, s, size, color, bold) {
   t.font = bold ? Font.boldSystemFont(size) : Font.systemFont(size);
   t.textColor = color || C.ink;
   t.lineLimit = 1;
-  t.minimumScaleFactor = 0.75;
+  t.minimumScaleFactor = 1;   // 줄마다 크기가 달라 보이지 않게 — 넘치면 … 으로 자른다
   return t;
 }
 
@@ -34785,26 +34805,12 @@ function buildWidget(d, fam) {
   if ((d.week || []).length) { w.addSpacer(8); weekCard(w, d); }
 
   const dds = d.ddays || [];
-  if (dds.length) {
-    w.addSpacer(8);
-    const pills = w.addStack();
-    pills.centerAlignContent();
-    dds.slice(0, 3).forEach((x, i) => {
-      const p = pills.addStack();
-      p.backgroundColor = C.card;
-      p.cornerRadius = 9;
-      p.setPadding(4, 8, 4, 8);
-      p.centerAlignContent();
-      txt(p, x.e + " " + x.t + " ", 12, C.ink);
-      txt(p, ddLabel(x), 12, ddSoon(x) ? C.red : C.mint, true);
-      if (i < Math.min(3, dds.length) - 1) pills.addSpacer(6);
-    });
-    pills.addSpacer();
-  }
 
   w.addSpacer(8);
   const mid = w.addStack();
-  const T = card(mid, 0, 0);
+  const Lc = mid.addStack();
+  Lc.layoutVertically();
+  const T = card(Lc, 0, 0);
   const th = T.addStack();   // 가로로 꽉 채우는 머리줄
   txt(th, "할 일", 11, soft);
   th.addSpacer();
@@ -34824,14 +34830,25 @@ function buildWidget(d, fam) {
     for (const u of ups) {
       const r = T.addStack();
       r.centerAlignContent();
-      txt(r, u.n === 1 ? "내일" : u.w + " " + u.d, 12, C.mint, true);
-      r.addSpacer(6);
-      txt(r, (u.at ? u.at + " " : "") + u.t, 12, C.ink);
+      const dc = r.addStack();
+      dc.size = new Size(58, 0);
+      txt(dc, u.n === 1 ? "내일" : u.w + " " + u.d, 13, C.mint, true);
+      dc.addSpacer();
+      txt(r, (u.at ? u.at + " " : "") + u.t, 13, C.ink);
       r.addSpacer();
       T.addSpacer(4);
     }
   }
   T.addSpacer();
+  if (dds.length) {
+    Lc.addSpacer(8);
+    const icons = Lc.addStack();
+    dds.slice(0, 3).forEach((x, i) => {
+      if (i) icons.addSpacer();
+      ddIcon(icons, x);
+    });
+    if (dds.length < 3) icons.addSpacer();
+  }
 
   mid.addSpacer(8);
   const R = mid.addStack();
