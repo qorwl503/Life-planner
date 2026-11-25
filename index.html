@@ -35024,7 +35024,6 @@ function buildMonthMedium(d, offset) {
     const c = hr.addStack(); c.size = new Size(CW, 0); c.addSpacer();
     txt(c, x, 11, i === 0 ? C.red : i === 6 ? C.blue : soft, true); c.addSpacer();
   });
-  // 점은 숫자 아래 줄이 아니라 오른쪽에 — 줄 높이가 줄어 글씨를 키워도 안 넘친다
   for (let r = 0; r < weeks; r++) {
     G.addSpacer();   // 줄 사이를 고르게
     const row = G.addStack();
@@ -35039,9 +35038,7 @@ function buildMonthMedium(d, offset) {
         if (today) { n.backgroundColor = C.blueBg; n.cornerRadius = 8; }
         const nt = txt(n, String(day), 13, today ? Color.white() : x.dd ? C.pink : (c === 0 ? C.red : c === 6 ? C.blue : C.ink), today || !!x.n || !!x.dd);
         nt.minimumScaleFactor = 1;
-        const dots = cell.addStack(); dots.layoutVertically(); dots.size = new Size(4, 0);
-        if (x.n) txt(dots, "•", 6, C.purple, true);
-        if (x.wo) txt(dots, "•", 6, C.mint, true);
+        // 점은 뺐다 — 일정 있는 날은 굵은 숫자로만 (옆 목록·위 위젯에 다 나온다)
       } else {
         txt(cell, " ", 13, soft);
       }
