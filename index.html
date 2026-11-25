@@ -34848,20 +34848,18 @@ function workoutCard(parent, d, w) {
   const wo = d.workout;
   if (!wo || !wo.mDays) return null;
   parent.addSpacer(6);
-  // 한 줄로 얇게 — 🏃 12/30일 ▬▬ 40%
-  const k = parent.addStack();
-  k.layoutVertically();
-  k.backgroundColor = C.card;
-  k.cornerRadius = 12;
-  k.setPadding(6, 10, 6, 10);
-  k.size = new Size(w, 0);
-  const r = k.addStack(); r.centerAlignContent();
-  txt(r, "🏃 ", 11, C.purple);
-  txt(r, wo.mDone + "/" + wo.mDays + "일", 13, C.ink, true);
-  r.addSpacer();
-  txt(r, wo.wTarget ? "주 " + wo.wDid + "/" + wo.wTarget : Math.round(wo.mDone / wo.mDays * 100) + "%", 11, C.purple, true);
-  k.addSpacer(3);
-  k.addImage(barImage(wo.mDone / wo.mDays, w - 20, 4, C.gPurple)).imageSize = new Size(w - 20, 4);
+  const k = card(parent, w, 0);
+  const r1 = k.addStack(); r1.centerAlignContent();
+  txt(r1, "🏃 운동", 11, C.purple, true);
+  r1.addSpacer();
+  if (wo.wTarget) txt(r1, "주 " + wo.wDid + "/" + wo.wTarget, 10, wo.wDid >= wo.wTarget ? C.mint : soft, true);
+  const r2 = k.addStack(); r2.centerAlignContent();
+  txt(r2, wo.mDone + "일", 15, C.ink, true);
+  txt(r2, " / " + wo.mDays + "일", 11, soft);
+  r2.addSpacer();
+  txt(r2, Math.round(wo.mDone / wo.mDays * 100) + "%", 11, C.purple, true);
+  k.addSpacer(4);
+  k.addImage(barImage(wo.mDone / wo.mDays, w - 20, 5, C.gPurple)).imageSize = new Size(w - 20, 5);
   return k;
 }
 
