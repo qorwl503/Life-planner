@@ -34833,8 +34833,8 @@ function assetCard(parent, d, w, compact) {
   } else {
     txt(k, bigWon(A.net), 15, C.ink, true);
     k.addSpacer(3);
-    const im = k.addImage(lineImage(A.hist, (w || 130) - 20, 22, up === false ? C.gRed : C.gBlue));
-    im.imageSize = new Size((w || 130) - 20, 22);
+    const im = k.addImage(lineImage(A.hist, (w || 130) - 20, 18, up === false ? C.gRed : C.gBlue));
+    im.imageSize = new Size((w || 130) - 20, 18);
     if (A.diff != null) {
       k.addSpacer(2);
       txt(k, "지난달 " + (up ? "+" : "−") + man(A.diff), 10, up ? C.blue : C.red);
@@ -34847,19 +34847,21 @@ function assetCard(parent, d, w, compact) {
 function workoutCard(parent, d, w) {
   const wo = d.workout;
   if (!wo || !wo.mDays) return null;
-  parent.addSpacer(8);
-  const k = card(parent, w, 0);
-  const r1 = k.addStack(); r1.centerAlignContent();
-  txt(r1, "🏃 운동", 11, C.purple, true);
-  r1.addSpacer();
-  if (wo.wTarget) txt(r1, "주 " + wo.wDid + "/" + wo.wTarget, 10, wo.wDid >= wo.wTarget ? C.mint : soft, true);
-  const r2 = k.addStack(); r2.centerAlignContent();
-  txt(r2, wo.mDone + "일", 15, C.ink, true);
-  txt(r2, " / " + wo.mDays + "일", 11, soft);
-  r2.addSpacer();
-  txt(r2, Math.round(wo.mDone / wo.mDays * 100) + "%", 11, C.purple, true);
-  k.addSpacer(4);
-  k.addImage(barImage(wo.mDone / wo.mDays, w - 20, 5, C.gPurple)).imageSize = new Size(w - 20, 5);
+  parent.addSpacer(6);
+  // 한 줄로 얇게 — 🏃 12/30일 ▬▬ 40%
+  const k = parent.addStack();
+  k.layoutVertically();
+  k.backgroundColor = C.card;
+  k.cornerRadius = 12;
+  k.setPadding(6, 10, 6, 10);
+  k.size = new Size(w, 0);
+  const r = k.addStack(); r.centerAlignContent();
+  txt(r, "🏃 ", 11, C.purple);
+  txt(r, wo.mDone + "/" + wo.mDays + "일", 13, C.ink, true);
+  r.addSpacer();
+  txt(r, wo.wTarget ? "주 " + wo.wDid + "/" + wo.wTarget : Math.round(wo.mDone / wo.mDays * 100) + "%", 11, C.purple, true);
+  k.addSpacer(3);
+  k.addImage(barImage(wo.mDone / wo.mDays, w - 20, 4, C.gPurple)).imageSize = new Size(w - 20, 4);
   return k;
 }
 
@@ -34880,6 +34882,7 @@ function todoRows(parent, list, max, size, lines2) {
 
 function weekCard(parent, d) {
   const k = parent.addStack();
+  k.url = runUrl("view=month" + (d.mon ? "&m=" + d.mon : ""));   // 누르면 ◀ ▶ 달력
   k.backgroundColor = C.card;
   k.cornerRadius = 12;
   k.setPadding(6, 8, 6, 8);
@@ -35148,9 +35151,9 @@ function buildWidget(d, fam) {
   R.layoutVertically();
   R.size = new Size(132, 0);
   // 세 카드가 다 들어가도록 짧은 모양으로 (넘치면 위젯 아래가 잘린다)
-  moneyCard(R, d, 132, true);
-  R.addSpacer(8);
-  assetCard(R, d, 132, true);
+  moneyCard(R, d, 132, false);
+  R.addSpacer(6);
+  assetCard(R, d, 132, false);
   workoutCard(R, d, 132);
   R.addSpacer();
 
@@ -35197,6 +35200,14 @@ async function showApp(d, banner) {
     h.titleFont = Font.boldSystemFont(20);
     h.subtitleColor = banner ? green : soft;
     table.addRow(head);
+
+    const cal = new UITableRow();
+    cal.height = 46;
+    cal.dismissOnSelect = false;
+    const cc = cal.addText("📆  달력 보기", "◀ ▶ 로 다른 달도 넘겨봐요");
+    cc.subtitleColor = soft;
+    cal.onSelect = () => { showMonthView(d, d.mon); };
+    table.addRow(cal);
 
     if (!list) {
       const r = new UITableRow();
