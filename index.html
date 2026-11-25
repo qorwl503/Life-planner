@@ -34931,43 +34931,53 @@ function buildMonth(d, offset) {
   const DOW = ["일", "월", "화", "수", "목", "금", "토"];
   const hr = w.addStack();
   DOW.forEach((x, i) => {
-    const c = hr.addStack(); c.addSpacer();
+    const c = hr.addStack(); c.size = new Size(44, 14); c.addSpacer();
     txt(c, x, 10, i === 0 ? C.red : i === 6 ? C.blue : soft, true);
     c.addSpacer();
+    if (i < 6) hr.addSpacer();
   });
   w.addSpacer(3);
 
   const weeks = Math.ceil((first + dim) / 7);
+  // 칸 크기를 정해 둔다 — 숫자 칸을 좁게 잡았더니 10 이 '1…' 로 잘렸다
+  const CW = 44, RH = weeks > 5 ? 44 : 52;
   for (let r = 0; r < weeks; r++) {
     const row = w.addStack();
     for (let c = 0; c < 7; c++) {
       const day = r * 7 + c - first + 1;
       const cell = row.addStack();
       cell.layoutVertically();
-      cell.setPadding(2, 0, 2, 0);
-      const top = cell.addStack(); top.addSpacer();
-      if (day < 1 || day > dim) {
-        txt(top, " ", 13, soft); top.addSpacer();
-        const b0 = cell.addStack(); b0.addSpacer(); txt(b0, " ", 7, soft); b0.addSpacer();
-        continue;
-      }
+      cell.size = new Size(CW, RH);
+      if (c < 6) row.addSpacer();
+      if (day < 1 || day > dim) continue;
       const x = days[day] || {};
       const today = isThis && day === now.getDate();
+      const top = cell.addStack(); top.addSpacer();
       const num = top.addStack();
-      num.size = new Size(24, 22);
+      num.setPadding(1, 5, 1, 5);
       num.centerAlignContent();
-      if (today) { num.backgroundColor = C.blueBg; num.cornerRadius = 11; }
-      num.addSpacer();
-      txt(num, x.dd ? x.dd : String(day), x.dd ? 12 : 13, today ? Color.white() : (c === 0 ? C.red : c === 6 ? C.blue : C.ink), today || !!x.n);
-      num.addSpacer();
+      if (today) { num.backgroundColor = C.blueBg; num.cornerRadius = 9; }
+      const nt = txt(num, String(day), 13, today ? Color.white() : x.dd ? C.pink : (c === 0 ? C.red : c === 6 ? C.blue : C.ink), today || !!x.n || !!x.dd);
+      nt.minimumScaleFactor = 0.8;
       top.addSpacer();
-      const bot = cell.addStack(); bot.addSpacer();
-      const marks = (x.n ? "•".repeat(Math.min(3, x.n)) : "");
-      txt(bot, marks || (x.wo ? "" : " "), 9, C.purple, true);
-      if (x.wo) txt(bot, "▬", 6, C.mint);
-      bot.addSpacer();
+      // 그날 일정 제목 (작게, 한두 줄) — 없으면 점
+      const titles = (x.t || []).slice(0, RH >= 52 ? 2 : 1);
+      if (titles.length) {
+        for (const tt of titles) {
+          const tl = cell.addStack(); tl.addSpacer();
+          const tx = txt(tl, tt.replace(/^\d{1,2}:\d{2}\s*/, ""), 8, tt.indexOf(x.dd || "\u0000") === 0 && x.dd ? C.pink : C.purple);
+          tx.minimumScaleFactor = 1;
+          tl.addSpacer();
+        }
+      } else if (x.dd || x.n) {
+        const dl = cell.addStack(); dl.addSpacer();
+        if (x.dd) txt(dl, x.dd, 10, C.pink);
+        if (x.n) txt(dl, "•".repeat(Math.min(3, x.n)), 9, C.purple, true);
+        dl.addSpacer();
+      }
+      if (x.wo) { const wl = cell.addStack(); wl.addSpacer(); txt(wl, "▬", 6, C.mint); wl.addSpacer(); }
+      cell.addSpacer();
     }
-    w.addSpacer(1);
   }
   w.addSpacer();
   // 아래: 다가오는 일정 2줄 (이번 달일 때만)
@@ -35016,30 +35026,29 @@ function buildMonthMedium(d, offset) {
   body.addSpacer(6);
   // 오른쪽: 달력
   const G = body.addStack(); G.layoutVertically();
+  const MW = 36;
   const hr = G.addStack();
   ["일", "월", "화", "수", "목", "금", "토"].forEach((x, i) => {
-    const c = hr.addStack(); c.size = new Size(0, 12); c.addSpacer();
+    const c = hr.addStack(); c.size = new Size(MW, 12); c.addSpacer();
     txt(c, x, 8, i === 0 ? C.red : i === 6 ? C.blue : soft, true); c.addSpacer();
   });
   for (let r = 0; r < weeks; r++) {
     const row = G.addStack();
     for (let c = 0; c < 7; c++) {
       const day = r * 7 + c - first + 1;
-      const cell = row.addStack(); cell.layoutVertically(); cell.size = new Size(0, rowH);
-      const top = cell.addStack(); top.addSpacer();
-      if (day < 1 || day > dim) { txt(top, " ", 10, soft); top.addSpacer(); continue; }
+      const cell = row.addStack(); cell.layoutVertically(); cell.size = new Size(MW, rowH);
+      if (day < 1 || day > dim) continue;
       const x = days[day] || {};
       const today = isThis && day === now.getDate();
-      const n = top.addStack(); n.size = new Size(18, rowH - 5); n.centerAlignContent();
-      if (today) { n.backgroundColor = C.blueBg; n.cornerRadius = (rowH - 5) / 2; }
-      n.addSpacer();
-      txt(n, String(day), 10, today ? Color.white() : x.dd ? C.pink : (c === 0 ? C.red : c === 6 ? C.blue : C.ink), today || !!x.n || !!x.dd);
-      n.addSpacer();
+      const top = cell.addStack(); top.addSpacer();
+      const n = top.addStack(); n.setPadding(0, 4, 0, 4); n.centerAlignContent();
+      if (today) { n.backgroundColor = C.blueBg; n.cornerRadius = 7; }
+      const nt = txt(n, String(day), 10, today ? Color.white() : x.dd ? C.pink : (c === 0 ? C.red : c === 6 ? C.blue : C.ink), today || !!x.n || !!x.dd);
+      nt.minimumScaleFactor = 0.8;
       top.addSpacer();
       const bot = cell.addStack(); bot.addSpacer();
       if (x.n) txt(bot, "•", 6, C.purple, true);
       if (x.wo) txt(bot, "•", 6, C.mint, true);
-      if (!x.n && !x.wo) txt(bot, " ", 6, soft);
       bot.addSpacer();
     }
   }
