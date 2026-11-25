@@ -35036,11 +35036,12 @@ function buildMonthMedium(d, offset) {
       const n = top.addStack(); n.setPadding(0, today ? 2 : 0, 0, today ? 2 : 0);
       if (today) { n.backgroundColor = C.blueBg; n.cornerRadius = 6; }
       const nt = txt(n, String(day), 10, today ? Color.white() : x.dd ? C.pink : (c === 0 ? C.red : c === 6 ? C.blue : C.ink), today || !!x.n || !!x.dd);
-      nt.minimumScaleFactor = 0.8;
+      nt.minimumScaleFactor = 1;   // 숫자 크기를 다 같게 (자리는 이제 넉넉하다)
       top.addSpacer();
       const bot = cell.addStack(); bot.addSpacer();
-      txt(bot, (x.n ? "•" : "") + (x.wo ? "" : (x.n ? "" : " ")), 6, C.purple, true);
+      if (x.n) txt(bot, "•", 6, C.purple, true);
       if (x.wo) txt(bot, "•", 6, C.mint, true);
+      if (!x.n && !x.wo) txt(bot, " ", 6, soft);
       bot.addSpacer();
     }
   }
