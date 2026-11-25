@@ -8795,12 +8795,30 @@ function widgetData() {
     const dim = new Date(yy, mm, 0).getDate();
     const ddMap = {};
     for (const x of (settings.ddays || [])) if (x && x.date) ddMap[x.date] = String(x.emoji || '📌').slice(0, 4);
-    out.mon = `${yy}-${String(mm).padStart(2, '0')}`;
-    out.month = [];
-    for (let i = 1; i <= dim; i++) {
-      const dk = `${out.mon}-${String(i).padStart(2, '0')}`;
-      const n = (todos || []).filter(t => t && !(t.repeat && t.repeat.type) && todoOnDay(t, dk) && !todoSkippedOn(t, dk)).length;
-      out.month.push({ d: i, n, wo: dk <= tk && dayWorkedOut(dk), dd: ddMap[dk] || '' });
+    const ddName = {};
+    for (const x of (settings.ddays || [])) if (x && x.date) ddName[x.date] = String(x.title || '').slice(0, 20);
+    const monthOf = (y, m) => {
+      const key = `${y}-${String(m).padStart(2, '0')}`;
+      const n0 = new Date(y, m, 0).getDate();
+      const arr = [];
+      for (let i = 1; i <= n0; i++) {
+        const dk = `${key}-${String(i).padStart(2, '0')}`;
+        const list = (todos || []).filter(t => t && !(t.repeat && t.repeat.type) && todoOnDay(t, dk) && !todoSkippedOn(t, dk));
+        const titles = list.slice(0, 3).map(t => (t.time ? t.time + ' ' : '') + String(t.title || '').slice(0, 24));
+        if (ddMap[dk]) titles.unshift(ddMap[dk] + ' ' + (ddName[dk] || 'D-day'));
+        arr.push({ d: i, n: list.length, wo: dk <= tk && dayWorkedOut(dk), dd: ddMap[dk] || '', t: titles });
+      }
+      return [key, arr];
+    };
+    const [k0, a0] = monthOf(yy, mm);
+    out.mon = k0;
+    out.month = a0;
+    // ◀ ▶ 로 넘겨볼 수 있게 지난달 ~ 두 달 뒤
+    out.months = {};
+    for (let off = -1; off <= 2; off++) {
+      const dt = new Date(yy, mm - 1 + off, 1);
+      const [k, a] = monthOf(dt.getFullYear(), dt.getMonth() + 1);
+      out.months[k] = a;
     }
   } catch (e) {}
   try {
@@ -34882,25 +34900,29 @@ function weekCard(parent, d) {
 }
 
 // 📆 월 달력 (큰 위젯) — 날짜마다 일정 점(보라)·운동(초록 밑줄)·D-day 이모지, 오늘은 파란 동그라미
-function buildMonth(d) {
+function monKey(y, m) { const dt = new Date(y, m - 1, 1); return dt.getFullYear() + "-" + String(dt.getMonth() + 1).padStart(2, "0"); }
+function buildMonth(d, offset) {
   const w = new ListWidget();
-  w.url = runUrl("");
+  const now = new Date();
+  const base = d.mon || monKey(now.getFullYear(), now.getMonth() + 1);
+  const [by, bm] = base.split("-").map(Number);
+  const mon = monKey(by, bm + (offset || 0));
+  w.url = runUrl("view=month&m=" + mon);   // 누르면 ◀ ▶ 로 넘겨보는 달력
   w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
   w.backgroundColor = widgetBg;
   w.setPadding(12, 12, 10, 12);
-  const now = new Date();
-  const mon = d.mon || (now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0"));
   const [yy, mm] = mon.split("-").map(Number);
+  const monthArr = (d.months && d.months[mon]) || (mon === d.mon ? d.month : []) || [];
   const first = new Date(yy, mm - 1, 1).getDay();
   const dim = new Date(yy, mm, 0).getDate();
   const isThis = now.getFullYear() === yy && now.getMonth() + 1 === mm;
   const days = {};
-  for (const x of (d.month || [])) days[x.d] = x;
+  for (const x of monthArr) days[x.d] = x;
 
   const head = w.addStack(); head.centerAlignContent();
   txt(head, yy + "년 " + mm + "월", 17, C.ink, true);
   head.addSpacer();
-  const woN = (d.month || []).filter(x => x.wo).length;
+  const woN = monthArr.filter(x => x.wo).length;
   if (woN) { txt(head, "🏃 " + woN + "일", 12, C.purple, true); head.addSpacer(8); }
   const plus = head.addText("＋"); plus.font = Font.boldSystemFont(20); plus.textColor = C.green; plus.url = runUrl("add=1");
   w.addSpacer(6);
@@ -34947,8 +34969,8 @@ function buildMonth(d) {
     w.addSpacer(1);
   }
   w.addSpacer();
-  // 아래: 다가오는 일정 2줄
-  const ups = (d.upcoming || []).slice(0, 2);
+  // 아래: 다가오는 일정 2줄 (이번 달일 때만)
+  const ups = mon === d.mon ? (d.upcoming || []).slice(0, 2) : [];
   for (const u of ups) {
     const r = w.addStack(); r.centerAlignContent();
     txt(r, u.n === 1 ? "내일" : u.w + " " + u.d, 11, C.purple, true);
@@ -35299,19 +35321,78 @@ async function showApp(d, banner) {
   await table.present(false);
 }
 
+// 📆 넘겨보는 달력 — 위젯 달력을 누르면 열린다. ◀ ▶ 로 지난달~두 달 뒤, 날짜를 누르면 그날 일정
+async function showMonthView(d, start) {
+  const data = { months: d.months || {}, cur: d.mon || "", start: start || d.mon || "" };
+  if (!Object.keys(data.months).length && d.mon) data.months[d.mon] = d.month || [];
+  const S = "scr" + "ipt";
+  const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<style>
+:root{--bg:#F2F2F7;--card:#fff;--ink:#1A1A1A;--soft:#8A8A8E;--p:#7B61C4;--b:#3F7CC4;--r:#D0402F;--g:#3D8168}
+@media (prefers-color-scheme:dark){:root{--bg:#1C1C1E;--card:#2C2C2E;--ink:#F2F2F2;--soft:#8E8E93;--p:#B9A6F2;--b:#8EC1F5;--r:#FF6B5E;--g:#5FB38F}}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,sans-serif;padding:14px}
+.h{display:flex;align-items:center;justify-content:space-between;margin:4px 0 12px}
+.h b{font-size:20px}.nav{border:none;background:var(--card);color:var(--ink);font-size:18px;width:44px;height:36px;border-radius:10px}
+.g{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.w{text-align:center;font-size:11px;color:var(--soft);font-weight:700;padding-bottom:4px}
+.c{background:var(--card);border-radius:10px;min-height:54px;padding:4px 2px;text-align:center;font-size:14px}
+.c.e{background:transparent}.c.t .n{background:var(--b);color:#fff;border-radius:50%;display:inline-block;width:24px;line-height:24px}
+.c.s{outline:2px solid var(--p)}
+.n{font-weight:600}.dots{color:var(--p);font-size:10px;line-height:12px;min-height:12px}.wo{height:3px;width:16px;margin:2px auto 0;border-radius:2px;background:var(--g)}
+.sun .n{color:var(--r)}.sat .n{color:var(--b)}.c.t .n{color:#fff}
+.dd{font-size:12px}
+.list{margin-top:14px;background:var(--card);border-radius:12px;padding:12px 14px;font-size:14px;line-height:1.7}
+.list h4{margin:0 0 4px;font-size:13px;color:var(--p)}.none{color:var(--soft)}
+</style></head><body>
+<div class="h"><button class="nav" onclick="go(-1)">◀</button><b id="ttl"></b><button class="nav" onclick="go(1)">▶</button></div>
+<div class="g" id="g"></div><div class="list" id="l"></div>
+<${S}>
+const D=${JSON.stringify(data).replace(/</g, String.fromCharCode(92) + "u003c")};
+const keys=Object.keys(D.months).sort();let i=Math.max(0,keys.indexOf(D.start));let sel=0;
+const now=new Date();const todayKey=now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0");
+function go(k){if(i+k<0||i+k>=keys.length)return;i+=k;sel=0;draw();}
+function draw(){
+  const key=keys[i];const [y,m]=key.split("-").map(Number);const arr=D.months[key]||[];
+  document.getElementById("ttl").textContent=y+"년 "+m+"월";
+  const first=new Date(y,m-1,1).getDay();const dim=new Date(y,m,0).getDate();
+  let h=["일","월","화","수","목","금","토"].map(x=>'<div class="w">'+x+'</div>').join("");
+  for(let k=0;k<first;k++)h+='<div class="c e"></div>';
+  for(let dd=1;dd<=dim;dd++){const x=arr[dd-1]||{};const dow=(first+dd-1)%7;
+    const t=key===todayKey&&dd===now.getDate();
+    h+='<div class="c'+(t?' t':'')+(sel===dd?' s':'')+(dow===0?' sun':dow===6?' sat':'')+'" onclick="pick('+dd+')"><span class="n">'+dd+'</span>'+
+      (x.dd?'<div class="dd">'+x.dd+'</div>':'<div class="dots">'+(x.n?"•".repeat(Math.min(3,x.n)):"")+'</div>')+(x.wo?'<div class="wo"></div>':'')+'</div>';}
+  document.getElementById("g").innerHTML=h;
+  const l=document.getElementById("l");
+  if(sel){const x=arr[sel-1]||{};l.innerHTML='<h4>'+m+'월 '+sel+'일</h4>'+((x.t&&x.t.length)?x.t.map(v=>'<div>• '+v.replace(/</g,"&lt;")+'</div>').join(""):'<div class="none">일정 없음</div>')+(x.wo?'<div>🏃 운동했어요</div>':'');}
+  else{const cnt=arr.reduce((s,x)=>s+(x.n||0),0),wo=arr.filter(x=>x.wo).length;l.innerHTML='<div class="none">날짜를 누르면 그날 일정이 나와요</div><div>📅 일정 '+cnt+'개 · 🏃 운동 '+wo+'일</div>';}
+}
+function pick(dd){sel=sel===dd?0:dd;draw();}
+draw();
+</${S}></body></html>`;
+  const wv = new WebView();
+  await wv.loadHTML(html);
+  await wv.present(true);
+}
+
 // ── 시작 ─────────────────────────────────────────────
 if (config.runsInWidget || config.runsInAccessoryWidget) {
   const d = await load();
   const fam = config.widgetFamily || "medium";
-  const wantMonth = /달력|캘린더|calendar|month/i.test(String(args.widgetParameter || ""));
-  Script.setWidget(wantMonth && fam === "large" && d && !d.error ? buildMonth(d) : buildWidget(d, fam));
+  const wp = String(args.widgetParameter || "");
+  const wantMonth = /달력|캘린더|calendar|month/i.test(wp);
+  // '달력 다음달' / '달력 +1' / '달력 +2' → 그 달을 보여준다
+  const mOff = /다음\s*달/.test(wp) ? 1 : (Number((wp.match(/\+\s*(\d)/) || [])[1]) || 0);
+  Script.setWidget(wantMonth && fam === "large" && d && !d.error ? buildMonth(d, mOff) : buildWidget(d, fam));
 } else {
   let d = await load();
   let banner = "";
   if (!d || d.error) {
     await notice((d && d.error) || "불러오지 못했어요. 인터넷 연결을 확인해주세요");
   } else {
-    if (params.done || params.undo) {
+    const monthView = params.view === "month";
+    if (monthView) {
+      await showMonthView(d, params.m);
+    } else if (params.done || params.undo) {
       const res = await send({ op: params.done ? "done" : "undo", id: params.done || params.undo });
       if (res && !res.error) { d = Object.assign({}, d, res); banner = params.done ? "✅ 완료!" : "되돌렸어요"; }
       else banner = (res && res.error) || "실패했어요";
@@ -35320,7 +35401,7 @@ if (config.runsInWidget || config.runsInAccessoryWidget) {
       if (res && !res.error) { d = Object.assign({}, d, res); banner = "추가했어요"; }
       else if (res && res.error) banner = res.error;
     }
-    await showApp(d, banner);
+    if (!monthView) await showApp(d, banner);
   }
 }
 Script.complete();

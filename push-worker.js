@@ -40,7 +40,7 @@
 // CORS 헤더를 만들 때 쓰려고 이번 요청의 env 를 잠깐 들고 있는다.
 // ALLOWED_ORIGIN 은 배포마다 고정된 값이라, 요청이 겹쳐도 결과가 달라지지 않는다.
 // 배포가 실제로 반영됐는지 주소창에서 확인하려고 둔다. 코드를 고칠 때마다 올린다.
-const WORKER_VERSION = '2026-11-26.1';
+const WORKER_VERSION = '2026-11-26.2';
 const ROUTE_LIST = ['/push/subscribe', '/push/unsubscribe', '/push/test', '/push/send',
   '/push/plan', '/push/status', '/relay/workout', '/relay/expense', '/relay/ping', '/widget', '/version', '/keys/status', '/keys/issue', '/keys/revoke', '/account/delete', '/widget/todo'];
 
@@ -1026,9 +1026,15 @@ function cleanWidgetData(w) {
     t: str(x && x.t, 20), e: str(x && x.e, 4), date: /^\d{4}-\d{2}-\d{2}$/.test(String(x && x.date || '')) ? x.date : '',
   })).filter(x => x.t && x.date);
   out.mon = /^\d{4}-\d{2}$/.test(String(w.mon || '')) ? w.mon : '';
-  out.month = (Array.isArray(w.month) ? w.month : []).slice(0, 31).map(x => ({
+  const cleanMonth = (arr) => (Array.isArray(arr) ? arr : []).slice(0, 31).map(x => ({
     d: num(x && x.d), n: Math.min(9, num(x && x.n)), wo: !!(x && x.wo), dd: str(x && x.dd, 4),
+    t: (Array.isArray(x && x.t) ? x.t : []).slice(0, 4).map(v => str(v, 30)).filter(Boolean),
   }));
+  out.month = cleanMonth(w.month);
+  out.months = {};
+  if (w.months && typeof w.months === 'object') {
+    for (const k of Object.keys(w.months).filter(k => /^\d{4}-\d{2}$/.test(k)).slice(0, 6)) out.months[k] = cleanMonth(w.months[k]);
+  }
   out.week = (Array.isArray(w.week) ? w.week : []).slice(0, 7).map(x => ({
     d: num(x && x.d), w: str(x && x.w, 2), n: Math.min(99, num(x && x.n)), sun: !!(x && x.sun), sat: !!(x && x.sat),
   }));
@@ -1060,7 +1066,7 @@ function widgetView(plan, date) {
   return {
     todos, count: { done, total: todos.length },
     workout: w.workout || null, spent: w.spent || 0, living: w.living || null, goals: w.goals || null,
-    upcoming: w.upcoming || [], asset: w.asset || null, week: w.week || [], mon: w.mon || '', month: w.month || [],
+    upcoming: w.upcoming || [], asset: w.asset || null, week: w.week || [], mon: w.mon || '', month: w.month || [], months: w.months || {},
     // 남은 날은 오늘(한국 시간) 기준으로 센다 — 지난 것은 음수(D+). 다가오는 것 가까운 순, 그다음 지난 것 최근 순
     ddays: (w.ddays || []).map(x => ({ t: x.t, e: x.e, n: Math.round((Date.parse(x.date + 'T00:00:00Z') - Date.parse(date + 'T00:00:00Z')) / 86400000) }))
       .sort((a, b) => ((a.n < 0) - (b.n < 0)) || (a.n < 0 ? b.n - a.n : a.n - b.n)).slice(0, 4),
