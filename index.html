@@ -34982,6 +34982,70 @@ function buildMonth(d, offset) {
   return w;
 }
 
+// 📆 중간 크기 월 달력 — 큰 위젯 아래에 두면 한 화면에 꽉 찬다
+//   숫자 아래 작은 점: 보라 = 일정, 초록 = 운동. 오늘은 파란 동그라미, D-day 는 분홍 숫자
+function buildMonthMedium(d, offset) {
+  const w = new ListWidget();
+  const now = new Date();
+  const base = d.mon || monKey(now.getFullYear(), now.getMonth() + 1);
+  const [by, bm] = base.split("-").map(Number);
+  const mon = monKey(by, bm + (offset || 0));
+  w.url = runUrl("view=month&m=" + mon);
+  w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
+  w.backgroundColor = widgetBg;
+  w.setPadding(8, 10, 6, 10);
+  const [yy, mm] = mon.split("-").map(Number);
+  const arr = (d.months && d.months[mon]) || (mon === d.mon ? d.month : []) || [];
+  const days = {};
+  for (const x of arr) days[x.d] = x;
+  const first = new Date(yy, mm - 1, 1).getDay();
+  const dim = new Date(yy, mm, 0).getDate();
+  const isThis = now.getFullYear() === yy && now.getMonth() + 1 === mm;
+  const weeks = Math.ceil((first + dim) / 7);
+  const rowH = weeks > 5 ? 17 : 20;
+
+  const body = w.addStack();
+  // 왼쪽: 월 이름 + 요약
+  const L = body.addStack(); L.layoutVertically(); L.size = new Size(44, 0);
+  txt(L, mm + "월", 18, C.ink, true);
+  L.addSpacer(4);
+  const woN = arr.filter(x => x.wo).length, nN = arr.filter(x => x.n).length;
+  txt(L, "📅" + nN, 10, C.purple, true);
+  txt(L, "🏃" + woN, 10, C.mint, true);
+  L.addSpacer();
+  body.addSpacer(6);
+  // 오른쪽: 달력
+  const G = body.addStack(); G.layoutVertically();
+  const hr = G.addStack();
+  ["일", "월", "화", "수", "목", "금", "토"].forEach((x, i) => {
+    const c = hr.addStack(); c.size = new Size(0, 12); c.addSpacer();
+    txt(c, x, 8, i === 0 ? C.red : i === 6 ? C.blue : soft, true); c.addSpacer();
+  });
+  for (let r = 0; r < weeks; r++) {
+    const row = G.addStack();
+    for (let c = 0; c < 7; c++) {
+      const day = r * 7 + c - first + 1;
+      const cell = row.addStack(); cell.layoutVertically(); cell.size = new Size(0, rowH);
+      const top = cell.addStack(); top.addSpacer();
+      if (day < 1 || day > dim) { txt(top, " ", 10, soft); top.addSpacer(); continue; }
+      const x = days[day] || {};
+      const today = isThis && day === now.getDate();
+      const n = top.addStack(); n.size = new Size(18, rowH - 5); n.centerAlignContent();
+      if (today) { n.backgroundColor = C.blueBg; n.cornerRadius = (rowH - 5) / 2; }
+      n.addSpacer();
+      txt(n, String(day), 10, today ? Color.white() : x.dd ? C.pink : (c === 0 ? C.red : c === 6 ? C.blue : C.ink), today || !!x.n || !!x.dd);
+      n.addSpacer();
+      top.addSpacer();
+      const bot = cell.addStack(); bot.addSpacer();
+      if (x.n) txt(bot, "•", 6, C.purple, true);
+      if (x.wo) txt(bot, "•", 6, C.mint, true);
+      if (!x.n && !x.wo) txt(bot, " ", 6, soft);
+      bot.addSpacer();
+    }
+  }
+  return w;
+}
+
 function buildWidget(d, fam) {
   const w = new ListWidget();
   w.url = runUrl("");
@@ -35391,7 +35455,10 @@ if (config.runsInWidget || config.runsInAccessoryWidget) {
   const wantMonth = /달력|캘린더|calendar|month/i.test(wp);
   // '달력 다음달' / '달력 +1' / '달력 +2' → 그 달을 보여준다
   const mOff = /다음\s*달/.test(wp) ? 1 : (Number((wp.match(/\+\s*(\d)/) || [])[1]) || 0);
-  Script.setWidget(wantMonth && fam === "large" && d && !d.error ? buildMonth(d, mOff) : buildWidget(d, fam));
+  const ok = d && !d.error;
+  Script.setWidget(wantMonth && ok && fam === "large" ? buildMonth(d, mOff)
+    : wantMonth && ok && fam === "medium" ? buildMonthMedium(d, mOff)
+    : buildWidget(d, fam));
 } else {
   let d = await load();
   let banner = "";
