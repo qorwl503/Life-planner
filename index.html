@@ -35005,7 +35005,8 @@ function buildMonthMedium(d, offset) {
   w.url = runUrl("view=month&m=" + mon);
   w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
   w.backgroundColor = widgetBg;
-  w.setPadding(8, 10, 8, 10);
+  w.setPadding(12, 12, 10, 12);
+  const CW = 28;   // 칸 폭 고정 — 요일·날짜 사이가 너무 벌어지지 않게
   const [yy, mm] = mon.split("-").map(Number);
   const arr = (d.months && d.months[mon]) || (mon === d.mon ? d.month : []) || [];
   const days = {};
@@ -35020,28 +35021,28 @@ function buildMonthMedium(d, offset) {
   const G = body.addStack(); G.layoutVertically();
   const hr = G.addStack();
   ["일", "월", "화", "수", "목", "금", "토"].forEach((x, i) => {
-    const c = hr.addStack(); c.addSpacer();
-    txt(c, x, 11, i === 0 ? C.red : i === 6 ? C.blue : soft, true); c.addSpacer();
+    const c = hr.addStack(); c.size = new Size(CW, 0); c.addSpacer();
+    txt(c, x, 10, i === 0 ? C.red : i === 6 ? C.blue : soft, true); c.addSpacer();
   });
   for (let r = 0; r < weeks; r++) {
     G.addSpacer();   // 줄 사이를 고르게 벌려 아래까지 채운다
     const row = G.addStack();
     for (let c = 0; c < 7; c++) {
       const day = r * 7 + c - first + 1;
-      const cell = row.addStack(); cell.layoutVertically();
+      const cell = row.addStack(); cell.layoutVertically(); cell.size = new Size(CW, 0);
       const top = cell.addStack(); top.addSpacer();
       if (day < 1 || day > dim) { txt(top, " ", 10, soft); top.addSpacer(); continue; }
       const x = days[day] || {};
       const today = isThis && day === now.getDate();
-      const n = top.addStack(); n.setPadding(0, today ? 2 : 0, 0, today ? 2 : 0);
+      const n = top.addStack(); n.setPadding(1, 4, 1, 4);
       if (today) { n.backgroundColor = C.blueBg; n.cornerRadius = 8; }
-      const nt = txt(n, String(day), weeks > 5 ? 12 : 13, today ? Color.white() : x.dd ? C.pink : (c === 0 ? C.red : c === 6 ? C.blue : C.ink), today || !!x.n || !!x.dd);
+      const nt = txt(n, String(day), weeks > 5 ? 11 : 12, today ? Color.white() : x.dd ? C.pink : (c === 0 ? C.red : c === 6 ? C.blue : C.ink), today || !!x.n || !!x.dd);
       nt.minimumScaleFactor = 1;   // 숫자 크기를 다 같게 (자리는 이제 넉넉하다)
       top.addSpacer();
       const bot = cell.addStack(); bot.addSpacer();
-      if (x.n) txt(bot, "•", 7, C.purple, true);
-      if (x.wo) txt(bot, "•", 7, C.mint, true);
-      if (!x.n && !x.wo) txt(bot, " ", 7, soft);
+      if (x.n) txt(bot, "•", 6, C.purple, true);
+      if (x.wo) txt(bot, "•", 6, C.mint, true);
+      if (!x.n && !x.wo) txt(bot, " ", 6, soft);
       bot.addSpacer();
     }
   }
@@ -35049,7 +35050,7 @@ function buildMonthMedium(d, offset) {
 
   // ── 오른쪽: 월 이름 + 다가오는 일정 제목 ──
   const R = body.addStack(); R.layoutVertically();
-  R.size = new Size(92, 0);   // 달력이 주인공 — 오른쪽 목록은 좁게 (폭을 정해 둬야 달력 숫자가 안 눌린다)
+  // 달력 칸 폭이 고정이라 목록이 길어도 달력은 안 눌린다 — 목록은 남는 폭을 쓴다
   const rh = R.addStack(); rh.centerAlignContent();
   txt(rh, mm + "월", 14, C.ink, true);
   rh.addSpacer(4);
