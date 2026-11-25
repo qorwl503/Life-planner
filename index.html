@@ -34995,6 +34995,8 @@ function buildMonth(d, offset) {
 // 📆 중간 크기 월 달력 — 큰 위젯 아래에 두면 한 화면에 꽉 찬다
 //   숫자 아래 작은 점: 보라 = 일정, 초록 = 운동. 오늘은 파란 동그라미, D-day 는 분홍 숫자
 function buildMonthMedium(d, offset) {
+  // 중간 크기는 칸이 작아 날짜 안에 제목을 못 넣는다 →
+  //   왼쪽: 월 달력 (줄 사이를 벌려 세로로 꽉 차게) / 오른쪽: 다가오는 일정 제목
   const w = new ListWidget();
   const now = new Date();
   const base = d.mon || monKey(now.getFullYear(), now.getMonth() + 1);
@@ -35003,7 +35005,7 @@ function buildMonthMedium(d, offset) {
   w.url = runUrl("view=month&m=" + mon);
   w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
   w.backgroundColor = widgetBg;
-  w.setPadding(8, 10, 6, 10);
+  w.setPadding(10, 12, 10, 12);
   const [yy, mm] = mon.split("-").map(Number);
   const arr = (d.months && d.months[mon]) || (mon === d.mon ? d.month : []) || [];
   const days = {};
@@ -35012,46 +35014,66 @@ function buildMonthMedium(d, offset) {
   const dim = new Date(yy, mm, 0).getDate();
   const isThis = now.getFullYear() === yy && now.getMonth() + 1 === mm;
   const weeks = Math.ceil((first + dim) / 7);
-  const rowH = weeks > 5 ? 17 : 20;
+  const CWm = 23;
 
   const body = w.addStack();
-  // 왼쪽: 월 이름 + 요약
-  const L = body.addStack(); L.layoutVertically(); L.size = new Size(44, 0);
-  txt(L, mm + "월", 18, C.ink, true);
-  L.addSpacer(4);
-  const woN = arr.filter(x => x.wo).length, nN = arr.filter(x => x.n).length;
-  txt(L, "📅" + nN, 10, C.purple, true);
-  txt(L, "🏃" + woN, 10, C.mint, true);
-  L.addSpacer();
-  body.addSpacer(6);
-  // 오른쪽: 달력
+  // ── 왼쪽: 달력 ──
   const G = body.addStack(); G.layoutVertically();
-  const MW = 36;
   const hr = G.addStack();
   ["일", "월", "화", "수", "목", "금", "토"].forEach((x, i) => {
-    const c = hr.addStack(); c.size = new Size(MW, 12); c.addSpacer();
+    const c = hr.addStack(); c.size = new Size(CWm, 0); c.addSpacer();
     txt(c, x, 8, i === 0 ? C.red : i === 6 ? C.blue : soft, true); c.addSpacer();
   });
   for (let r = 0; r < weeks; r++) {
+    G.addSpacer();   // 줄 사이를 고르게 벌려 아래까지 채운다
     const row = G.addStack();
     for (let c = 0; c < 7; c++) {
       const day = r * 7 + c - first + 1;
-      const cell = row.addStack(); cell.layoutVertically(); cell.size = new Size(MW, rowH);
-      if (day < 1 || day > dim) continue;
+      const cell = row.addStack(); cell.layoutVertically(); cell.size = new Size(CWm, 0);
+      const top = cell.addStack(); top.addSpacer();
+      if (day < 1 || day > dim) { txt(top, " ", 10, soft); top.addSpacer(); continue; }
       const x = days[day] || {};
       const today = isThis && day === now.getDate();
-      const top = cell.addStack(); top.addSpacer();
-      const n = top.addStack(); n.setPadding(0, 4, 0, 4); n.centerAlignContent();
-      if (today) { n.backgroundColor = C.blueBg; n.cornerRadius = 7; }
-      const nt = txt(n, String(day), 10, today ? Color.white() : x.dd ? C.pink : (c === 0 ? C.red : c === 6 ? C.blue : C.ink), today || !!x.n || !!x.dd);
-      nt.minimumScaleFactor = 0.8;
+      const n = top.addStack(); n.setPadding(0, 3, 0, 3);
+      if (today) { n.backgroundColor = C.blueBg; n.cornerRadius = 6; }
+      txt(n, String(day), 10, today ? Color.white() : x.dd ? C.pink : (c === 0 ? C.red : c === 6 ? C.blue : C.ink), today || !!x.n || !!x.dd);
       top.addSpacer();
       const bot = cell.addStack(); bot.addSpacer();
-      if (x.n) txt(bot, "•", 6, C.purple, true);
+      txt(bot, (x.n ? "•" : "") + (x.wo ? "" : (x.n ? "" : " ")), 6, C.purple, true);
       if (x.wo) txt(bot, "•", 6, C.mint, true);
       bot.addSpacer();
     }
   }
+  body.addSpacer(10);
+
+  // ── 오른쪽: 월 이름 + 다가오는 일정 제목 ──
+  const R = body.addStack(); R.layoutVertically();
+  const rh = R.addStack(); rh.centerAlignContent();
+  txt(rh, mm + "월", 15, C.ink, true);
+  rh.addSpacer(6);
+  txt(rh, "🏃" + arr.filter(x => x.wo).length, 10, C.mint, true);
+  rh.addSpacer();
+  R.addSpacer(4);
+  // 오늘(또는 그 달 1일)부터 일정 있는 날 — 제목까지
+  const DOW = ["일", "월", "화", "수", "목", "금", "토"];
+  const fromDay = isThis ? now.getDate() : 1;
+  const items = [];
+  for (const x of arr) {
+    if (x.d < fromDay || !(x.t && x.t.length)) continue;
+    for (const tt of x.t) { items.push({ d: x.d, t: tt }); if (items.length >= 5) break; }
+    if (items.length >= 5) break;
+  }
+  if (!items.length) txt(R, "일정 없음", 11, soft);
+  for (const it of items) {
+    const line = R.addStack(); line.centerAlignContent();
+    const dc = line.addStack(); dc.size = new Size(34, 0);
+    txt(dc, it.d + " " + DOW[new Date(yy, mm - 1, it.d).getDay()], 10, isThis && it.d === now.getDate() ? C.blue : C.purple, true);
+    dc.addSpacer();
+    txt(line, it.t, 10, C.ink);
+    line.addSpacer();
+    R.addSpacer(3);
+  }
+  R.addSpacer();
   return w;
 }
 
