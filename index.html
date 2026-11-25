@@ -8789,6 +8789,20 @@ function widgetData() {
       out.week.push({ d: d.getDate(), w: DOW[d.getDay()], n, sun: d.getDay() === 0, sat: d.getDay() === 6 });
     }
   } catch (e) {}
+  // 📆 월 달력 — 이번 달 날짜마다 일정 수(루틴 빼고)·운동했나·D-day
+  try {
+    const [yy, mm] = tk.split('-').map(Number);
+    const dim = new Date(yy, mm, 0).getDate();
+    const ddMap = {};
+    for (const x of (settings.ddays || [])) if (x && x.date) ddMap[x.date] = String(x.emoji || '📌').slice(0, 4);
+    out.mon = `${yy}-${String(mm).padStart(2, '0')}`;
+    out.month = [];
+    for (let i = 1; i <= dim; i++) {
+      const dk = `${out.mon}-${String(i).padStart(2, '0')}`;
+      const n = (todos || []).filter(t => t && !(t.repeat && t.repeat.type) && todoOnDay(t, dk) && !todoSkippedOn(t, dk)).length;
+      out.month.push({ d: i, n, wo: dk <= tk && dayWorkedOut(dk), dd: ddMap[dk] || '' });
+    }
+  } catch (e) {}
   try {
     const g = getMonthlyGoals() || [];
     if (g.length) out.goals = { done: g.filter(x => x.done).length, total: g.length, items: g.filter(x => !x.done).slice(0, 3).map(x => String(x.text || '').slice(0, 40)) };
@@ -34621,6 +34635,7 @@ const C = {
   gPurple: new Color("#9A82E0"),
   gBlue: new Color("#6FA8E8"),
   gOrange: new Color("#EBA05A"),
+  blueBg: new Color("#5A8FD6"),
 };
 const widgetBg = Color.dynamic(new Color("#F2F2F7"), new Color("#1C1C1E"));
 
@@ -34830,7 +34845,7 @@ function workoutCard(parent, d, w) {
   return k;
 }
 
-function todoRows(parent, list, max, size) {
+function todoRows(parent, list, max, size, lines2) {
   for (const it of list.slice(0, max)) {
     const row = parent.addStack();
     row.centerAlignContent();
@@ -34838,7 +34853,8 @@ function todoRows(parent, list, max, size) {
     const im = row.addImage(checkImage(it.done));
     im.imageSize = new Size(15, 15);
     row.addSpacer(7);
-    txt(row, (it.at ? it.at + " " : "") + it.t, size, it.done ? soft : C.ink);
+    const tl = txt(row, (it.at ? it.at + " " : "") + it.t, size, it.done ? soft : C.ink);
+    if (lines2) tl.lineLimit = 2;   // 긴 제목은 두 줄까지
     row.addSpacer();
     parent.addSpacer(5);
   }
@@ -34863,6 +34879,84 @@ function weekCard(parent, d) {
     if (i < days.length - 1) k.addSpacer();
   });
   return k;
+}
+
+// 📆 월 달력 (큰 위젯) — 날짜마다 일정 점(보라)·운동(초록 밑줄)·D-day 이모지, 오늘은 파란 동그라미
+function buildMonth(d) {
+  const w = new ListWidget();
+  w.url = runUrl("");
+  w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
+  w.backgroundColor = widgetBg;
+  w.setPadding(12, 12, 10, 12);
+  const now = new Date();
+  const mon = d.mon || (now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0"));
+  const [yy, mm] = mon.split("-").map(Number);
+  const first = new Date(yy, mm - 1, 1).getDay();
+  const dim = new Date(yy, mm, 0).getDate();
+  const isThis = now.getFullYear() === yy && now.getMonth() + 1 === mm;
+  const days = {};
+  for (const x of (d.month || [])) days[x.d] = x;
+
+  const head = w.addStack(); head.centerAlignContent();
+  txt(head, yy + "년 " + mm + "월", 17, C.ink, true);
+  head.addSpacer();
+  const woN = (d.month || []).filter(x => x.wo).length;
+  if (woN) { txt(head, "🏃 " + woN + "일", 12, C.purple, true); head.addSpacer(8); }
+  const plus = head.addText("＋"); plus.font = Font.boldSystemFont(20); plus.textColor = C.green; plus.url = runUrl("add=1");
+  w.addSpacer(6);
+
+  const DOW = ["일", "월", "화", "수", "목", "금", "토"];
+  const hr = w.addStack();
+  DOW.forEach((x, i) => {
+    const c = hr.addStack(); c.addSpacer();
+    txt(c, x, 10, i === 0 ? C.red : i === 6 ? C.blue : soft, true);
+    c.addSpacer();
+  });
+  w.addSpacer(3);
+
+  const weeks = Math.ceil((first + dim) / 7);
+  for (let r = 0; r < weeks; r++) {
+    const row = w.addStack();
+    for (let c = 0; c < 7; c++) {
+      const day = r * 7 + c - first + 1;
+      const cell = row.addStack();
+      cell.layoutVertically();
+      cell.setPadding(2, 0, 2, 0);
+      const top = cell.addStack(); top.addSpacer();
+      if (day < 1 || day > dim) {
+        txt(top, " ", 13, soft); top.addSpacer();
+        const b0 = cell.addStack(); b0.addSpacer(); txt(b0, " ", 7, soft); b0.addSpacer();
+        continue;
+      }
+      const x = days[day] || {};
+      const today = isThis && day === now.getDate();
+      const num = top.addStack();
+      num.size = new Size(24, 22);
+      num.centerAlignContent();
+      if (today) { num.backgroundColor = C.blueBg; num.cornerRadius = 11; }
+      num.addSpacer();
+      txt(num, x.dd ? x.dd : String(day), x.dd ? 12 : 13, today ? Color.white() : (c === 0 ? C.red : c === 6 ? C.blue : C.ink), today || !!x.n);
+      num.addSpacer();
+      top.addSpacer();
+      const bot = cell.addStack(); bot.addSpacer();
+      const marks = (x.n ? "•".repeat(Math.min(3, x.n)) : "");
+      txt(bot, marks || (x.wo ? "" : " "), 9, C.purple, true);
+      if (x.wo) txt(bot, "▬", 6, C.mint);
+      bot.addSpacer();
+    }
+    w.addSpacer(1);
+  }
+  w.addSpacer();
+  // 아래: 다가오는 일정 2줄
+  const ups = (d.upcoming || []).slice(0, 2);
+  for (const u of ups) {
+    const r = w.addStack(); r.centerAlignContent();
+    txt(r, u.n === 1 ? "내일" : u.w + " " + u.d, 11, C.purple, true);
+    r.addSpacer(6);
+    txt(r, (u.at ? u.at + " " : "") + u.t, 11, C.ink);
+    r.addSpacer();
+  }
+  return w;
 }
 
 function buildWidget(d, fam) {
@@ -35004,11 +35098,11 @@ function buildWidget(d, fam) {
   if (cnt.total) txt(th, cnt.done + "/" + cnt.total, 11, C.mint, true);
   T.addSpacer(5);
   if (!showList.length) { txt(T, "오늘 할 일이 없어요", 13, soft); T.addSpacer(5); }
-  todoRows(T, showList, 6, 13);
-  const more = showList.length - 6;
+  todoRows(T, showList, 5, 13, true);
+  const more = showList.length - 5;
   if (more > 0) txt(T, "외 " + more + "개", 10, soft);
   // 남는 줄에 다가오는 일정
-  const room = 6 - Math.min(6, showList.length) - (showList.length ? 0 : 1);
+  const room = 5 - Math.min(5, showList.length) - (showList.length ? 0 : 1);
   const ups = (d.upcoming || []).slice(0, Math.max(0, room - 1));
   if (ups.length) {
     T.addSpacer(4);
@@ -35031,9 +35125,10 @@ function buildWidget(d, fam) {
   const R = mid.addStack();
   R.layoutVertically();
   R.size = new Size(132, 0);
-  moneyCard(R, d, 132, false);
+  // 세 카드가 다 들어가도록 짧은 모양으로 (넘치면 위젯 아래가 잘린다)
+  moneyCard(R, d, 132, true);
   R.addSpacer(8);
-  assetCard(R, d, 132, false);
+  assetCard(R, d, 132, true);
   workoutCard(R, d, 132);
   R.addSpacer();
 
@@ -35207,7 +35302,9 @@ async function showApp(d, banner) {
 // ── 시작 ─────────────────────────────────────────────
 if (config.runsInWidget || config.runsInAccessoryWidget) {
   const d = await load();
-  Script.setWidget(buildWidget(d, config.widgetFamily || "medium"));
+  const fam = config.widgetFamily || "medium";
+  const wantMonth = /달력|캘린더|calendar|month/i.test(String(args.widgetParameter || ""));
+  Script.setWidget(wantMonth && fam === "large" && d && !d.error ? buildMonth(d) : buildWidget(d, fam));
 } else {
   let d = await load();
   let banner = "";
