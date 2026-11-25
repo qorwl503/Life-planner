@@ -35014,14 +35014,13 @@ function buildMonthMedium(d, offset) {
   const dim = new Date(yy, mm, 0).getDate();
   const isThis = now.getFullYear() === yy && now.getMonth() + 1 === mm;
   const weeks = Math.ceil((first + dim) / 7);
-  const CWm = 23;
 
   const body = w.addStack();
   // ── 왼쪽: 달력 ──
   const G = body.addStack(); G.layoutVertically();
   const hr = G.addStack();
   ["일", "월", "화", "수", "목", "금", "토"].forEach((x, i) => {
-    const c = hr.addStack(); c.size = new Size(CWm, 0); c.addSpacer();
+    const c = hr.addStack(); c.addSpacer();
     txt(c, x, 8, i === 0 ? C.red : i === 6 ? C.blue : soft, true); c.addSpacer();
   });
   for (let r = 0; r < weeks; r++) {
@@ -35029,14 +35028,15 @@ function buildMonthMedium(d, offset) {
     const row = G.addStack();
     for (let c = 0; c < 7; c++) {
       const day = r * 7 + c - first + 1;
-      const cell = row.addStack(); cell.layoutVertically(); cell.size = new Size(CWm, 0);
+      const cell = row.addStack(); cell.layoutVertically();
       const top = cell.addStack(); top.addSpacer();
       if (day < 1 || day > dim) { txt(top, " ", 10, soft); top.addSpacer(); continue; }
       const x = days[day] || {};
       const today = isThis && day === now.getDate();
-      const n = top.addStack(); n.setPadding(0, 3, 0, 3);
+      const n = top.addStack(); n.setPadding(0, today ? 2 : 0, 0, today ? 2 : 0);
       if (today) { n.backgroundColor = C.blueBg; n.cornerRadius = 6; }
-      txt(n, String(day), 10, today ? Color.white() : x.dd ? C.pink : (c === 0 ? C.red : c === 6 ? C.blue : C.ink), today || !!x.n || !!x.dd);
+      const nt = txt(n, String(day), 10, today ? Color.white() : x.dd ? C.pink : (c === 0 ? C.red : c === 6 ? C.blue : C.ink), today || !!x.n || !!x.dd);
+      nt.minimumScaleFactor = 0.8;
       top.addSpacer();
       const bot = cell.addStack(); bot.addSpacer();
       txt(bot, (x.n ? "•" : "") + (x.wo ? "" : (x.n ? "" : " ")), 6, C.purple, true);
@@ -35048,6 +35048,7 @@ function buildMonthMedium(d, offset) {
 
   // ── 오른쪽: 월 이름 + 다가오는 일정 제목 ──
   const R = body.addStack(); R.layoutVertically();
+  R.size = new Size(128, 0);   // 오른쪽 목록 폭을 정해 둬야 왼쪽 달력 숫자가 안 눌린다
   const rh = R.addStack(); rh.centerAlignContent();
   txt(rh, mm + "월", 15, C.ink, true);
   rh.addSpacer(6);
@@ -35066,7 +35067,7 @@ function buildMonthMedium(d, offset) {
   if (!items.length) txt(R, "일정 없음", 11, soft);
   for (const it of items) {
     const line = R.addStack(); line.centerAlignContent();
-    const dc = line.addStack(); dc.size = new Size(34, 0);
+    const dc = line.addStack(); dc.size = new Size(32, 0);
     txt(dc, it.d + " " + DOW[new Date(yy, mm - 1, it.d).getDay()], 10, isThis && it.d === now.getDate() ? C.blue : C.purple, true);
     dc.addSpacer();
     txt(line, it.t, 10, C.ink);
