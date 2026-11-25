@@ -35005,7 +35005,7 @@ function buildMonthMedium(d, offset) {
   w.url = runUrl("view=month&m=" + mon);
   w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
   w.backgroundColor = widgetBg;
-  w.setPadding(10, 12, 10, 12);
+  w.setPadding(8, 10, 8, 10);
   const [yy, mm] = mon.split("-").map(Number);
   const arr = (d.months && d.months[mon]) || (mon === d.mon ? d.month : []) || [];
   const days = {};
@@ -35021,7 +35021,7 @@ function buildMonthMedium(d, offset) {
   const hr = G.addStack();
   ["일", "월", "화", "수", "목", "금", "토"].forEach((x, i) => {
     const c = hr.addStack(); c.addSpacer();
-    txt(c, x, 8, i === 0 ? C.red : i === 6 ? C.blue : soft, true); c.addSpacer();
+    txt(c, x, 11, i === 0 ? C.red : i === 6 ? C.blue : soft, true); c.addSpacer();
   });
   for (let r = 0; r < weeks; r++) {
     G.addSpacer();   // 줄 사이를 고르게 벌려 아래까지 채운다
@@ -35034,14 +35034,14 @@ function buildMonthMedium(d, offset) {
       const x = days[day] || {};
       const today = isThis && day === now.getDate();
       const n = top.addStack(); n.setPadding(0, today ? 2 : 0, 0, today ? 2 : 0);
-      if (today) { n.backgroundColor = C.blueBg; n.cornerRadius = 6; }
-      const nt = txt(n, String(day), 10, today ? Color.white() : x.dd ? C.pink : (c === 0 ? C.red : c === 6 ? C.blue : C.ink), today || !!x.n || !!x.dd);
+      if (today) { n.backgroundColor = C.blueBg; n.cornerRadius = 8; }
+      const nt = txt(n, String(day), weeks > 5 ? 12 : 13, today ? Color.white() : x.dd ? C.pink : (c === 0 ? C.red : c === 6 ? C.blue : C.ink), today || !!x.n || !!x.dd);
       nt.minimumScaleFactor = 1;   // 숫자 크기를 다 같게 (자리는 이제 넉넉하다)
       top.addSpacer();
       const bot = cell.addStack(); bot.addSpacer();
-      if (x.n) txt(bot, "•", 6, C.purple, true);
-      if (x.wo) txt(bot, "•", 6, C.mint, true);
-      if (!x.n && !x.wo) txt(bot, " ", 6, soft);
+      if (x.n) txt(bot, "•", 7, C.purple, true);
+      if (x.wo) txt(bot, "•", 7, C.mint, true);
+      if (!x.n && !x.wo) txt(bot, " ", 7, soft);
       bot.addSpacer();
     }
   }
