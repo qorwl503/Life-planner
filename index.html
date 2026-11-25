@@ -35044,15 +35044,15 @@ function buildMonthMedium(d, offset) {
       bot.addSpacer();
     }
   }
-  body.addSpacer(10);
+  body.addSpacer(8);
 
   // ── 오른쪽: 월 이름 + 다가오는 일정 제목 ──
   const R = body.addStack(); R.layoutVertically();
-  R.size = new Size(128, 0);   // 오른쪽 목록 폭을 정해 둬야 왼쪽 달력 숫자가 안 눌린다
+  R.size = new Size(92, 0);   // 달력이 주인공 — 오른쪽 목록은 좁게 (폭을 정해 둬야 달력 숫자가 안 눌린다)
   const rh = R.addStack(); rh.centerAlignContent();
-  txt(rh, mm + "월", 15, C.ink, true);
-  rh.addSpacer(6);
-  txt(rh, "🏃" + arr.filter(x => x.wo).length, 10, C.mint, true);
+  txt(rh, mm + "월", 14, C.ink, true);
+  rh.addSpacer(4);
+  txt(rh, "🏃" + arr.filter(x => x.wo).length, 9, C.mint, true);
   rh.addSpacer();
   R.addSpacer(4);
   // 오늘(또는 그 달 1일)부터 일정 있는 날 — 제목까지
@@ -35065,13 +35065,9 @@ function buildMonthMedium(d, offset) {
     if (items.length >= 5) break;
   }
   if (!items.length) txt(R, "일정 없음", 11, soft);
-  for (const it of items) {
-    const line = R.addStack(); line.centerAlignContent();
-    const dc = line.addStack(); dc.size = new Size(32, 0);
-    txt(dc, it.d + " " + DOW[new Date(yy, mm - 1, it.d).getDay()], 10, isThis && it.d === now.getDate() ? C.blue : C.purple, true);
-    dc.addSpacer();
-    txt(line, it.t, 10, C.ink);
-    line.addSpacer();
+  for (const it of items.slice(0, 4)) {
+    txt(R, it.d + "일 " + DOW[new Date(yy, mm - 1, it.d).getDay()], 9, isThis && it.d === now.getDate() ? C.blue : C.purple, true);
+    txt(R, it.t.replace(/^\d{1,2}:\d{2}\s*/, ""), 9, C.ink);
     R.addSpacer(3);
   }
   R.addSpacer();
