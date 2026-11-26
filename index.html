@@ -9293,17 +9293,27 @@ async function drainWorkoutInbox(silent = true) {
       let read = [];
       let realMime = it.photoMime || 'image/jpeg';
       let firstShot = '';
+      const fresh = [];
       for (const shot of shots) {
         // 이미 처리한 사진은 건너뛴다 (같은 캡처가 두 번 들어오는 경우)
         const fp = photoFingerprint(shot);
         if (seenPhotoBefore(fp)) continue;
         rememberPhoto(fp);
-        if (!firstShot) firstShot = shot;
-        realMime = sniffImageMime(shot, it.photoMime);
+        if (!firstShot) { firstShot = shot; realMime = sniffImageMime(shot, it.photoMime); }
+        fresh.push({ base64: shot, mimeType: sniffImageMime(shot, it.photoMime) });
+      }
+      if (fresh.length) {
+        // 두 장 = 같은 운동의 위·아랫부분 → 한 번에 보여주고 한 건으로 읽는다
         try {
-          const one = await readWorkoutFromImage(null, { base64: shot, mimeType: realMime });
-          read = read.concat(one);
+          read = await readWorkoutFromImage(null, { images: fresh, sameWorkout: fresh.length > 1 });
         } catch (e) { console.warn('수신 사진 판독 실패:', e); }
+        if (!read.length && fresh.length > 1) {
+          // 한 번에 읽기가 실패하면 한 장씩 읽고 앱에서 합친다
+          for (const f of fresh) {
+            try { read = read.concat(await readWorkoutFromImage(null, f)); } catch (e) {}
+          }
+          read = mergeWorkoutParts(read, true);
+        }
       }
       if (!firstShot) {
         // 두 장 다 이미 처리한 것 → 조용히 정리
@@ -10466,30 +10476,46 @@ function sniffImageMime(b64, fallback) {
 }
 
 // direct = { base64, mimeType } 를 주면 파일 없이도 판독한다 (수신함으로 들어온 사진용)
+// 사진 여러 장(file 배열 또는 direct.images)을 '한 번에' 보여주고 읽는다.
+//   예전엔 위·아래로 나눠 찍은 두 장을 따로 읽어, 운동 하나가 반쪽짜리 두 건(시간만 / 거리만)으로 들어갔다.
 async function readWorkoutFromImage(file, direct) {
   if (!hasAI()) return [];
-  let b64, mime;
-  if (direct && direct.base64) {
-    // 단축어의 Base64 인코딩은 76자마다 줄바꿈을 넣는다. 그대로 보내면 판독기가 디코딩에 실패한다.
-    b64 = String(direct.base64).replace(/[^A-Za-z0-9+/=]/g, '');
-    mime = direct.mimeType || 'image/jpeg';
+  const clean64 = (v) => String(v || '').replace(/[^A-Za-z0-9+/=]/g, '');  // 단축어 Base64 는 76자마다 줄바꿈
+  const imgs = [];
+  if (direct && Array.isArray(direct.images)) {
+    for (const im of direct.images) if (im && im.base64) imgs.push({ b64: clean64(im.base64), mime: im.mimeType || 'image/jpeg' });
+  } else if (direct && direct.base64) {
+    imgs.push({ b64: clean64(direct.base64), mime: direct.mimeType || 'image/jpeg' });
+  } else {
+    const files = (Array.isArray(file) ? file : [file]).filter(Boolean);
+    for (const f of files) {
+      const shrunk = await shrinkImageForOcr(f).catch(() => null);
+      if (shrunk) { imgs.push({ b64: shrunk.base64, mime: shrunk.mimeType }); continue; }
+      const b = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result.split(',')[1]);
+        r.onerror = rej;
+        r.readAsDataURL(f);
+      });
+      imgs.push({ b64: b, mime: f.type || 'image/jpeg' });
+    }
   }
-  else {
-  const shrunk = await shrinkImageForOcr(file).catch(() => null);
-  if (shrunk) { b64 = shrunk.base64; mime = shrunk.mimeType; }
-  else {
-    b64 = await new Promise((res, rej) => {
-      const r = new FileReader();
-      r.onload = () => res(r.result.split(',')[1]);
-      r.onerror = rej;
-      r.readAsDataURL(file);
-    });
-    mime = file.type || 'image/jpeg';
-  }
-  }
+  if (!imgs.length) return [];
+  const firstFile = Array.isArray(file) ? file[0] : file;
+  const oneWorkout = !!(direct && direct.sameWorkout);
 
   const today = todayKey();
-  const prompt = `이 이미지는 운동 기록 화면이야.
+  const multiNote = imgs.length < 2 ? '' : (oneWorkout
+    ? `🧩 사진 ${imgs.length}장은 **운동 하나의 요약 화면을 위아래로 나눠 찍은 것**이다.
+- 반드시 **항목 하나로 합쳐라.** 첫 장의 운동 이름을 쓰고, 각 장에서 보이는 시간·칼로리·거리를 모아 채운다.
+- 두 장에 같은 값이 보이면 한 번만 쓴다 (더하지 마라).
+
+`
+    : `🧩 사진 ${imgs.length}장을 함께 보낸다. **같은 운동 화면을 나눠 찍은 것**이면 항목 하나로 합쳐라 (값을 더하지 말고 모아 채운다).
+- 날짜나 운동이 분명히 다를 때만 따로 항목을 만든다.
+
+`);
+  const prompt = multiNote + `이 이미지는 운동 기록 화면이야.
 러닝앱(런데이·나이키런), 수영 기록, 헬스장 앱, 애플워치, 삼성헬스, 스마트밴드 등 무엇이든 될 수 있어.
 
 📅 오늘은 ${today} 이야.
@@ -10547,7 +10573,7 @@ JSON 형식:
           method: 'POST',
           headers: aiRequest(model).headers,
           body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: mime, data: b64 } }] }],
+            contents: [{ parts: [{ text: prompt }, ...imgs.map(im => ({ inline_data: { mime_type: im.mime, data: im.b64 } }))] }],
             generationConfig: cfg,
           }),
           signal: ctrl.signal,
@@ -10598,9 +10624,26 @@ JSON 형식:
       unit,
       note: formatWorkoutNote(sport, dist, unit),
       _checked: true,
-      _file: file,          // 반영 시 이 사진을 그 날짜에 함께 저장하기 위해
+      _file: firstFile,     // 반영 시 이 사진을 그 날짜에 함께 저장하기 위해
     });
   });
+  return imgs.length > 1 ? mergeWorkoutParts(out, oneWorkout) : out;
+}
+
+// 나눠 찍은 사진에서 나온 반쪽 기록을 하나로 — 더하지 않고 '큰 값'으로 채운다 (같은 값이 두 장에 보여도 두 배가 안 되게).
+//   oneWorkout(워치 요약 2장)이면 같은 날짜는 무조건 한 건. 아니면 같은 종목이거나 한쪽이 '기타'일 때만 합친다.
+function mergeWorkoutParts(items, oneWorkout) {
+  const out = [];
+  for (const it of items) {
+    const hit = out.find(o => o.date === it.date &&
+      (oneWorkout || o.sport === it.sport || o.sport === '기타' || it.sport === '기타'));
+    if (!hit) { out.push({ ...it }); continue; }
+    if (hit.sport === '기타' && it.sport !== '기타') hit.sport = it.sport;
+    hit.minutes = Math.max(hit.minutes || 0, it.minutes || 0);
+    hit.kcal = Math.max(hit.kcal || 0, it.kcal || 0);
+    if ((it.dist || 0) > (hit.dist || 0)) { hit.dist = it.dist; hit.unit = it.unit; }
+    hit.note = formatWorkoutNote(hit.sport, hit.dist, hit.unit);
+  }
   return out;
 }
 
@@ -10614,10 +10657,17 @@ async function processWorkoutCapture(input) {
   delete window._workoutOcrRaw;
   delete window._workoutOcrErr;
 
-  const found = [];
-  for (let idx = 0; idx < files.length; idx++) {
-    const items = await readWorkoutFromImage(files[idx]).catch(() => []);
-    found.push(...items);
+  let found = [];
+  if (files.length > 1 && files.length <= 4) {
+    // 나눠 찍은 화면일 수 있어 한 번에 보여준다 (따로 읽으면 반쪽 기록이 여러 건 생겼다)
+    found = await readWorkoutFromImage(files).catch(() => []);
+  }
+  if (!found.length) {
+    for (let idx = 0; idx < files.length; idx++) {
+      const items = await readWorkoutFromImage(files[idx]).catch(() => []);
+      found.push(...items);
+    }
+    if (files.length > 1) found = mergeWorkoutParts(found, false);
   }
 
   if (!Array.isArray(input) && input) input.value = '';
