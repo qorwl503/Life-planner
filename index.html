@@ -34909,7 +34909,7 @@ function buildMonth(d, offset) {
   const [by, bm] = base.split("-").map(Number);
   const mon = monKey(by, bm + (offset || 0));
   w.url = runUrl("view=month&m=" + mon);   // 누르면 ◀ ▶ 로 넘겨보는 달력
-  w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
+  w.refreshAfterDate = new Date(Date.now() + 10 * 60 * 1000);
   w.backgroundColor = widgetBg;
   w.setPadding(12, 12, 10, 12);
   const [yy, mm] = mon.split("-").map(Number);
@@ -35003,7 +35003,7 @@ function buildMonthMedium(d, offset) {
   const [by, bm] = base.split("-").map(Number);
   const mon = monKey(by, bm + (offset || 0));
   w.url = runUrl("view=month&m=" + mon);
-  w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
+  w.refreshAfterDate = new Date(Date.now() + 10 * 60 * 1000);
   w.backgroundColor = widgetBg;
   w.setPadding(10, 12, 10, 12);
   const CW = 30;   // 칸 폭 고정 — 요일·날짜 사이가 너무 벌어지지 않게
@@ -35078,7 +35078,7 @@ function buildMonthMedium(d, offset) {
 function buildWidget(d, fam) {
   const w = new ListWidget();
   w.url = runUrl("");
-  w.refreshAfterDate = new Date(Date.now() + 15 * 60 * 1000);
+  w.refreshAfterDate = new Date(Date.now() + 5 * 60 * 1000);   // 체크한 게 빨리 보이게 (iOS 가 허락하는 만큼)
 
   if (!d || d.error) {
     txt(w, d && d.error ? d.error : "불러오지 못했어요", 12, soft);
