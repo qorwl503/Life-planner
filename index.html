@@ -18188,6 +18188,7 @@ function showCardOcrDebug() {
 // 보정 배너에서 호출 — 증권사 잔고 캡처 파일 선택창을 연다.
 // 캡처를 올리면 기존 OCR 검토 흐름으로 이어지고, 자동매수 자산은 '보정'이 기본 선택됨.
 function openAssetCaptureForCorrection() {
+  window._assetRefreshMode = false;
   if (!hasAI()) {
     showToast('AI 키를 먼저 설정해주세요 (설정 → AI 키)');
     return;
@@ -18856,7 +18857,10 @@ async function processAssetCapture(input) {
     };
   }
   showToast(`✅ ${files.length}장에서 ${mergedItems.length}개 자산 추출됨`);
-  openAssetReviewModal(mergedItems);
+  const refreshMode = window._assetRefreshMode && Date.now() - window._assetRefreshMode < 5 * 60000;
+  window._assetRefreshMode = false;
+  if (refreshMode) autoRefreshAssets(mergedItems);
+  else openAssetReviewModal(mergedItems);
 
   if (!Array.isArray(input) && input) input.value = '';
 }
@@ -19576,6 +19580,97 @@ function applyFixedReview() {
   render(); // 🔧 현재 탭 유지
 }
 
+// 📸 캡처 갱신 — 증권 앱 잔고 화면(여러 장)을 고르면 끝.
+//   화면 총액과 읽은 합계가 맞고, 모든 종목이 내 자산과 짝지어지면 확인 없이 반영한다.
+//   하나라도 애매하면(합계 불일치·새 종목·두 줄이 한 자산에 몰림) 검토 화면을 띄운다.
+function startAssetRefreshCapture() {
+  if (!hasAI()) { showToast('AI 키를 먼저 설정해주세요 (설정 → AI 키)'); return; }
+  window._assetRefreshMode = Date.now();   // 고르다 취소해도 5분 지나면 저절로 풀린다
+  _doAssetCapturePick();
+}
+
+function ocrTotalOk() {
+  const c = window._ocrTotalCheck;
+  return !!(c && c.screen > 0 && Math.abs(c.screen - c.sum) <= Math.max(10, c.screen * 0.001));
+}
+
+function autoRefreshAssets(items) {
+  // 현금·CMA 처럼 금액만 보이는 항목은 그 금액이 잔액이다
+  items.forEach(it => {
+    if (!isStockLikeType(it.type) && !(Number(it.price) > 0) && Number(it.evalAmount) > 0) {
+      it.price = Math.round(Number(it.evalAmount));
+      it.qty = 1;
+    }
+  });
+  openAssetReviewModal(items);
+  const list = window._assetReviewItems || [];
+  // 화면에 보이는 수량 = 지금 가진 전부 → 주식은 '보정'(덮어쓰기). 더하기(합산)가 기본이면 캡처할 때마다 두 배가 된다.
+  const skipped = [];
+  list.forEach(it => {
+    if (!it._existingId) return;
+    const ex = assets.find(a => a.id === it._existingId);
+    if (!ex) return;
+    if (isStockLikeType(ex.type)) it._action = 'correct';
+    else if (DEPOSIT_TYPES.includes(ex.type)) it._action = 'merge';   // 납입형은 merge 가 '잔액 덮어쓰기'
+    else { it._action = 'skip'; skipped.push(ex.name); }              // 금 등 단위가 다른 자산은 건드리지 않는다
+  });
+  if (window._renderAssetReview) window._renderAssetReview();
+
+  const used = list.filter(it => it._action !== 'skip');
+  const ids = used.map(it => String(it._existingId));
+  const why = [];
+  if (!ocrTotalOk()) why.push(window._ocrTotalCheck ? '화면 총액과 합계가 달라요' : '화면 총액을 못 읽었어요');
+  const fresh = list.filter(it => !it._existingId);
+  if (fresh.length) why.push(`처음 보는 종목 ${fresh.length}개 (${fresh.slice(0, 2).map(x => x.name).join(', ')}${fresh.length > 2 ? '…' : ''})`);
+  if (new Set(ids).size < ids.length) why.push('두 종목이 내 자산 하나로 짝지어졌어요');
+  if (!used.length) why.push('갱신할 자산이 없어요');
+  if (why.length) {
+    showToast('확인이 필요해요 — ' + why[0]);
+    return;   // 검토 화면이 열린 채로 둔다 (주식은 '보정'으로 골라 둔 상태)
+  }
+
+  // 되돌리기용으로 지금 상태를 떠 둔다
+  window._assetRefreshUndo = {
+    at: Date.now(),
+    assets: JSON.parse(JSON.stringify(assets)),
+    fixed: JSON.parse(JSON.stringify((budget && budget.fixed) || [])),
+  };
+  const done = used.map(it => it.name);
+  const total = window._ocrTotalCheck.screen;
+  window._afterAssetSave = () => showAssetRefreshDone(done, skipped, total);
+  saveAssetReviewItems();
+}
+
+function showAssetRefreshDone(done, skipped, total) {
+  modal.innerHTML = `
+    <div class="modal">
+      <div class="modal-handle"></div>
+      <div style="padding:18px 16px 20px;">
+        <h3 style="margin:0 0 6px; font-size:16px;">✅ 자산 ${done.length}개 갱신됐어요</h3>
+        <div style="font-size:12px; color:var(--text-success); margin-bottom:10px;">화면 총액 ${Math.round(total).toLocaleString()}원과 맞아요</div>
+        <div style="font-size:12px; color:var(--text-secondary); line-height:1.7; max-height:40vh; overflow-y:auto;">${done.map(n => '· ' + escapeHTML(n)).join('<br>')}</div>
+        ${skipped.length ? `<div style="margin-top:8px; font-size:11px; color:var(--text-tertiary);">그대로 둔 것: ${skipped.map(escapeHTML).join(', ')} (단위가 달라 직접 고쳐주세요)</div>` : ''}
+        <div style="display:flex; gap:8px; margin-top:16px;">
+          <button onclick="undoAssetRefresh()" style="flex:1; padding:12px; border:1px solid var(--border-tertiary); background:var(--bg-secondary); border-radius:10px; font-size:13px; font-family:inherit; cursor:pointer;">↩︎ 되돌리기</button>
+          <button onclick="closeModal()" style="flex:2; padding:12px; border:none; background:var(--accent-tab, #6B5B96); color:#fff; border-radius:10px; font-size:13px; font-weight:700; font-family:inherit; cursor:pointer;">확인</button>
+        </div>
+      </div>
+    </div>`;
+  modal.classList.add('show');
+}
+
+function undoAssetRefresh() {
+  const u = window._assetRefreshUndo;
+  if (!u) { showToast('되돌릴 내용이 없어요'); return; }
+  assets.splice(0, assets.length, ...u.assets);
+  if (budget) budget.fixed = u.fixed;
+  delete window._assetRefreshUndo;
+  saveData();
+  closeModal();
+  renderAsset();
+  showToast('↩︎ 캡처 갱신 전으로 되돌렸어요');
+}
+
 // 화면 총액 vs 읽은 합계 — 맞으면 초록, 다르면 얼마나 모자라는지/넘치는지
 function ocrTotalCheckHTML() {
   const c = window._ocrTotalCheck;
@@ -19835,7 +19930,7 @@ function openAssetReviewModal(items) {
   `;
   modal.classList.add('show');
 
-  setTimeout(() => window._renderAssetReview(), 50);
+  setTimeout(() => { if (window._renderAssetReview) window._renderAssetReview(); }, 50);
 }
 
 function saveAssetReviewItems() {
@@ -20149,6 +20244,11 @@ function saveAssetReviewItems() {
   renderAsset();
   delete window._assetReviewItems;
   delete window._renderAssetReview;
+  if (window._afterAssetSave) {
+    const after = window._afterAssetSave;
+    delete window._afterAssetSave;
+    try { after(); } catch (e) { console.warn('저장 뒤처리 실패', e); }
+  }
   };
 
   // 달러 항목이 있으면 환율 먼저 받고, 없으면 바로 저장
@@ -22844,6 +22944,7 @@ function renderAsset() {
           ` : `
             <button onclick="toggleAssetEditMode()" style="border:none; background:var(--bg-secondary); color:var(--text-secondary); padding:5px 10px; border-radius:999px; font-size:11px; cursor:pointer; font-family:inherit;">✏️ 편집</button>
             <button onclick="manualRefreshAssetPrices()" style="border:none; background:var(--bg-secondary); color:var(--text-secondary); padding:5px 10px; border-radius:999px; font-size:11px; cursor:pointer; font-family:inherit;" title="시세 갱신">🔄 시세</button>
+            <button onclick="startAssetRefreshCapture()" style="border:none; background:rgba(107,91,150,0.12); color:#6B5B96; padding:5px 10px; border-radius:999px; font-size:11px; font-weight:700; cursor:pointer; font-family:inherit;" title="증권 앱 잔고 캡처를 골라 한 번에 갱신">📸 캡처 갱신</button>
             <button onclick="openAssetAddModal()" style="border:none; background:var(--bg-info); color:var(--text-info); padding:5px 12px; border-radius:999px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;">+ 추가</button>
           `}
         </div>
